@@ -1,7 +1,22 @@
-# Every job runs the same Makefile/compose targets as local development —
-# no Go toolchain on the runner; the container images are the pin.
-# Also callable as a reusable workflow: release.yml gates publishing on
-# this entire graph passing for the tagged commit.
+# NOT TO MERGE. A measuring branch (measure/ci-options): this file's
+# jobs are replaced by jobs that measure options of the CI deep dive
+# (research notes, ci-deep-dive/improve/IMPROVE.md), and none of main's
+# checks runs. Its on:, concurrency, permissions and env are main's.
+#
+# Rules every job here keeps: the CA floor step, checkout and
+# runner-sample as on main (the runner's CPU model is read from the
+# sample: x86 chips differ up to 1.9x on these tests); actions pinned by
+# main's SHAs; and NO JOB SAVES A CACHE: every cache step is
+# actions/cache/restore with main's keys and restore-keys, so this
+# branch can evict nothing of main's (and is option 1's pull-request
+# half in action). No go.mod or go.sum is touched. max-parallel and the
+# needs chain keep the run at 12 runners at once or fewer: opt2 6,
+# e2e-ready 3, and one at a time of cache-sizes (2), lint-one (3),
+# e2e-backup (2), e2e-full (3).
+#
+# What a step's timestamps do not give is printed as lines starting
+# "MEASURE " (.github/scripts/zz_measure.sh says each one);
+# ci-deep-dive/measure/collect_measure.py reads a run.
 name: ci
 
 on:
@@ -48,123 +63,38 @@ env:
   SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
 
 jobs:
-  # Which jobs this run needs (.github/scripts/ci-changes.py says how
-  # it decides): on a pull request that changes only markdown or usage
-  # ledger files no job reads, heavy=false skips the build-and-test
-  # jobs below, and ci-ok accepts those skipped. Pushes to main and the
-  # release's workflow_call are heavy without asking. A pull request's
-  # checkout is its merge commit, whose first parent is the base
-  # branch: the diff between them is the whole PR as it would merge, so
-  # a docs commit pushed onto a code PR still runs everything. The rule
-  # that judges is the base branch's copy, so a PR that edits it is
-  # judged by the rule before the edit (this step, like all of ci.yml,
-  # is the PR's own: ci-changes.py's residuals). No merge commit to
-  # diff, or no rule on the base, is heavy too. quotePath off: a
-  # non-ASCII name comes out as itself, not C-quoted.
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      heavy: ${{ steps.classify.outputs.heavy }}
-    steps:
-      # Before checkout; floor and why: ci.yml's lint job.
-      - name: CA certificates at least the pinned floor
-        run: |
-          floor=20260816
-          v=$(dpkg-query -W -f='${Version}' ca-certificates)
-          if ! dpkg --compare-versions "$v" ge "$floor"; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --only-upgrade ca-certificates
-            sudo systemctl try-restart docker
-            v=$(dpkg-query -W -f='${Version}' ca-certificates)
-            dpkg --compare-versions "$v" ge "$floor" || { echo "ca-certificates $v is below $floor" >&2; exit 1; }
-          fi
-          echo "ca-certificates $v"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # The merge commit and its two parents.
-          fetch-depth: 2
-      - uses: ./.github/actions/runner-sample
-      - id: classify
-        env:
-          EVENT: ${{ github.event_name }}
-        run: |
-          rule="$RUNNER_TEMP/ci-changes.py"
-          if [ "$EVENT" != pull_request ] || ! git rev-parse -q --verify 'HEAD^2^{commit}' >/dev/null \
-            || ! git show 'HEAD^1:.github/scripts/ci-changes.py' > "$rule" 2>/dev/null; then
-            echo "heavy: a $EVENT run, no merge commit to diff, or no rule on the base" >&2
-            echo heavy=true >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git -c core.quotePath=false diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed"
-          python3 -I -B "$rule" < "$RUNNER_TEMP/changed" >> "$GITHUB_OUTPUT"
-
-  # One cell per module: the golangci runs share no state, so
-  # they parallelize cleanly (serial they were the slowest lane). Cache
-  # keys are per-module so each cell restores exactly its own objects.
-  lint:
-    needs: [changes]
-    if: needs.changes.outputs.heavy == 'true'
+  # Option 2: test-integration out of the series behind make test.
+  #   serial             main's test job as it is: the baseline, on the
+  #                      same commit and day. Before vet it also times a
+  #                      `go mod download` over every module on the
+  #                      restored cache (option 5's cost when there is
+  #                      nothing to fetch); that step makes the first
+  #                      compose run, so the golang image's pull is in
+  #                      it and not in vet's seconds.
+  #   beside             vet, then make test and make test-integration at
+  #                      once in one step, then fuzz-list.
+  #   integration-alone  what a cell of its own would be: the restore
+  #                      and make test-integration, nothing else.
+  # rep first, so the variants and the two architectures alternate
+  # through the run and none has an hour of the day to itself.
+  opt2:
     strategy:
       fail-fast: false
+      max-parallel: 6
       matrix:
-        module: [".", "backups", "box", "client", "liveswap", "notify", "penaltybox"]
-    runs-on: ubuntu-latest
-    name: lint (${{ matrix.module }})
-    steps:
-      # Before checkout: git, gh and dockerd's pulls on the runner read
-      # the system store, and the runner images can trail the distro's
-      # fix for a distrusted CA by weeks. floor is the oldest
-      # ca-certificates the jobs accept; when a CA is distrusted, raise
-      # it in every copy (each job in every workflow), say why here, and
-      # add the root to DISTRUSTED in .github/actions/ca-trust/main.js.
-      # At or above it the step touches no apt and cannot fail; below
-      # it, it upgrades, restarts dockerd (which reads the store once),
-      # and fails the job if the mirror has nothing new enough.
-      # 20260816 (USN-8944-1): drops "emSign ECC Root CA - G3", which
-      # cross-signed the eMudhra intermediates whose keys leaked
-      # (CVE-2026-111943, actions/runner-images#15018). The containers
-      # need nothing: Debian's 20250419+deb13u1 dropped the same root.
-      - name: CA certificates at least the pinned floor
-        run: |
-          floor=20260816
-          v=$(dpkg-query -W -f='${Version}' ca-certificates)
-          if ! dpkg --compare-versions "$v" ge "$floor"; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --only-upgrade ca-certificates
-            sudo systemctl try-restart docker
-            v=$(dpkg-query -W -f='${Version}' ca-certificates)
-            dpkg --compare-versions "$v" ge "$floor" || { echo "ca-certificates $v is below $floor" >&2; exit 1; }
-          fi
-          echo "ca-certificates $v"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/runner-sample
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .cache
-          key: lint-${{ matrix.module }}-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: lint-${{ matrix.module }}-${{ runner.os }}-
-      # Here, not in test: per module and in parallel like lint, and
-      # once (test runs per arch; tidy considers every platform anyway).
-      - run: make tidy-check COMPOSE="$COMPOSE" MODULES="${{ matrix.module }}"
-      # Even after a tidy-check failure, so one run shows both.
-      - if: ${{ !cancelled() }}
-        run: make lint COMPOSE="$COMPOSE" MODULES="${{ matrix.module }}"
-
-  # Unit + integration on both architectures: arm64 is a first-class
-  # deploy target (cheap ARM VPSes), and the race detector plus the
-  # process-management integration tests are the deepest arch-specific
-  # coverage we have.
-  test:
-    needs: [changes]
-    if: needs.changes.outputs.heavy == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
+        rep: [1, 2, 3, 4, 5]
+        variant: [serial, beside, integration-alone]
         runner: [ubuntu-latest, ubuntu-24.04-arm]
+        exclude:
+          - variant: integration-alone
+            rep: 4
+          - variant: integration-alone
+            rep: 5
     runs-on: ${{ matrix.runner }}
-    name: test (${{ matrix.runner }})
+    name: opt2 ${{ matrix.variant }} (${{ matrix.runner }}, ${{ matrix.rep }})
+    timeout-minutes: 45
     steps:
-      # Before checkout; floor and why: ci.yml's lint job.
+      # Before checkout; floor and why: main's ci.yml, the lint job.
       - name: CA certificates at least the pinned floor
         run: |
           floor=20260816
@@ -179,29 +109,43 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
-      # Both fixes above, proved on this arch's runner image: no distrusted
-      # root in the system store, and the JavaScript actions on that store
-      # rather than their Node's bundled list (.github/actions/ca-trust).
       - uses: ./.github/actions/ca-trust
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: restore test
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache
           key: test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
           restore-keys: test-${{ runner.os }}-${{ runner.arch }}-
-      - run: make vet COMPOSE="$COMPOSE"
-      - run: make test COMPOSE="$COMPOSE"
-      # Deterministic half of fuzzing: every Fuzz target is discovered
-      # (so the weekly run cannot skip one) and every committed crasher
-      # corpus still has a target to replay it.
-      - run: make fuzz-list COMPOSE="$COMPOSE"
-      - run: make test-integration COMPOSE="$COMPOSE"
+      - name: go mod download, cache warm
+        if: matrix.variant == 'serial'
+        run: sh .github/scripts/zz_measure.sh moddownload
+      - if: matrix.variant != 'integration-alone'
+        run: make vet COMPOSE="$COMPOSE"
+      - if: matrix.variant == 'serial'
+        run: make test COMPOSE="$COMPOSE"
+      - name: make test and make test-integration at once
+        if: matrix.variant == 'beside'
+        run: sh .github/scripts/zz_measure.sh pair
+      - if: matrix.variant != 'integration-alone'
+        run: make fuzz-list COMPOSE="$COMPOSE"
+      - if: matrix.variant != 'beside'
+        run: make test-integration COMPOSE="$COMPOSE"
 
-  govulncheck:
-    needs: [changes]
-    if: needs.changes.outputs.heavy == 'true'
-    runs-on: ubuntu-latest
+  # Option 1's unknown: what is in each cache family. Each is restored
+  # in turn, measured (the restore's seconds are the step's; the action
+  # prints the archive's size; zz_measure.sh prints gomod, gobuild and
+  # golangci apart, unpacked and as archives) and removed. The lint
+  # families are lint-one's.
+  cache-sizes:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    name: cache-sizes (${{ matrix.runner }})
+    timeout-minutes: 20
     steps:
-      # Before checkout; floor and why: ci.yml's lint job.
+      # Before checkout; floor and why: main's ci.yml, the lint job.
       - name: CA certificates at least the pinned floor
         run: |
           floor=20260816
@@ -216,31 +160,68 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # go.sum's hash once, before any cache is unpacked: a restored
+      # module cache holds go.sum files of its own, which a later
+      # hashFiles('**/go.sum') in this job would count.
+      - id: sum
+        run: echo "hash=${{ hashFiles('**/go.sum') }}" >> "$GITHUB_OUTPUT"
+      - name: restore test
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache
-          key: vuln-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          key: test-${{ runner.os }}-${{ runner.arch }}-${{ steps.sum.outputs.hash }}
+          restore-keys: test-${{ runner.os }}-${{ runner.arch }}-
+      - run: sh .github/scripts/zz_measure.sh drop test
+      # The Go in the key, asked of plain `docker compose` before the
+      # restore, as main's e2e-backup job asks and for its reasons.
+      - id: go
+        run: echo "version=$(docker compose run --rm -T --no-deps dev go env GOVERSION)" >> "$GITHUB_OUTPUT"
+      - name: restore e2e-backup
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: e2e-backup-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-${{ steps.sum.outputs.hash }}
+          restore-keys: e2e-backup-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-
+      - run: sh .github/scripts/zz_measure.sh drop e2e-backup
+      - name: restore pkg
+        if: runner.arch == 'X64'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: pkg-${{ runner.os }}-${{ steps.sum.outputs.hash }}
+          restore-keys: pkg-${{ runner.os }}-
+      - if: runner.arch == 'X64'
+        run: sh .github/scripts/zz_measure.sh drop pkg
+      - name: restore vuln
+        if: runner.arch == 'X64'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: vuln-${{ runner.os }}-${{ steps.sum.outputs.hash }}
           restore-keys: vuln-${{ runner.os }}-
-      - run: make vulncheck COMPOSE="$COMPOSE"
+      - if: runner.arch == 'X64'
+        run: sh .github/scripts/zz_measure.sh drop vuln
 
-  # No needs but changes: e2e shares no artifacts or caches with test
-  # (it builds its own compose stack from source), so it runs in
-  # parallel — on green runs that removes the whole test->e2e serial
-  # leg from the critical path. The trade: a red unit test now burns
-  # (free) e2e minutes alongside, and peak arm-runner demand is higher
-  # — if arm cells start sitting in "queued", restoring `needs: [test]`
-  # here is the first lever.
-  e2e:
-    needs: [changes]
-    if: needs.changes.outputs.heavy == 'true'
+  # Option 4: one lint job instead of seven. The cache such a job would
+  # have is built without saving one: the seven lint-<module> caches are
+  # restored in turn, each measured, and merged (Go's module cache, its
+  # build cache and golangci-lint's cache name their entries by
+  # content, so a union of them is a cache). Then, in steps of their
+  # own, what the one job would run: make tidy-check and make lint over
+  # every module.
+  lint-one:
+    needs: [cache-sizes]
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
-    name: e2e (${{ matrix.runner }})
+        rep: [1, 2, 3]
+    runs-on: ubuntu-latest
+    name: lint-one (${{ matrix.rep }})
+    timeout-minutes: 30
     steps:
-      # Before checkout; floor and why: ci.yml's lint job.
+      # Before checkout; floor and why: main's ci.yml, the lint job.
       - name: CA certificates at least the pinned floor
         run: |
           floor=20260816
@@ -255,34 +236,102 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
-      # Debian 13 does not restrict unprivileged user namespaces, but
-      # GitHub's runners boot an *Ubuntu* kernel, which refuses them to
-      # unconfined processes host-wide — and the sysctl is not
-      # namespaced, so it reaches into the container. The package used
-      # to ship an AppArmor profile to lift it; with the matrix down to
-      # Debian 13 that profile is gone, so the runner is brought in line
-      # with a real Debian host instead. Consequence to keep in view: CI
-      # no longer exercises a userns-restricted kernel, and the runtime
-      # probe (liveswap/sandbox.go) is what refuses to start on such a
-      # host rather than running apps with no sandbox.
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # make e2e dumps motel/upstream/artifact logs itself when
-      # scenarios fail.
-      - run: make e2e COMPOSE="$COMPOSE"
+      # go.sum's hash once, before any cache is unpacked: a restored
+      # module cache holds go.sum files of its own, which a later
+      # hashFiles('**/go.sum') in this job would count.
+      - id: sum
+        run: echo "hash=${{ hashFiles('**/go.sum') }}" >> "$GITHUB_OUTPUT"
+      - name: restore lint-.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: lint-.-${{ runner.os }}-${{ steps.sum.outputs.hash }}
+          restore-keys: lint-.-${{ runner.os }}-
+      - run: sh .github/scripts/zz_measure.sh merge lint-.
+      - name: restore lint-backups
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: lint-backups-${{ runner.os }}-${{ steps.sum.outputs.hash }}
+          restore-keys: lint-backups-${{ runner.os }}-
+      - run: sh .github/scripts/zz_measure.sh merge lint-backups
+      - name: restore lint-box
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: lint-box-${{ runner.os }}-${{ steps.sum.outputs.hash }}
+          restore-keys: lint-box-${{ runner.os }}-
+      - run: sh .github/scripts/zz_measure.sh merge lint-box
+      - name: restore lint-client
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: lint-client-${{ runner.os }}-${{ steps.sum.outputs.hash }}
+          restore-keys: lint-client-${{ runner.os }}-
+      - run: sh .github/scripts/zz_measure.sh merge lint-client
+      - name: restore lint-liveswap
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: lint-liveswap-${{ runner.os }}-${{ steps.sum.outputs.hash }}
+          restore-keys: lint-liveswap-${{ runner.os }}-
+      - run: sh .github/scripts/zz_measure.sh merge lint-liveswap
+      - name: restore lint-notify
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: lint-notify-${{ runner.os }}-${{ steps.sum.outputs.hash }}
+          restore-keys: lint-notify-${{ runner.os }}-
+      - run: sh .github/scripts/zz_measure.sh merge lint-notify
+      - name: restore lint-penaltybox
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: lint-penaltybox-${{ runner.os }}-${{ steps.sum.outputs.hash }}
+          restore-keys: lint-penaltybox-${{ runner.os }}-
+      - run: sh .github/scripts/zz_measure.sh merge lint-penaltybox
+      - name: the union, as the one job's cache
+        run: sh .github/scripts/zz_measure.sh union
+      - run: make tidy-check COMPOSE="$COMPOSE"
+      - if: ${{ !cancelled() }}
+        run: make lint COMPOSE="$COMPOSE"
+      - name: the cache after the one job's work
+        if: ${{ !cancelled() }}
+        run: sh .github/scripts/zz_measure.sh du family=union-after
 
-  # The notify suite: its own stack (a box with Debian's Alertmanager and
-  # a stub receiver), so its own job, as the backup suite's is.
-  e2e-notify:
-    needs: [changes]
-    if: needs.changes.outputs.heavy == 'true'
+  # Option 3, a lane's getting ready with a Go cache restored: the
+  # lane's Go build in the dev container on the cache as restored, its
+  # images, then the Go build again with nothing changed. No suite.
+  # The cache is main's e2e-backup family, the nearest thing there to
+  # the one family the option proposes, so the first build is an upper
+  # bound: that cache holds moteld's and motel-backup's compiles (made
+  # with the same flags), and not the client's, the test app's other
+  # architecture, or notify's test binary. The second build is the
+  # lower bound: everything in the cache, as after the family's first
+  # save.
+  e2e-ready:
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
+        rep: [1, 2, 3]
+        lane: [e2e, e2e-notify, e2e-metrics]
         runner: [ubuntu-latest, ubuntu-24.04-arm]
+        include:
+          - lane: e2e
+            bin: e2e
+            images: e2e-motel e2e-upstream e2e-artifacts
+          - lane: e2e-notify
+            bin: e2e-notify
+            images: e2e-notify-box e2e-artifacts
+          - lane: e2e-metrics
+            bin: e2e-metrics notify-tests
+            images: e2e-metrics-box e2e-artifacts
     runs-on: ${{ matrix.runner }}
-    name: e2e-notify (${{ matrix.runner }})
+    name: e2e-ready ${{ matrix.lane }} (${{ matrix.runner }}, ${{ matrix.rep }})
+    timeout-minutes: 30
     steps:
-      # Before checkout; floor and why: ci.yml's lint job.
+      # Before checkout; floor and why: main's ci.yml, the lint job.
       - name: CA certificates at least the pinned floor
         run: |
           floor=20260816
@@ -297,53 +346,38 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
-      # The e2e job says why (the runner's Ubuntu kernel).
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # Every split, named here: a bare run leaves heartbeat (notify 15,
-      # motel's 5-minute hold) out, for local runs.
-      - run: make e2e-notify COMPOSE="$COMPOSE" NOTIFY_SPLITS="core reload heartbeat"
-
-  # The metrics suite: notify's box with Debian's victoria-metrics (the
-  # store and vmalert), so its own job, as notify's is.
-  e2e-metrics:
-    needs: [changes]
-    if: needs.changes.outputs.heavy == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
-    name: e2e-metrics (${{ matrix.runner }})
-    steps:
-      # Before checkout; floor and why: ci.yml's lint job.
-      - name: CA certificates at least the pinned floor
+      # The Go in the key, asked of plain `docker compose` before the
+      # restore, as main's e2e-backup job asks and for its reasons.
+      - id: go
+        run: echo "version=$(docker compose run --rm -T --no-deps dev go env GOVERSION)" >> "$GITHUB_OUTPUT"
+      - name: restore e2e-backup
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: e2e-backup-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: e2e-backup-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-
+      - name: the cache as restored
+        run: sh .github/scripts/zz_measure.sh du point=restored lane=${{ matrix.lane }}
+      - name: Go build, the cache as restored
         run: |
-          floor=20260816
-          v=$(dpkg-query -W -f='${Version}' ca-certificates)
-          if ! dpkg --compare-versions "$v" ge "$floor"; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --only-upgrade ca-certificates
-            sudo systemctl try-restart docker
-            v=$(dpkg-query -W -f='${Version}' ca-certificates)
-            dpkg --compare-versions "$v" ge "$floor" || { echo "ca-certificates $v is below $floor" >&2; exit 1; }
-          fi
-          echo "ca-certificates $v"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/runner-sample
-      # The e2e job says why (the runner's Ubuntu kernel).
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: make e2e-metrics COMPOSE="$COMPOSE"
+          # shellcheck disable=SC2086 # $COMPOSE is words, as in the Makefile
+          sh .github/scripts/zz_measure.sh timed name=bin pass=restored lane=${{ matrix.lane }} -- $COMPOSE run --rm dev sh e2e/bin.sh ${{ matrix.bin }}
+      - name: the cache after the build
+        run: sh .github/scripts/zz_measure.sh du point=built lane=${{ matrix.lane }}
+      - name: image build
+        run: |
+          # shellcheck disable=SC2086 # $COMPOSE is words, as in the Makefile
+          sh .github/scripts/zz_measure.sh timed name=images lane=${{ matrix.lane }} -- env E2E_LANE=${{ matrix.lane }} $COMPOSE build ${{ matrix.images }}
+      - name: Go build again, nothing changed
+        run: |
+          # shellcheck disable=SC2086 # $COMPOSE is words, as in the Makefile
+          sh .github/scripts/zz_measure.sh timed name=bin pass=again lane=${{ matrix.lane }} -- $COMPOSE run --rm dev sh e2e/bin.sh ${{ matrix.bin }}
 
-  # The backup suite: its own stack (a box with Debian's restic and
-  # sqlite3, and an S3 server), so its own job — run beside e2e it costs
-  # its own length plus a build, not a longer critical path. The same
-  # sysctl as e2e sets, so that the two boxes are the same host; not
-  # measured to be needed here, where the namespaces are made by PID 1.
-  # A time limit, because nothing in a backup has one: a wedged restic
-  # would otherwise run to the job's six hours.
+  # main's e2e-backup job, its cache restored and not saved: the
+  # reference lane, on the same day.
   e2e-backup:
-    needs: [changes]
-    if: needs.changes.outputs.heavy == 'true'
+    needs: [lint-one]
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -352,7 +386,7 @@ jobs:
     name: e2e-backup (${{ matrix.runner }})
     timeout-minutes: 30
     steps:
-      # Before checkout; floor and why: ci.yml's lint job.
+      # Before checkout; floor and why: main's ci.yml, the lint job.
       - name: CA certificates at least the pinned floor
         run: |
           floor=20260816
@@ -367,91 +401,42 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
-      # The box's binaries are built in the dev container, whose Go
-      # caches are ./.cache here: per arch, since a build cache is.
-      # Keyed by the Go they are built with and by go.sum, not by
-      # commit: a cache is saved only when its key missed, and one saved
-      # per commit (~540 MB an arch) filled the repository's 10 GB and
-      # pushed every other job's out. One left by an older commit costs
-      # little: Go's build cache is keyed by content, so only what
-      # changed is compiled again [measured: 0.9 s over all of PR 5's
-      # changes, against 34.5 s from nothing]. One left by another Go is
-      # no build cache at all, and the dev image's Go moves with each
-      # bump of its pin: so its Go is in the key, and no cache of another Go is
-      # restored — its build half (721 MiB of 1.7 GiB unpacked) would be
-      # saved again, unused, under the new Go's key. A new Go starts
-      # cold, once an arch. The Go is asked of plain `docker compose`,
-      # the base file alone, and never of $COMPOSE: the CI file's
-      # ./.cache bind sources, made now, would be root's, and the
-      # restore below could not unpack into them.
+      # The Go in the key, asked of plain `docker compose` before the
+      # restore, as main's e2e-backup job asks and for its reasons.
       - id: go
         run: echo "version=$(docker compose run --rm -T --no-deps dev go env GOVERSION)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: restore e2e-backup
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache
           key: e2e-backup-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            e2e-backup-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-
+          restore-keys: e2e-backup-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-
+      # main's e2e job says why (the runner's Ubuntu kernel).
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: make e2e-backup COMPOSE="$COMPOSE"
 
-  # Builds the same .deb artifacts a release would, on every
-  # commit, and hands them to the install-test matrix below.
-  package:
-    needs: [changes]
-    if: needs.changes.outputs.heavy == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      # Before checkout; floor and why: ci.yml's lint job.
-      - name: CA certificates at least the pinned floor
-        run: |
-          floor=20260816
-          v=$(dpkg-query -W -f='${Version}' ca-certificates)
-          if ! dpkg --compare-versions "$v" ge "$floor"; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --only-upgrade ca-certificates
-            sudo systemctl try-restart docker
-            v=$(dpkg-query -W -f='${Version}' ca-certificates)
-            dpkg --compare-versions "$v" ge "$floor" || { echo "ca-certificates $v is below $floor" >&2; exit 1; }
-          fi
-          echo "ca-certificates $v"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # Full history + tags for version-stamp parity with release.
-          fetch-depth: 0
-      - uses: ./.github/actions/runner-sample
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .cache
-          key: pkg-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: pkg-${{ runner.os }}-
-      - run: make build COMPOSE="$COMPOSE"
-      - run: make package COMPOSE="$COMPOSE"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dist
-          path: dist/
-          retention-days: 7
-          if-no-files-found: error
-
-  # Installs the .deb under real systemd on each arch and runs the
-  # staged smoke test (install → unit boot → liveswap deploy under the
-  # sandbox → reinstall/starter config → remove). The single
-  # dist artifact carries both arches; smoke.sh picks by
-  # `dpkg --print-architecture`, which is what makes the arm cells work
-  # unchanged.
-  install-test:
-    needs: [changes, package]
-    if: needs.changes.outputs.heavy == 'true'
+  # Option 3, the whole lanes: the same restore, then main's make
+  # targets and suites, with the Go built in the dev container. Proves
+  # the change passes the suites on both architectures, and gives each
+  # job's length under the option (with the cache an upper bound, as in
+  # e2e-ready).
+  e2e-full:
+    needs: [e2e-backup]
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
-        distro: ["debian:13"]
+        lane: [e2e, e2e-notify, e2e-metrics]
         runner: [ubuntu-latest, ubuntu-24.04-arm]
+        include:
+          - lane: e2e-notify
+            args: NOTIFY_SPLITS="core reload heartbeat"
     runs-on: ${{ matrix.runner }}
-    name: install-test (${{ matrix.distro }}, ${{ matrix.runner }})
+    name: e2e-full ${{ matrix.lane }} (${{ matrix.runner }})
+    timeout-minutes: 30
     steps:
-      # Before checkout; floor and why: ci.yml's lint job.
+      # Before checkout; floor and why: main's ci.yml, the lint job.
       - name: CA certificates at least the pinned floor
         run: |
           floor=20260816
@@ -466,135 +451,16 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      # The Go in the key, asked of plain `docker compose` before the
+      # restore, as main's e2e-backup job asks and for its reasons.
+      - id: go
+        run: echo "version=$(docker compose run --rm -T --no-deps dev go env GOVERSION)" >> "$GITHUB_OUTPUT"
+      - name: restore e2e-backup
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: dist
-          path: dist
-      # Debian 13 does not restrict unprivileged user namespaces, but
-      # GitHub's runners boot an *Ubuntu* kernel, which refuses them to
-      # unconfined processes host-wide — and the sysctl is not
-      # namespaced, so it reaches into the container. The package used
-      # to ship an AppArmor profile to lift it; with the matrix down to
-      # Debian 13 that profile is gone, so the runner is brought in line
-      # with a real Debian host instead. Consequence to keep in view: CI
-      # no longer exercises a userns-restricted kernel, and the runtime
-      # probe (liveswap/sandbox.go) is what refuses to start on such a
-      # host rather than running apps with no sandbox.
+          path: .cache
+          key: e2e-backup-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: e2e-backup-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-
+      # main's e2e job says why (the runner's Ubuntu kernel).
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: make install-test DISTRO=${{ matrix.distro }}
-
-  # Full-history secret scan: catches keys/tokens in the changes being
-  # merged AND anything already buried in history before it ships.
-  # Runs via make + compose like every other job — the image pin lives
-  # in docker-compose.yml where Dependabot's compose-images group bumps
-  # it (a tag inside a raw `docker run` here would be a pin nothing
-  # watches, and a secret scanner's value is its rule set staying
-  # current).
-  gitleaks:
-    runs-on: ubuntu-latest
-    steps:
-      # Before checkout; floor and why: ci.yml's lint job.
-      - name: CA certificates at least the pinned floor
-        run: |
-          floor=20260816
-          v=$(dpkg-query -W -f='${Version}' ca-certificates)
-          if ! dpkg --compare-versions "$v" ge "$floor"; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --only-upgrade ca-certificates
-            sudo systemctl try-restart docker
-            v=$(dpkg-query -W -f='${Version}' ca-certificates)
-            dpkg --compare-versions "$v" ge "$floor" || { echo "ca-certificates $v is below $floor" >&2; exit 1; }
-          fi
-          echo "ca-certificates $v"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/runner-sample
-      - run: make secretscan COMPOSE="$COMPOSE"
-
-  # PR-only: fails when a PR introduces dependencies with known vulns
-  # (or surprise licenses). Deliberately NOT in ci-ok's needs — it is
-  # skipped on push/workflow_call events, and a skipped need would leave
-  # ci-ok permanently unsatisfied there. To make it merge-blocking, add
-  # "dependency-review" as a second required check in the main ruleset
-  # (it always runs on PRs, so it can never wedge the gate). Needs the
-  # dependency graph: public repo or GHAS.
-  dependency-review:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      # Before checkout; floor and why: ci.yml's lint job.
-      - name: CA certificates at least the pinned floor
-        run: |
-          floor=20260816
-          v=$(dpkg-query -W -f='${Version}' ca-certificates)
-          if ! dpkg --compare-versions "$v" ge "$floor"; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --only-upgrade ca-certificates
-            sudo systemctl try-restart docker
-            v=$(dpkg-query -W -f='${Version}' ca-certificates)
-            dpkg --compare-versions "$v" ge "$floor" || { echo "ca-certificates $v is below $floor" >&2; exit 1; }
-          fi
-          echo "ca-certificates $v"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/runner-sample
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          fail-on-severity: high
-
-  # Aggregate gate: the ONE status check to mark required in the main
-  # branch ruleset (auto-merge and humans alike wait on it). It runs
-  # UNCONDITIONALLY (if: always()) and asserts every needed job
-  # succeeded, so a broken graph produces an explicit red ci-ok —
-  # never a missing check. (The previous design let ci-ok silently
-  # not run when a need failed; PR #4 auto-merged through exactly
-  # that gap and broke main.) Listing individual matrix cells as
-  # required checks is still not needed and would rot when cells
-  # change.
-  # The usage ledger's merge rule has its tests, and its page must match
-  # its CSVs: the same drift gate tidy-check is for go.mod. Also the one
-  # lane that runs the python image pin. No transcripts, no token:
-  # render reads committed files.
-  usage-check:
-    runs-on: ubuntu-latest
-    steps:
-      # Before checkout; floor and why: ci.yml's lint job.
-      - name: CA certificates at least the pinned floor
-        run: |
-          floor=20260816
-          v=$(dpkg-query -W -f='${Version}' ca-certificates)
-          if ! dpkg --compare-versions "$v" ge "$floor"; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --only-upgrade ca-certificates
-            sudo systemctl try-restart docker
-            v=$(dpkg-query -W -f='${Version}' ca-certificates)
-            dpkg --compare-versions "$v" ge "$floor" || { echo "ca-certificates $v is below $floor" >&2; exit 1; }
-          fi
-          echo "ca-certificates $v"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/runner-sample
-      - run: make usage-check COMPOSE="$COMPOSE"
-
-  ci-ok:
-    if: always()
-    needs: [changes, lint, test, govulncheck, e2e, e2e-backup, e2e-notify, e2e-metrics, package, install-test, gitleaks, usage-check]
-    runs-on: ubuntu-latest
-    steps:
-      # Skipped passes only for a job the changes job gates, and only
-      # when it said heavy=false: a gated job skipped because a need of
-      # its own failed, or any job skipped on a heavy run, is red. A
-      # newly gated job is added to the list here, or ci-ok goes red on
-      # the first PR that skips it — loud, and on the safe side.
-      - name: assert every needed job succeeded
-        env:
-          NEEDS: ${{ toJSON(needs) }}
-        run: |
-          echo "$NEEDS" | jq -e '
-            ["lint", "test", "govulncheck", "e2e", "e2e-backup", "e2e-notify", "e2e-metrics", "package", "install-test"] as $gated
-            | (.changes.result == "success" and .changes.outputs.heavy == "false") as $light
-            | to_entries
-            | map(select(.value.result != "success"
-                and ((.key as $k | $light and .value.result == "skipped" and ($gated | any(. == $k))) | not)))
-            | if length > 0 then error("failed: \(map("\(.key) (\(.value.result))") | join(", "))")
-              elif $light then "markdown or usage ledger only: the build-and-test jobs skipped, the rest green"
-              else "all CI jobs green" end'
+      - run: make ${{ matrix.lane }} COMPOSE="$COMPOSE" ${{ matrix.args }}
