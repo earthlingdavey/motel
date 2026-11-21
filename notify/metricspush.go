@@ -396,8 +396,9 @@ const killSettle = 5 * time.Second
 // there, at most one a killHold (the time of the last kept beside them,
 // storeKilledName+".told", so that a moteld restart keeps it), and the
 // lines taken, so that each kill is told once. The file waits while
-// nothing can tell it (moteld down, no config running notify: tellKill
-// says so, and nothing is taken) and through the hold, so what the next
+// nothing can tell it (moteld down, no config running notify: canTell
+// says so, and nothing is taken; tellKill's false keeps what a config
+// gone within the tick left taken) and through the hold, so what the next
 // one-shot says is every kill since the last. Taken by a rename to a
 // name of its own, so a kill that adds its line later starts a new
 // file, and read a tick later (killSettle), so one that opened it just
