@@ -891,7 +891,8 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   break before a hyphen a digit follows), so a thumbs-up with a skin
   tone before `-0` began a row once a tag stood after it or after the
   hyphen. So `door` asks uniseg, of each cluster, what tview asks with
-  a tag after it: that finds every break tview begins with no tag as
+  a tag after it (`rowbreak.At`, a package of its own only for the
+  time `make test` takes: its comment says why): that finds every break tview begins with no tag as
   well, since uniseg reads the second character only to take a break
   away, and the drawn tests below hold it. The escape is written in
   every text, tagged or not, so that the width measured is the width
@@ -944,6 +945,7 @@ DATA in the title bar, with no box.
 | `internal/local` | the programs it runs and the box repository it may be in |
 | `internal/tui` | the TUI's screens, on tview |
 | `internal/tui/door` | the one way text reaches tview |
+| `internal/tui/door/rowbreak` | where tview would begin a row inside a text, for the door to escape |
 | `internal/tui/model` | what the screens read and when (the refresh engine), and what they show, with no terminal library |
 | `internal/tui/demo` | a box made of fixtures: `--demo`, and the TUI's tests |
 | `internal/tui/hostile` | test support: the hostile fixture's attacks, and a terminal that records bytes |
