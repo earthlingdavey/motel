@@ -62,8 +62,10 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Dockerfile base images (e2e builder/runtime, artifacts server,
-  # install-test systemd image, integration-test systemd image).
+  # Dockerfile base images (the e2e boxes and what packs the artifacts
+  # server's tarballs, the install-test systemd image, the
+  # integration-test systemd image, which has the one Go image among
+  # them: the e2e images take their binaries built, e2e/bin.sh).
   - package-ecosystem: docker
     directories: ["/e2e", "/e2e/backup", "/e2e/liveswap", "/packaging/test", "/test/systemd"]
     schedule:

@@ -269,22 +269,25 @@ jobs:
       # The lane's Go is built in the dev container (e2e/bin.sh), whose
       # Go caches are ./.cache here, kept by actions/cache: built in the
       # image, on a builder that has no cache, each lane compiled the
-      # product from nothing [measured, eight runs of 2026-11-21: 71 to
+      # product from nothing [measured, eight runs of 2026-11-21: 70 to
       # 136 s of go build a lane and architecture, and in e2e-metrics
-      # notify's test binary beside it, 111 to 135 s]. With everything
-      # in the cache, a lane's getting ready (the Go image's pull, the
-      # restore, the Go build, the image builds) is 64 s on x86 and 55
-      # on arm64 here, 61 and 51 in e2e-notify, 75 and 63 in
-      # e2e-metrics, where the image builds alone took 114 and 97, 154
-      # and 104, 167 and 156 [measured, run 44935635314, three cells
-      # each; the Go build itself 3 to 10 s].
+      # notify's test binary beside it, 111 to 135 s]. With the cache,
+      # a lane's getting ready (the Go image's pull, the restore, the
+      # Go build, the image builds) is 64 to 85 s on x86 and 55 to 72
+      # on arm64 here, 61 to 80 and 51 to 66 in e2e-notify, 75 to 108
+      # and 63 to 86 in e2e-metrics, where the image builds alone took
+      # 114 and 97, 154 and 104, 167 and 156 [measured as its parts and
+      # summed, run 44935635314, three cells each: the lower figure
+      # with everything in the cache, the Go build 3 to 10 s; the upper
+      # on a cache that held e2e-backup's builds alone].
       #
       # One cache for the four e2e lanes (this one, e2e-notify,
       # e2e-metrics, e2e-backup), per arch, since a build cache is.
       # They compile the same product, and a lane's cache after its
       # build is 635 to 684 MB [measured, the same run]: a family a
-      # lane would be a quarter of the repository's 10 GB. Keyed by the
-      # Go they are built with and by go.sum, not by commit: a cache is
+      # lane, on the two architectures, would be about half of the
+      # repository's 10 GB. Keyed by the Go they are built with and by
+      # go.sum, not by commit: a cache is
       # saved only when its key missed, and one saved per commit (~540
       # MB an arch then) filled the repository's 10 GB and pushed every
       # other job's out. One left by an older commit costs little: Go's
@@ -321,7 +324,7 @@ jobs:
       # compiled. So every lane's Go is built first (make e2e-warm), and
       # whichever saves, saves what all four use [measured on a cache
       # holding e2e-backup's builds alone, run 44935635314: a lane's Go
-      # build 19 to 30 s, e2e-metrics' 38 to 43 s, against 3 to 10 s
+      # build 19 to 30 s, e2e-metrics' 28 to 43 s, against 3 to 10 s
       # with everything in it]. The three that lose then fail to
       # reserve the key, which the action reports as a warning and
       # nothing more.

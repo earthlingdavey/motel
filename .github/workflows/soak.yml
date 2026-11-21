@@ -20,8 +20,9 @@ on:
     # only what provably cannot: no build step opens a markdown file
     # (the binaries are built in the dev container, e2e/bin.sh, with
     # the whole checkout mounted, and compile and embed none; the image
-    # builds copy named files, and .dockerignore's *.md keeps the
-    # root's out of their context), and a
+    # builds copy named files, and examples/deno and examples/node
+    # whole, whose bundle scripts pack named files and no markdown;
+    # .dockerignore's *.md keeps the root's out of their context), and a
     # test file is not in the binary. A push is
     # skipped only when EVERY changed file matches. Deliberately not an
     # allowlist of leak-exposed paths — one would have skipped 2 of the
@@ -91,10 +92,13 @@ jobs:
       # first). Restored and never saved: the soak compiles nothing the
       # lanes do not, and a save from here, racing theirs for the same
       # key on the same push to main, would be the one that lacks the
-      # other lanes' builds. When the lanes have not saved yet (the
-      # push that changes go.sum, or the Go), this build is cold, as it
-      # was in the image [measured there: 101 to 111 s, two runs of
-      # 2026-11-21].
+      # other lanes' builds. On the push that changes go.sum, before
+      # the lanes have saved, the restore-key brings the cache of the
+      # go.sum before, and only what changed is compiled. With no cache
+      # of this Go at all (a new Go's first push), this build is cold,
+      # as it was in the image [measured there: 101 to 111 s, two runs
+      # of 2026-11-21]. The Go version is taken as ci.yml's e2e job
+      # takes it, and for its reasons.
       - id: go
         run: |
           v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)

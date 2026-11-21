@@ -20,8 +20,10 @@ edit to ci.yml can (see the residuals).
 
 No build reads markdown (the e2e images' binaries are built in the dev
 container, e2e/bin.sh, with the whole checkout mounted, and compile and
-embed none; the image builds copy named files, .dockerignore's `*.md`
-keeping the root's out of their context),
+embed none; the image builds copy named files, and examples/deno and
+examples/node whole, which are heavy whole below and whose bundle
+scripts pack named files and no markdown; .dockerignore's `*.md` keeps
+the root's out of their context),
 but tests and install-test do: READ lists those files, and examples/ is heavy whole,
 since examples/templates_test.go checks the links of every .md under
 it. A test or a lane that starts reading another markdown file adds it
