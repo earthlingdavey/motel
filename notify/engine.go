@@ -320,15 +320,20 @@ func cleanText(known []string, s string, safe ...string) string {
 	return deploytrust.CutRunes(s, maxSummary)
 }
 
-// report takes one event from a detector.
-// telling is whether a config runs notify: what report is told
-// meanwhile is dropped (an access event kept for a minute aside).
-func (e *engine) telling() bool {
+// reportIfTelling is report for an event whose source keeps it until
+// it is told (the store's kills): it says whether a config ran notify
+// to take it, where report drops what comes while none does.
+func (e *engine) reportIfTelling(ev Event) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.active != nil
+	if e.active == nil {
+		return false
+	}
+	e.reportLocked(ev)
+	return true
 }
 
+// report takes one event from a detector.
 func (e *engine) report(ev Event) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

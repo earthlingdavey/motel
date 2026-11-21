@@ -895,7 +895,7 @@ swap=$(systemctl show -p MemorySwapMax --value victoria-metrics)
 # 0 when the store was killed and answers again.
 kill_store() {
 	n0=$(systemctl show -p NRestarts --value victoria-metrics)
-	systemctl set-property --runtime victoria-metrics MemorySwapMax=0 MemoryMax=8M
+	systemctl set-property --runtime victoria-metrics MemorySwapMax=0 MemoryMax=20M
 	i=0
 	until [ "$(systemctl show -p NRestarts --value victoria-metrics)" != "$n0" ] || [ "$(systemctl show -p SubState --value victoria-metrics)" = auto-restart ]; do
 		i=$((i + 1)); [ "$i" -ge 300 ] && break; sleep 0.1
@@ -907,29 +907,29 @@ kill_store() {
 }
 since=$(date '+%Y-%m-%d %H:%M:%S')
 if ! kill_store; then
-	fail "the store was not killed at MemoryMax=8M, or did not answer again, in 90 s (memory.current $(cat /sys/fs/cgroup/system.slice/victoria-metrics.service/memory.current 2>/dev/null), controllers $(cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null), $(systemctl show -p Result -p SubState victoria-metrics | tr '\n' ' '))"
+	fail "the store was not killed at MemoryMax=20M, or did not answer again, in 90 s (memory.current $(cat /sys/fs/cgroup/system.slice/victoria-metrics.service/memory.current 2>/dev/null), controllers $(cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null), $(systemctl show -p Result -p SubState victoria-metrics | tr '\n' ' '))"
 	return
 fi
 journalctl -u victoria-metrics --since "$since" -o cat --no-pager | grep -q "Failed with result 'oom-kill'" \
 	&& pass "the kernel killed the store at its limit (systemd: Failed with result 'oom-kill')" \
 	|| fail "no oom-kill result for the store: $(journalctl -u victoria-metrics --since "$since" -o cat --no-pager | grep -v VictoriaMetrics/ | tail -5)"
-line=$(journalctl -u victoria-metrics --since "$since" -o cat --no-pager -p err | grep 'The metrics store was killed by the kernel at its memory limit (MemoryMax=8M)')
+line=$(journalctl -u victoria-metrics --since "$since" -o cat --no-pager -p err | grep 'The metrics store was killed by the kernel at its memory limit (MemoryMax=20M)')
 [ -n "$line" ] && pass "the store's own journal names the kill and the limit, at err: $line" \
 	|| fail "no err line naming the kill at its limit under the store's unit: $(journalctl -u victoria-metrics --since "$since" -o cat --no-pager | grep -v VictoriaMetrics/ | tail -5)"
 journalctl -u victoria-metrics --since "$since" -o cat --no-pager -p warning | grep -q 'systemctl edit victoria-metrics' \
 	&& pass "and says how to give it more" || fail "no remedy line under the store's unit"
 i=0
-until sinklog | grep -q '/ops [a-z]* metrics_store_killed - '; do i=$((i + 1)); [ "$i" -ge 45 ] && break; sleep 2; done
-[ "$i" -lt 45 ] && pass "motel told the operator: $(sinklog | grep metrics_store_killed | head -1)" \
-	|| fail "no metrics_store_killed at the operator's channel in 90 s: moteld says $(journalctl -u moteld --since "$since" -o cat --no-pager | grep -i 'killed' | tail -2)"
-journalctl -u moteld --since "$since" -o cat --no-pager | grep -q 'the metrics store was killed by the kernel at its memory limit' \
+until sinklog | grep -q '/ops firing metrics_store_killed - '; do i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 2; done
+[ "$i" -lt 60 ] && pass "motel told the operator: $(sinklog | grep metrics_store_killed | head -1)" \
+	|| fail "no metrics_store_killed at the operator's channel in 120 s: moteld says $(journalctl -u moteld --since "$since" -o cat --no-pager | grep -i 'killed' | tail -2)"
+journalctl -u moteld --since "$since" -o cat --no-pager | grep -q 'the metrics store was killed by the kernel; systemd restarted it' \
 	&& pass "and its own journal says so" || fail "no kill line in moteld's journal"
 # A second kill within the hour waits in the file: one alert an hour.
 if kill_store; then
 	sleep 65
-	[ "$(sinklog | grep -c '/ops [a-z]* metrics_store_killed - ')" = 1 ] && [ -s "$STATE/store-killed" ] \
+	[ "$(sinklog | grep -c '/ops firing metrics_store_killed - ')" = 1 ] && [ -s "$STATE/store-killed" ] \
 		&& pass "a second kill within the hour is held, its line kept for the next: $(cat "$STATE/store-killed")" \
-		|| fail "the second kill: $(sinklog | grep -c '/ops [a-z]* metrics_store_killed - ') deliveries, store-killed '$(cat "$STATE/store-killed" 2>&1)'"
+		|| fail "the second kill: $(sinklog | grep -c '/ops firing metrics_store_killed - ') deliveries, store-killed '$(cat "$STATE/store-killed" 2>&1)'"
 else
 	fail "the second kill did not come, or the store did not answer after it"
 fi

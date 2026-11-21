@@ -735,7 +735,7 @@ the store did not answer. The kill is said three ways:
   one-shot), at most once an hour, with how many kills since the last
   (a kill while moteld is down is told at its start);
 - in moteld's journal, `monitor metrics: the metrics store was killed
-  by the kernel at its memory limit`.
+  by the kernel; systemd restarted it`, with the alert's summary.
 
 If the kernel killed it because the box as a whole ran out of memory,
 not at the store's own limit, both lines and the alert say so, and a

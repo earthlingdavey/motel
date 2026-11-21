@@ -1283,7 +1283,7 @@ push, against 5 m. `metrics_rules_down`: the reads in a row without
 vmalert up, against 3. Everything else is an event: deploys, rollbacks,
 `relaunch_refused`, `cert_failed` (motel computes no certificate
 expiry; it grades a failure only), the backup record's classes,
-`metrics_store_read_only`, `ChannelFailed`, `post_deploy_regressed`.
+`metrics_store_read_only`, `metrics_store_killed`, `ChannelFailed`, `post_deploy_regressed`.
 The heartbeat, `NotifyTest` and the deploy mute are not listed, as they
 are not silenceable: they are not about the box.
 
