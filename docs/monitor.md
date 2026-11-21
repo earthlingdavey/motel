@@ -1136,6 +1136,10 @@ or `motel monitor rules --app <app>` (a viewer of the app: the rules
 that apply to it, with its numbers alone), or `:rules` in the client's
 screens (docs/people.md), on each release after v0.8.0; a box at
 v0.8.0 answers those reads `404`.
+A rule with no `app` watches every app, and each app's viewer sees it
+under its name: name it for what it watches, not for an app
+(`shop_errors` with no `app shop` tells blog's viewer that shop
+exists).
 
 (The shape is a test's, not a box's; the full table has every alert,
 deploys and other events among them, whose condition is `-`.)
