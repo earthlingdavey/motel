@@ -52,6 +52,11 @@ jobs:
           # Full history + tags so the build stamps the version from VCS.
           fetch-depth: 0
       - uses: ./.github/actions/runner-sample
+      # This job keeps no cache: its builds start from nothing. The
+      # modules are downloaded first, so that a download that breaks is
+      # tried again, where make build would fail on it (the Makefile's
+      # mod-download).
+      - run: make mod-download
       - run: make build
       - run: make package VERSION="${GITHUB_REF_NAME#v}"
       # make package has left the .debs and the laptop client's

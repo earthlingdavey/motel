@@ -11,11 +11,12 @@
 #
 # One `uses:` right after checkout (a local action needs the tree, so
 # checkout's own seconds are not in the delta). The end sample is the
-# action's post step, which runs after every other step's post, among
-# them actions/cache's save (the tar of the Go caches, tens of seconds
-# in the lint and test jobs), and runs whatever the job's result: the
-# window is the job as the Actions API times it, less set-up and
-# checkout. A composite action has no post step, hence node. Both
+# action's post step, which runs after every step of the job, among
+# them the save of its Go build cache (a tar, seconds to tens of
+# seconds in the lint and test jobs), and runs whatever the job's
+# result: the window is the job as the Actions API times it, less
+# set-up and checkout. A composite action has no post step, hence
+# node. Both
 # probes are bounded (3 s and 5 s) and answer "no answer" instead of
 # failing; a post step that threw would fail the job, so neither phase
 # can. The two jobs without a checkout, ci-ok and the Dependabot

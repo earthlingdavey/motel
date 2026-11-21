@@ -1,5 +1,7 @@
 # CI override: swap the named cache volumes for bind mounts under
-# ./.cache so actions/cache can persist them between runs.
+# ./.cache, which CI keeps between runs: gomod in one cache for every
+# job, gobuild and golangci in a cache a job
+# (.github/actions/go-cache).
 services:
   dev:
     volumes:

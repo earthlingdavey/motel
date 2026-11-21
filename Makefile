@@ -700,16 +700,17 @@ e2e-backup: ## the backup suites, a box each; BACKUP_SUITES= setup backup units 
 	$(call narrowed_note,BACKUP_SUITES)
 
 # Every e2e lane's Go, built once and the binaries removed: it fills
-# Go's caches and nothing else. For CI, whose four e2e jobs share one cache an
-# architecture (ci.yml's e2e job says why one): a cache is saved by the
-# first job to finish a run whose key missed, with only what that job
-# compiled, so a job whose key missed builds every lane's first, and
-# whichever saves, saves what all four use. The three lanes' binaries
-# are the metrics lane's set (e2e/bin.sh, with notify's test binary);
-# e2e-backup's own are moteld, compiled the same, and motel-backup with
-# -tags e2e, built here with the flags its target above builds it with.
-# On a machine whose caches are volumes that stay, nothing needs this.
-e2e-warm: ## every e2e lane's Go, built to fill Go's caches (CI, when its cache key missed)
+# Go's caches and nothing else. For CI, whose four e2e jobs share one
+# build cache an architecture (ci.yml's e2e job says why one): a job
+# saves what it compiled, and one of the four saves the cache, ci.yml's
+# e2e-backup, on a run on main whose key missed; so there, and only
+# then, it builds every lane's first, and what it saves is what all
+# four use. The three lanes' binaries are the metrics lane's set
+# (e2e/bin.sh, with notify's test binary); e2e-backup's own are moteld,
+# compiled the same, and motel-backup with -tags e2e, built here with
+# the flags its target above builds it with. On a machine whose caches
+# are volumes that stay, nothing needs this.
+e2e-warm: ## every e2e lane's Go, built to fill Go's caches (CI's e2e-backup, before it saves the lanes' cache)
 	$(call e2e_bin,e2e-warm notify-tests)
 	$(COMPOSE) run --rm -e CGO_ENABLED=0 dev sh -c 'cd backups && go build -trimpath -tags e2e -o /dev/null ./cmd/motel-backup'
 	rm -rf build/e2e-warm

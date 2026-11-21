@@ -55,11 +55,28 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The Go caches: .github/actions/go-cache says what is kept, and
+      # that only a run on main saves. This job's build cache also
+      # holds the corpus: Go keeps what a fuzz run finds under its
+      # build cache (the Makefile's fuzz), and that is the one thing in
+      # these caches no run can make again. Hence `corpus`:
+      # - every run on main saves, under a key that ends in the run. A
+      #   run whose key hit would save nothing of what it found; and
+      #   GitHub removes an entry nothing has read for seven days,
+      #   which is how far apart the weekly runs are;
+      # - when this Go has no entry yet, the newest of another Go is
+      #   restored, for its corpus. Its objects go at the first build's
+      #   end, where Go trims what nothing read for five days (ci.yml's
+      #   e2e job says how that was read).
+      # The save is the last step and runs when the run passed, as the
+      # cache's own post step did: a run that found a crasher uploads
+      # it below and saves no corpus. A run started by hand on another
+      # branch restores main's and saves nothing.
+      - id: cache
+        uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: fuzz-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: fuzz-${{ runner.os }}-
+          build: fuzz
+          corpus: true
       - env:
           COMPOSE: docker compose -f docker-compose.yml -f docker-compose.ci.yml
           FUZZTIME: ${{ inputs.fuzztime || '5m' }}
@@ -70,3 +87,8 @@ jobs:
           name: fuzz-crashers
           path: "**/testdata/fuzz/" # any package's, since box keeps its proof core in a subpackage
           if-no-files-found: ignore
+      - if: steps.cache.outputs.save == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.build-path }}
+          key: ${{ steps.cache.outputs.build-key }}

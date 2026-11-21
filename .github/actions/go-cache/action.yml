@@ -1,0 +1,217 @@
+# The Go caches of a job: restored here, the modules downloaded, and
+# the job told whether it is one that saves. Every job that runs Go
+# uses this once, after checkout (a local action needs the tree) and
+# before its first `$COMPOSE` command: docker-compose.ci.yml binds
+# ./.cache/gomod, ./.cache/gobuild and ./.cache/golangci into the
+# containers, and a bind source docker has to make is root's, which a
+# restore run after it could not unpack into.
+#
+# Two kinds of cache, where each job once kept one archive of all of
+# ./.cache:
+#
+# - The module cache, .cache/gomod, once for every job and both
+#   architectures: gomod-<os>-<go.sum>. In one archive a job, 63 % of
+#   what was stored was the same modules again [measured, run
+#   44935635314: ten families each held 1.1 GB of modules, 412 to
+#   438 MB as stored; 4.50 of the set's 7.19 GB, of a 10 GB budget].
+#   One for both architectures because nothing in it is either's: Go
+#   downloads a module whole, whatever it is building for, and the
+#   cache action's entry is found by its key, its paths and how it was
+#   packed [measured: every archive of ci.yml's listed by the API on
+#   2026-11-21, X64 and ARM64 alike, has the one version,
+#   sha256(".cache|zstd-without-long|1.0"); and a module cache filled
+#   from nothing on arm64 that day holds module sources and their
+#   downloads, no toolchain and nothing compiled].
+# - The job's build cache, without the modules:
+#   gobuild-<family>-<os>-<arch>-<go>-<go.sum>, where a family is one
+#   job's, or the four e2e lanes'. An architecture each, since compiled
+#   objects are. With the Go that fills it in every key: after a new Go
+#   with go.sum unchanged, a key without it hit, nothing was saved, and
+#   the job compiled from nothing until go.sum next changed; and
+#   another Go's objects, restored, are only weight to save again
+#   (ci.yml's e2e job has the figures), so no key of another Go is a
+#   restore-key.
+#
+# Only a run on main saves, and only when the key missed. A cache
+# saved by a pull request can be read by that pull request alone, and
+# a tag's by that tag; two sets did not fit the budget, so each such
+# save pushed out caches other runs were reading, main's among them
+# [measured over the fortnight to 2026-11-21: 33 % of the jobs with a
+# large cache restored nothing, 34 to 64 % a day from 11-13 to 11-18;
+# a run that restores nothing is about 1,040 job-seconds longer, 130 s
+# of them on the test job; a pull request's cache was pushed out 20
+# minutes after it was saved]. By github.ref, not the event: called by
+# release.yml the event is push too, and the ref is the tag. So:
+#
+# - a pull request restores main's caches, by key, or by prefix when
+#   it changes go.sum, and saves nothing: one that changes go.sum
+#   downloads the modules it changed and compiles them again on each
+#   push;
+# - a push to main saves what missed: every family after a change to
+#   go.sum, the build caches alone after a new Go;
+# - a release tag, and the weekly runs on main, restore and (fuzz's
+#   corpus apart) save nothing;
+# - after a Dependabot merge that starts no run on main (one made with
+#   the workflow's token starts none), main has no cache under the new
+#   go.sum until a person merges: runs restore the one before by
+#   prefix meanwhile, as that pull request did.
+#
+# Who saves is one job a key, so no two race for it: ci.yml's lint
+# saves the module cache, each job its own build cache, e2e-backup the
+# four lanes'. The save is a step of the job (a composite action has
+# no post step), from this action's outputs:
+#
+#   - if: steps.cache.outputs.save == 'true'
+#     uses: actions/cache/save@<the pin below>
+#     with:
+#       path: ${{ steps.cache.outputs.build-path }}
+#       key: ${{ steps.cache.outputs.build-key }}
+#
+# as the job's last step, so that, like the post step it replaces, it
+# runs only when every step before it passed. A job with no such step
+# only restores. The path and the key are this action's, never written
+# again in the job: an entry saved under other paths than the restore
+# names is one no restore finds, and the key must be the one made
+# below, before the module cache is under the checkout (its modules
+# carry go.sum files of their own).
+#
+# The pin of actions/cache is in two places, here and in the
+# workflows' save steps: .github/dependabot.yml names this directory,
+# so that one pull request moves both.
+name: go cache
+description: Restores the Go module cache and the job's build cache, downloads the modules, and says whether this job saves.
+
+inputs:
+  build:
+    description: The job's build-cache family (test, lint, e2e, ...). Empty for the module cache alone.
+    default: ""
+  go-from:
+    description: The compose service whose Go fills the build cache; its version is in the key.
+    default: dev
+  path:
+    description: What the build cache holds, a path a line.
+    default: .cache/gobuild
+  corpus:
+    description: >-
+      'true' for fuzz.yml, whose cache also holds what no run can
+      build again, the corpus its runs grow. Its key then ends in the
+      run, so that every run on main saves; and it falls back to an
+      entry of another Go, for the corpus in it.
+    default: "false"
+
+outputs:
+  save:
+    description: "'true' when the job is to save its build cache: the run is on main, and the key missed."
+    value: ${{ steps.rule.outputs.save }}
+  build-key:
+    description: The build cache's key.
+    value: ${{ steps.key.outputs.build }}
+  build-path:
+    description: The build cache's paths, as restored.
+    value: ${{ inputs.path }}
+  save-modules:
+    description: "'true' when the module cache is to be saved (ci.yml's lint does it): the run is on main, and the key missed."
+    value: ${{ steps.rule.outputs.save-modules }}
+  modules-key:
+    description: The module cache's key.
+    value: ${{ steps.key.outputs.modules }}
+  modules-path:
+    description: The module cache's path, as restored.
+    value: ${{ steps.key.outputs.modules-path }}
+
+runs:
+  using: composite
+  steps:
+    # The keys, made once and first. go.sum is every tracked go.sum,
+    # as the index has them (path and blob), and not
+    # hashFiles('**/go.sum'): evaluated again after the restore, that
+    # walks the module cache too, where every dependency has a go.sum,
+    # and gives another key.
+    # The Go is asked of plain `docker compose`, the base file alone:
+    # with the CI file the ./.cache bind sources would be made now,
+    # root's, before the restores. In an assignment of its own, and
+    # refused when empty: this is the job's first pull of the image,
+    # and inside an echo a compose run that failed passed the step
+    # with no version, for a key that matches nothing.
+    - id: key
+      shell: bash
+      env:
+        FAMILY: ${{ inputs.build }}
+        SERVICE: ${{ inputs.go-from }}
+        CORPUS: ${{ inputs.corpus }}
+      run: |
+        sums=$(git ls-files -s -- ':(glob)**/go.sum')
+        [ -n "$sums" ] || { echo "no go.sum is tracked: nothing to key the caches by" >&2; exit 1; }
+        sums=$(printf '%s\n' "$sums" | sha256sum | cut -d' ' -f1)
+        {
+          echo "modules-path=.cache/gomod"
+          echo "modules=gomod-$RUNNER_OS-$sums"
+          echo "modules-restore=gomod-$RUNNER_OS-"
+        } >> "$GITHUB_OUTPUT"
+        [ -n "$FAMILY" ] || exit 0
+        v=$(docker compose run --rm -T --no-deps "$SERVICE" go env GOVERSION)
+        [ -n "$v" ] || { echo "the $SERVICE image gave no Go version" >&2; exit 1; }
+        family="gobuild-$FAMILY-$RUNNER_OS-$RUNNER_ARCH"
+        key="$family-$v-$sums"
+        if [ "$CORPUS" = true ]; then
+          key="$key-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        fi
+        {
+          echo "build=$key"
+          echo "build-restore<<end-of-keys"
+          echo "$family-$v-"
+          if [ "$CORPUS" = true ]; then
+            echo "$family-"
+          fi
+          echo "end-of-keys"
+        } >> "$GITHUB_OUTPUT"
+    - id: modules
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.modules-path }}
+        key: ${{ steps.key.outputs.modules }}
+        restore-keys: ${{ steps.key.outputs.modules-restore }}
+    - id: build
+      if: inputs.build != ''
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ steps.key.outputs.build }}
+        restore-keys: ${{ steps.key.outputs.build-restore }}
+    # Every job, whatever was restored: what is missing is downloaded
+    # here, a download that breaks tried again, before vet, tidy-check,
+    # a build or a lane's e2e/bin.sh needs it (the Makefile's
+    # mod-download says what it fetches and what it leaves). On a cache
+    # that holds everything it is about a second [measured locally,
+    # 2026-11-21, with the container's start].
+    - shell: bash
+      run: make mod-download COMPOSE="docker compose -f docker-compose.yml -f docker-compose.ci.yml"
+    # Last, so that a job whose restore or download failed is told
+    # nothing and saves nothing. The line it prints is the one to read
+    # in a job's log for what the caches did.
+    - id: rule
+      shell: bash
+      env:
+        REF: ${{ github.ref }}
+        FAMILY: ${{ inputs.build }}
+        MODULES_KEY: ${{ steps.key.outputs.modules }}
+        MODULES_HIT: ${{ steps.modules.outputs.cache-hit }}
+        MODULES_FROM: ${{ steps.modules.outputs.cache-matched-key }}
+        BUILD_KEY: ${{ steps.key.outputs.build }}
+        BUILD_HIT: ${{ steps.build.outputs.cache-hit }}
+        BUILD_FROM: ${{ steps.build.outputs.cache-matched-key }}
+      run: |
+        save=false
+        modules=false
+        if [ "$REF" = refs/heads/main ]; then
+          if [ "$MODULES_HIT" != true ]; then modules=true; fi
+          if [ -n "$FAMILY" ] && [ "$BUILD_HIT" != true ]; then save=true; fi
+        fi
+        {
+          echo "save=$save"
+          echo "save-modules=$modules"
+        } >> "$GITHUB_OUTPUT"
+        echo "go-cache: on $REF. modules: wanted $MODULES_KEY, restored ${MODULES_FROM:-nothing}; a run that saves it (ci.yml's lint does): $modules."
+        if [ -n "$FAMILY" ]; then
+          echo "go-cache: build: wanted $BUILD_KEY, restored ${BUILD_FROM:-nothing}; a run that saves it (the job's last step, where it has one): $save."
+        fi

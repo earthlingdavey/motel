@@ -36,4 +36,11 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
+      # The module cache every job restores, and the build cache of
+      # ci.yml's govulncheck job (govulncheck itself, built as a tool),
+      # read here and never saved (.github/actions/go-cache): this run
+      # had no cache, and nothing tried again a download that broke.
+      - uses: ./.github/actions/go-cache
+        with:
+          build: vuln
       - run: make vulncheck COMPOSE="docker compose -f docker-compose.yml -f docker-compose.ci.yml"
