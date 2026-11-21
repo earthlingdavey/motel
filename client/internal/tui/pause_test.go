@@ -11,14 +11,21 @@ import (
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
-// away lets d pass with no key pressed, the clock's tick drawing a
-// frame each second and the reads made as they come due.
+// away lets d pass with no key pressed, a second at a time, the reads
+// made as they come due, each answer applied with its frame, and one
+// frame more at the end. The product draws a frame each second too (the
+// clock's tick); those between answers are not drawn here: with the
+// clock only going forward such a frame changes nothing but whether a
+// bell owed has rung (Ring), so a bell held by its floor rings at the
+// next answer's frame or the last, not at the next second, and the
+// floor counts from then. Under -race a frame a second for these hours
+// was most of the package's time.
 func (h *harness) away(d time.Duration) {
 	for end := h.now.Add(d); h.now.Before(end); {
 		h.now = h.now.Add(time.Second)
 		h.pump()
-		h.sync()
 	}
+	h.sync()
 }
 
 // TestPausedStillWatches: a person away for twenty minutes: past the
@@ -44,6 +51,9 @@ func TestPausedStillWatches(t *testing.T) {
 		t.Errorf("paused, the mark: %q", m.Long.Text())
 	}
 	h.away(5 * time.Minute)
+	if n := hostile.BareBELs(tty.Bytes()); n != 1 {
+		t.Errorf("five minutes on, past the floor: %d bells, want still the one", n)
+	}
 	if m := h.s.Mark(h.now); m.Long[0].C != model.LoudBad {
 		t.Errorf("five minutes on, still away: the mark is not held reversed: %v", m.Long[0].C)
 	}

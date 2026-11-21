@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"maps"
 	"math"
 	"net/url"
 	"regexp"
@@ -214,20 +213,20 @@ import (
 //     was withheld before, takes a second value). A token whole names
 //     no key, where a marker inside a time said the value was a piece
 //     of it and a body withheld for a number said the key's value was
-//     digits of one. A number that holds a value replaced elsewhere in
-//     the body (the app printed it: replaced by this filter, or by an
-//     earlier pass, a failed deploy's detail, whose marker the body
-//     holds or a nested redacted_env names) would show it beside that
-//     marker by difference, so such
-//     a body goes through whole, and is withheld as before
-//     (TestHeldNumbersNotByDifference,
-//     TestFailedDeployNumberNotByDifference); a time keeps its hold, its
-//     marker having said as much. Across two answers (a marker in one
-//     record, the number in the status) the reader can still set them
-//     side by side: an accepted row (DESIGN-liveswap.md). Rule 7 is the
-//     hold of a filter that knows a value: one that knows none
-//     replaces nothing a token could hold, and its tokens pass its
-//     later layers as before.
+//     digits of one. Figures are motel's own data, never hidden for the
+//     value they hold (but in the fallbacks above, which send a body
+//     through whole): a time or a number keeps its hold beside a marker
+//     of the same value in the same body (the app printed its memory
+//     limit, replaced by this filter or by an earlier pass, a failed
+//     deploy's detail) or in another answer, and a reader may set the
+//     two side by side (TestHeldNumbersBesideTheirMarker,
+//     TestFailedDeployNumberBesideItsMarker). The owner's decision of
+//     2026-11-21, an accepted row (DESIGN-liveswap.md): nothing ties the
+//     marker to the figure, a body withheld for it named the key and so
+//     said as much, and a status withheld over a figure is the failure
+//     this rule fixed. Rule 7 is the hold of a filter that knows a
+//     value: one that knows none replaces nothing a token could hold,
+//     and its tokens pass its later layers as before.
 const (
 	secretMinLen  = 8
 	entropyMinLen = 20
@@ -1185,35 +1184,7 @@ func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
 		if body, held := holdOut(raw); len(held) > 0 {
 			found := map[string]bool{}
 			out := r.filterWhole(body, found)
-			// Replaced in this body: what this pass found, and what an
-			// earlier pass did (a failed deploy's detail, replaced as it
-			// was built, failureDetail in app.go), which its marker in
-			// the body shows, or a nested redacted_env names (the name
-			// as written, or a marker when a value equals a key's name;
-			// a marker the tail's cap cut).
-			replaced := maps.Clone(found)
-			for _, sec := range r.secrets {
-				// As written, and as encoding/json escapes it (the angles
-				// of "<KEY removed>").
-				marked := strings.Contains(raw, sec.marker)
-				if !marked && strings.ContainsAny(sec.marker, "<>&") {
-					esc, _ := json.Marshal(sec.marker)
-					marked = strings.Contains(raw, string(esc[1:len(esc)-1]))
-				}
-				if marked {
-					for _, k := range sec.keys {
-						replaced[k] = true
-					}
-				}
-			}
-			if strings.Contains(raw, `"redacted_env"`) {
-				var tree any
-				_ = json.Unmarshal([]byte(raw), &tree)
-				for _, k := range nestedStrings(tree, "redacted_env", nil) {
-					replaced[k] = true
-				}
-			}
-			if out, ok := r.putBack(out, held, replaced); ok {
+			if out, ok := r.putBack(out, held); ok {
 				for k := range found {
 					seen[k] = true
 				}
@@ -1312,13 +1283,11 @@ func eachToken(s string, str func(i, j int, key bool), num func(i, j int)) bool 
 }
 
 // heldToken is a time or a number held out of the layers: its text as
-// the body had it, the part of it no form of a known value may cross
-// the edge of (a time's text inside its quotes, a number whole), and
-// whether it is a number.
+// the body had it, and the part of it no form of a known value may
+// cross the edge of (a time's text inside its quotes, a number whole).
 type heldToken struct {
 	text   string
 	lo, hi int
-	number bool
 }
 
 // holdOut is raw with each number, and each time under one of
@@ -1331,10 +1300,10 @@ func holdOut(raw string) (string, []heldToken) {
 	var held []heldToken
 	var key string
 	at, clash := 0, false
-	hold := func(i, j, lo, hi int, number bool) {
+	hold := func(i, j, lo, hi int) {
 		b.WriteString(raw[at:i])
 		b.WriteString(heldMark + strconv.Itoa(len(held)) + `"`)
-		held = append(held, heldToken{raw[i:j], lo, hi, number})
+		held = append(held, heldToken{raw[i:j], lo, hi})
 		at = j
 	}
 	ended := eachToken(raw, func(i, j int, isKey bool) {
@@ -1345,9 +1314,9 @@ func holdOut(raw string) (string, []heldToken) {
 		case isKey:
 			key = s
 		case heldTimeKeys[key] && heldTimeRe.MatchString(s) && strings.HasSuffix(strings.TrimRight(raw[:i], " \t\n\r"), ":"):
-			hold(i, j, 1, j-i-1, false)
+			hold(i, j, 1, j-i-1)
 		}
-	}, func(i, j int) { hold(i, j, 0, j-i, true) })
+	}, func(i, j int) { hold(i, j, 0, j-i) })
 	if !ended || clash || len(held) == 0 {
 		return raw, nil
 	}
@@ -1363,21 +1332,13 @@ func holdOut(raw string) (string, []heldToken) {
 // token's last characters and the JSON after them, or the JSON before
 // it and its first, which the filter never saw side by side, or one
 // that holds a time's quote. A form wholly inside a time's text or a
-// number is the token's own, and stays (rule 7), but in a number when
-// the same key's value was replaced elsewhere in the body (replaced:
-// by this filter, or by an earlier pass, its marker in the body or its
-// key in a nested redacted_env):
-// the number whole beside that marker would show the value by
-// difference, where the body was withheld (a time's marker said as
-// much). These
-// are the bytes the filter returns: what redactJSON's hoist and the
-// stream's splices do after is rule 2's.
-func (r *Redactor) putBack(out string, held []heldToken, replaced map[string]bool) (string, bool) {
+// number is the token's own, and stays (rule 7), the same value's
+// marker elsewhere in the body or not. These are the bytes the filter
+// returns: what redactJSON's hoist and the stream's splices do after
+// is rule 2's.
+func (r *Redactor) putBack(out string, held []heldToken) (string, bool) {
 	var b strings.Builder
-	type span struct {
-		lo, hi int
-		number bool
-	}
+	type span struct{ lo, hi int }
 	spans := make([]span, 0, len(held))
 	n, at, misplaced := 0, 0, false
 	ended := eachToken(out, func(i, j int, _ bool) {
@@ -1389,7 +1350,7 @@ func (r *Redactor) putBack(out string, held []heldToken, replaced map[string]boo
 			return
 		}
 		b.WriteString(out[at:i])
-		spans = append(spans, span{b.Len() + held[n].lo, b.Len() + held[n].hi, held[n].number})
+		spans = append(spans, span{b.Len() + held[n].lo, b.Len() + held[n].hi})
 		b.WriteString(held[n].text)
 		at, n = j, n+1
 	}, func(int, int) {})
@@ -1399,10 +1360,6 @@ func (r *Redactor) putBack(out string, held []heldToken, replaced map[string]boo
 	b.WriteString(out[at:])
 	s := b.String()
 	for _, sec := range r.secrets {
-		elsewhere := false
-		for _, k := range sec.keys {
-			elsewhere = elsewhere || replaced[k]
-		}
 		// The spans are in order, as the occurrences are found: the
 		// first span that ends past an occurrence's start is the only
 		// one it can begin in or before, and the spans it can reach
@@ -1424,7 +1381,7 @@ func (r *Redactor) putBack(out string, held []heldToken, replaced map[string]boo
 				if sp.lo >= end {
 					break
 				}
-				if start < sp.lo || end > sp.hi || sp.number && elsewhere {
+				if start < sp.lo || end > sp.hi {
 					return "", false
 				}
 			}

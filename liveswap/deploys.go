@@ -65,9 +65,8 @@ import (
 //     used only once it is valid. Its numbers (an artifact's size, a
 //     phase's seconds, a probe's status) are held too, so a value that
 //     is a piece of one no longer leaves the record no JSON, which was
-//     written as the envelope below; but when the record's detail holds
-//     the same value's marker, the record is the envelope as before
-//     (the filter's rule 7).
+//     written as the envelope below; nor does the same value's marker
+//     in the record's detail make it the envelope (the filter's rule 7).
 //     The vocabulary (status, phase) stands outside the filter in
 //     every body (redact.go, rule 3), so a value equal to a word of
 //     it rewrites nothing; a record the filter leaves unreadable as

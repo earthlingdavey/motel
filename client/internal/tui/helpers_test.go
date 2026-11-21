@@ -70,6 +70,10 @@ func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake), with ...fun
 	hs.scr = scr
 	hs.u = New(s, false, v)
 	hs.u.App.SetScreen(hs.scr)
+	_, onTTY := scr.Tty()
+	if onTTY {
+		takeFirstResize(t, scr)
+	}
 	done := make(chan struct{})
 	hs.done = done
 	go func() { defer close(done); _ = hs.u.App.Run(); close(hs.u.ended) }()
@@ -77,8 +81,43 @@ func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake), with ...fun
 	// tview clears its screen unlocked as Run returns, so a Stop from
 	// outside races it.
 	t.Cleanup(func() { hs.u.App.QueueEvent(tcell.NewEventKey(tcell.KeyCtrlC, 0, tcell.ModNone)); <-done })
+	if onTTY {
+		// What tview does with the size taken, in its turn here: the
+		// screen cleared, and drawn again.
+		hs.on(func() { hs.scr.Clear() })
+	}
 	hs.sync()
 	return hs
+}
+
+// takeFirstResize takes the size a screen on a terminal (tcell's
+// terminfo screen, the hostile package's) says at its Init, in
+// SetScreen, before the event loop starts; startOn then clears and
+// draws the screen again in its turn, as tview's Run would for it. tcell
+// posts that size from a goroutine of its own, so tview would draw its
+// frame at no point any wait here orders: a frame that reads the clock
+// as a test moves it, a data race (TestSafeBytesAlertArrives failed so
+// on arm64). A simulation screen is on no terminal and says no size.
+// The test fails if the screen did not start (SetScreen drops Init's
+// error), if another event comes first, or if none comes in 10 s.
+func takeFirstResize(t *testing.T, scr tcell.Screen) {
+	t.Helper()
+	if w, _ := scr.Size(); w == 0 {
+		t.Fatal("the screen did not start: its Init failed (tview's SetScreen drops the error)")
+	}
+	got := make(chan tcell.Event, 1)
+	go func() { got <- scr.PollEvent() }()
+	select {
+	case ev := <-got:
+		if _, ok := ev.(*tcell.EventResize); !ok {
+			scr.Fini()
+			t.Fatalf("the screen's first event is %T, not its size", ev)
+		}
+	case <-time.After(10 * time.Second):
+		// Fini ends the screen's own loops, and the PollEvent waiting.
+		scr.Fini()
+		t.Fatal("the screen said no size in 10 s")
+	}
 }
 
 // pump makes every read the engine would make now, in its order, each

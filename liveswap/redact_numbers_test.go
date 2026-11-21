@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -94,41 +95,47 @@ func TestHeldNumbersAreTheBodysOwn(t *testing.T) {
 	}
 }
 
-// TestHeldNumbersNotByDifference: a number that holds a value the
-// filter replaced elsewhere in the body (the app printed it) sends the
-// body through whole, which is withheld, as on main: the number whole
-// beside the marker would show the value. A time keeps its hold, its
-// marker having said as much.
-func TestHeldNumbersNotByDifference(t *testing.T) {
+// TestHeldNumbersBesideTheirMarker: a number that holds a value the
+// filter replaced elsewhere in the body (the app printed it) is sent
+// whole beside the marker, the body served and the key named: figures
+// are motel's own data, never hidden for the value they hold (rule 7,
+// the owner's decision of 2026-11-21). So too beside an earlier pass's
+// marker, and a time beside its value's marker.
+func TestHeldNumbersBesideTheirMarker(t *testing.T) {
 	r := NewRedactor([]string{"NODE_MEMORY_LIMIT=268435456", "API_VERSION=2023-11-14"}, nil)
 	got := r.redactJSON([]byte(`{"caps":{"memory_max":268435456},"log_tail":["limit 268435456"]}`))
-	if want := `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["NODE_MEMORY_LIMIT"]}`; got != want {
+	if want := `{"caps":{"memory_max":268435456},"log_tail":["limit [redacted:NODE_MEMORY_LIMIT]"],"redacted_env":["NODE_MEMORY_LIMIT"]}`; got != want {
 		t.Errorf("a number beside its value's marker:\n got %s\nwant %s", got, want)
 	}
 	// The marker an earlier pass put there, which a nested redacted_env
 	// names (a failed deploy's detail): the filter finds nothing itself.
-	got = r.redactJSON([]byte(`{"artifact_bytes":268435456,"detail":{"log_tail":["heap limit [redacted:NODE_MEMORY_LIMIT] exceeded"]},"redacted_env":["NODE_MEMORY_LIMIT"]}`))
-	if want := `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["NODE_MEMORY_LIMIT"]}`; got != want {
-		t.Errorf("a number beside an earlier pass's marker:\n got %s\nwant %s", got, want)
+	early := `{"artifact_bytes":268435456,"detail":{"log_tail":["heap limit [redacted:NODE_MEMORY_LIMIT] exceeded"]},"redacted_env":["NODE_MEMORY_LIMIT"]}`
+	if got = r.redactJSON([]byte(early)); got != early {
+		t.Errorf("a number beside an earlier pass's marker:\n got %s\nwant %s", got, early)
 	}
 	// An earlier pass's marker whose key the nested redacted_env names
-	// as a marker (a value equal to the key's name): the marker in the
-	// body says it. No writer makes this body today (a record whose
-	// number holds the value is withheld as it is written, the raw key
-	// then in its detail): the scan stands in for the names.
+	// as a marker (a value equal to the key's name), and the marker as
+	// encoding/json escapes it: the number stands whole beside either,
+	// and the nested redacted_env stays as it was.
 	r2 := NewRedactor([]string{"NODE_MEMORY_LIMIT=268435456", "ALIAS=NODE_MEMORY_LIMIT"}, nil)
 	line, _ := r2.Redact("heap limit 268435456 exceeded")
 	name, _ := r2.Redact("NODE_MEMORY_LIMIT")
-	early, _ := json.Marshal(map[string]any{"artifact_bytes": 268435456, "detail": map[string]any{"log_tail": []string{line}}, "redacted_env": []string{name}})
-	if got = r2.redactJSON(early); strings.Contains(got, "268435456") || strings.Contains(string(early), `"NODE_MEMORY_LIMIT"`) {
-		t.Errorf("a number beside a marker whose key is named by a marker: %s from %s", got, early)
-	}
-	// The marker as encoding/json escapes it, with no nested name.
+	named, _ := json.Marshal(map[string]any{"artifact_bytes": 268435456, "detail": map[string]any{"log_tail": []string{line}}, "redacted_env": []string{name}})
 	r3 := NewRedactor([]string{"NODE_MEMORY_LIMIT=268435456", "X=:NODE_MEMORY_LIMIT]"}, nil)
-	line, _ = r3.Redact("heap limit 268435456 exceeded")
-	early, _ = json.Marshal(map[string]any{"artifact_bytes": 268435456, "log_tail": []string{line}})
-	if got = r3.redactJSON(early); strings.Contains(got, "268435456") || !strings.Contains(string(early), `\u003c`) {
-		t.Errorf("a number beside an escaped marker: %s from %s", got, early)
+	escLine, _ := r3.Redact("heap limit 268435456 exceeded")
+	escaped, _ := json.Marshal(map[string]any{"artifact_bytes": 268435456, "log_tail": []string{escLine}})
+	if strings.Contains(string(named), `"NODE_MEMORY_LIMIT"`) || !strings.Contains(string(escaped), `\u003c`) {
+		t.Fatalf("the bodies are not the cases: %s, %s", named, escaped)
+	}
+	for _, c := range []struct {
+		what string
+		r    *Redactor
+		body []byte
+	}{{"a marker whose key is named by a marker", r2, named}, {"an escaped marker", r3, escaped}} {
+		// The filter finds nothing in either: each is served as it came.
+		if got := c.r.redactJSON(c.body); got != string(c.body) {
+			t.Errorf("a number beside %s:\n got %s\nwant %s", c.what, got, c.body)
+		}
 	}
 	got = r.redactJSON([]byte(`{"started_at":"2023-11-14T22:13:20Z","log_tail":["on 2023-11-14"],"n":268435456}`))
 	if want := `{"log_tail":["on [redacted:API_VERSION]"],"n":268435456,"redacted_env":["API_VERSION"],"started_at":"2023-11-14T22:13:20Z"}`; got != want {
@@ -136,38 +143,58 @@ func TestHeldNumbersNotByDifference(t *testing.T) {
 	}
 }
 
-// TestFailedDeployNumberNotByDifference: a failed deploy whose app
-// printed its memory limit, which equals its memory_max, has the marker
-// in its detail before the filter runs; the deploy's answer, the status
-// and the record are withheld or the envelope, as on main, never the
-// number beside the marker.
-func TestFailedDeployNumberNotByDifference(t *testing.T) {
+// TestFailedDeployNumberBesideItsMarker: a failed deploy whose app
+// printed its memory limit, which equals its memory_max and the
+// artifact's size, has the marker in its detail before the filter runs;
+// the deploy's answer, the status (v0 serving, its caps shown), the
+// record and the stream's last line are each served with the figures
+// whole beside the marker, the printed value replaced and its key named,
+// never withheld or the envelope.
+func TestFailedDeployNumberBesideItsMarker(t *testing.T) {
 	h, rig := newTestHandler(t)
 	rig.spec.envFile = filepath.Join(t.TempDir(), "demo.env")
 	rig.spec.caps = resourceCaps{memoryMax: 256 << 20}
 	rig.spec.deployLogLines = 40
 	must(t, os.WriteFile(rig.spec.envFile, []byte("NODE_MEMORY_LIMIT=268435456\n"), 0o600))
+	rig.fetch.stats = archiveStats{entries: 3, bytes: 268435456}
+	if w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/0.tgz","version":"v0"}`); w.Code != http.StatusOK {
+		t.Fatalf("deploying v0: %d %s", w.Code, w.Body)
+	}
 	rig.ma.journal = &fakeJournal{lines: []string{"node: heap limit 268435456 exceeded"}}
 	rig.prober.err = fmt.Errorf("not healthy within deadline 5m: %w", &probeError{status: 500, body: "limit 268435456"})
-	rig.fetch.stats = archiveStats{entries: 3, bytes: 268435456}
-	check := func(what, body string) {
+	check := func(what, body string, figures ...string) {
 		t.Helper()
-		if strings.Contains(body, "268435456") {
-			t.Errorf("%s: the value stands in a number: %s", what, body)
+		var keys struct {
+			RedactedEnv []string `json:"redacted_env"`
+		}
+		if err := json.Unmarshal([]byte(body), &keys); err != nil || !slices.Contains(keys.RedactedEnv, "NODE_MEMORY_LIMIT") ||
+			!strings.Contains(body, "[redacted:NODE_MEMORY_LIMIT]") || strings.Contains(body, "withheld") {
+			t.Errorf("%s: %v: %s", what, err, body)
+		}
+		// The figures whole, and the value nowhere else.
+		rest := body
+		for _, f := range figures {
+			if !strings.Contains(rest, f) {
+				t.Errorf("%s: %s is not whole: %s", what, f, body)
+			}
+			rest = strings.ReplaceAll(rest, f, "")
+		}
+		if strings.Contains(rest, "268435456") {
+			t.Errorf("%s: the value stands outside the figures: %s", what, body)
 		}
 	}
 	w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/1.tgz","version":"v1"}`)
-	check("the deploy's answer", w.Body.String())
-	check("the status", do(t, h, http.MethodGet, "/demo", appToken(t), "").Body.String())
+	check("the deploy's answer", w.Body.String(), `"memory_max":268435456`, `"artifact_bytes":268435456`)
+	check("the status", do(t, h, http.MethodGet, "/demo", appToken(t), "").Body.String(), `"memory_max":268435456`, `"artifact_bytes":268435456`)
 	b, _ := os.ReadFile(deployRecordPath(rig.spec.dirs.deploys, "v1"))
-	check("the record on disk", string(b))
-	check("the record read", do(t, h, http.MethodGet, "/demo?deploy=v1", appToken(t), "").Body.String())
+	check("the record on disk", string(b), `"artifact_bytes":268435456`)
+	check("the record read", do(t, h, http.MethodGet, "/demo?deploy=v1", appToken(t), "").Body.String(), `"artifact_bytes":268435456`)
 	// A fresh tail, as the real journal reads one: the fake's lines
 	// were replaced in place by the first deploy's detail.
 	rig.ma.journal = &fakeJournal{lines: []string{"node: heap limit 268435456 exceeded"}}
-	_, lines := streamLinesOf(t, h, `{"url":"https://x/2.tgz","version":"v2"}`)
-	last, _ := json.Marshal(lines[len(lines)-1])
-	check("the stream's last line", string(last))
+	sw, _ := streamLinesOf(t, h, `{"url":"https://x/2.tgz","version":"v2"}`)
+	lines := strings.Split(strings.TrimRight(sw.Body.String(), "\n"), "\n")
+	check("the stream's last line", lines[len(lines)-1], `"memory_max":268435456`, `"artifact_bytes":268435456`)
 }
 
 // TestHeldNumbersManyTokens: a value of digits alone is no piece of a

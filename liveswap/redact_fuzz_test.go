@@ -117,7 +117,7 @@ func FuzzRedactor(f *testing.F) {
 			}
 			// And a body whose only text is the affixes, so that a
 			// form that is a piece of the number (a seed of digits) is
-			// held there whole, the path no marker beside it sends whole.
+			// held there whole with no marker of it in the body.
 			lone, _ := json.Marshal(map[string]any{"error": prefix + suffix, "at": time.Unix(1_700_000_000, 0).UTC(), "count": 1700000000.25})
 			lj := r.redactJSON(lone)
 			if !json.Valid([]byte(lj)) {

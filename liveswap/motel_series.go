@@ -48,10 +48,10 @@ func (h *Handler) appSeries(w http.ResponseWriter, r *http.Request, app appHandl
 // step, the end and every point are put back after its last pass. They are the
 // store's numbers and the box's clock, never the app's bytes. The step
 // and the points are numbers, which rule 7 of redact.go holds in any
-// body but in its fallbacks (a value across a number's edge, or one
-// replaced elsewhere in the body), and held here even then; the end is
-// a time under a key rule 7 does not hold, and an env_file value that
-// is a date or a piece of one would otherwise be replaced inside it, as
+// body but in its fallbacks (a value across a number's edge among
+// them), and held here even then; the end is a time under a key rule 7
+// does not hold, and an env_file value that is a date or a piece of one
+// would otherwise be replaced inside it, as
 // "unanswered" would be in the store's word, and leave a body no client
 // reads. The filter so reads a few hundred
 // bytes, not the points (notify/DESIGN-metrics.md). It reports false,
