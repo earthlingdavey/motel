@@ -253,28 +253,36 @@ func dressTag(b *strings.Builder, tag string) {
 // one a tag cuts is drawn twice. The zero-width space tagless writes
 // after a [ goes with it, though it is a cluster of its own, so that no
 // tag comes between them (a [ ends a cluster a Prepend character
-// begins in the segment before).
+// begins in the segment before). Each end is moved to the start of the
+// next cluster and the joined text sliced there, once each.
 func whole(segs []string) []string {
-	out := make([]string, len(segs))
-	j, end, last := 0, 0, 0
-	if len(segs) > 0 {
-		end = len(segs[0])
+	ascii := true
+	for _, s := range segs {
+		for i := 0; i < len(s) && ascii; i++ {
+			ascii = s[i] < 0x80
+		}
 	}
-	at, state := 0, -1
-	for rest := strings.Join(segs, ""); rest != ""; {
+	if ascii || len(segs) < 2 {
+		return segs // a cluster of ASCII is one character: termtext escapes CR and LF
+	}
+	joined := strings.Join(segs, "")
+	out := make([]string, len(segs))
+	j, start, end, bracket, state := 0, 0, len(segs[0]), false, -1
+	for at, rest := 0, joined; rest != ""; {
 		var c string
 		c, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
-		for at >= end {
-			j++
-			end += len(segs[j])
+		if !bracket || c != "\u200b" {
+			for j < len(segs)-1 && end <= at {
+				out[j], start = joined[start:at], at
+				j++
+				end += len(segs[j])
+			}
 		}
-		k := j
-		if c == "\u200b" && strings.HasSuffix(out[last], "[") {
-			k = last
-		}
-		out[k] += c
-		last = k
+		bracket = strings.HasSuffix(c, "[")
 		at += len(c)
+	}
+	for ; j < len(segs); j++ {
+		out[j], start = joined[start:], len(joined)
 	}
 	return out
 }

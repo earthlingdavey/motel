@@ -157,3 +157,21 @@ func TestEscapeHolds(t *testing.T) {
 		t.Errorf("inert text lost its tag's words: %q", got)
 	}
 }
+
+// TestWholeAllocatesOnce: whole's allocations do not grow with the
+// text, ASCII or not: a box can send a line of many thousands of
+// characters, and each frame draws it. Seen to fail: with each cluster
+// added to its segment one at a time (out[k] += c): 30,009 allocations
+// for 30,000 zero-width spaces, or letters, against 1,010 and 1,009 for
+// 1,000.
+func TestWholeAllocatesOnce(t *testing.T) {
+	for _, c := range []string{"\u200b", "a"} {
+		allocs := func(n int) float64 {
+			segs := []string{"level ", strings.Repeat(c, n) + "x", " ok"}
+			return testing.AllocsPerRun(5, func() { whole(segs) })
+		}
+		if few, many := allocs(1000), allocs(30000); many > few {
+			t.Errorf("whole of %q: %v allocations for 1,000, %v for 30,000", c, few, many)
+		}
+	}
+}
