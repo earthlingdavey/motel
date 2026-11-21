@@ -216,7 +216,7 @@ const cursorNumber = `(?:0|[1-9a-f][0-9a-f]{0,15})`
 // names, one of this form with made-up ids among them: the grammar
 // keeps out what is no cursor, and does not make a cursor one the box
 // gave. The read that takes one must check that against the cursor's
-// own entry. No row reads it until the logs row.
+// own entry: the logs row's read does (logs.go, readLogs).
 var journalCursor = &keyGrammar{
 	re: regexp.MustCompile(`^s=[0-9a-f]{32};i=` + cursorNumber + `;b=[0-9a-f]{32};m=` + cursorNumber +
 		`;t=` + cursorNumber + `;x=` + cursorNumber + `$`),
@@ -265,7 +265,7 @@ func runJournalctl(ctx context.Context, args []string, limit int) ([]byte, error
 // 13's systemd 257: the same bytes with no environment as with LANG,
 // LC_ALL, TZ, PATH and TERM set).
 func journalctlCommand(ctx context.Context, args []string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, journalctlPath, args...) //nolint:gosec // a fixed program by absolute path; the arguments are validated unit names, pids the manager recorded, stream ids of journald's shape, a count and a timestamp built here, never request input
+	cmd := exec.CommandContext(ctx, journalctlPath, args...) //nolint:gosec // a fixed program by absolute path; the arguments are validated unit names, pids the manager recorded, stream ids of journald's shape, a count, a timestamp, an app's identifier and a uid built here, and a cursor held to journalCursor, one argument
 	cmd.Env = []string{}
 	return cmd
 }

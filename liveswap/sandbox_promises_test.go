@@ -33,6 +33,8 @@ import (
 //	no empty list property               TestSandboxPropertiesNeverEmitsAnEmptyBindList
 //	/sys/fs/cgroup read-only             TestSandboxPropertiesEveryUnit
 //	/run/systemd/resolve reachable       TestSandboxPropertiesEveryUnit
+//	journald's sockets never reachable   TestSandboxViewHoldsNoJournalSocket
+//	                                     TestIntegrationLogsNothingForgedFromTheSandbox
 //	user + PID namespace, every unit     TestSandboxPropertiesEveryUnit
 //	                                     TestIntegrationSystemdSandboxProbe
 //	probe checks from inside             TestSandboxProbeCommand

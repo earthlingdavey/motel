@@ -176,9 +176,10 @@ signed:
 | `/_motel/apps/<app>/rules` | the rules the box alerts on that apply to the app: those of every app and the app's own `rule` lines, not one pinned to another app and none of the box's own checks (disks, backups, certificates). Each with what it fires on (its op, threshold, unit, `for`, and each guard's meaning) and the app's numbers alone: a check's last reading (its watchdog's restarts), and for a rule the metrics store evaluates, its value and whether vmalert holds it `pending` or `firing`, and since when; and whether the box could read the store (`"store"`: `on`, `off` with no `metrics` line, `unanswered`), and `rules_file` when the file vmalert reads is not this config's (a state is vmalert's). No query and no socket. The store's numbers are up to 30 s old, of an evaluation about a minute behind (as vmalert compared them) |
 | `/_motel/rules` | every rule the box alerts on, for a viewer of the box: as for an app's, with every app's numbers, the box's own checks (each filesystem's use, each app's backup age) and rules (a `disk_fill`'s prediction for each filesystem). `moteld monitor rules --json` from a laptop, without the store's socket and the queries |
 | `/_motel/apps/<app>/series[?range=1h\|24h\|7d\|14d]` | the app's numbers over the window (the hour when none is named), as the box's metrics store holds them, a point a step (a minute over the hour, 5 minutes over the day, 30 over 7 days, an hour over 14): its memory (each step's highest), CPU, and for an app behind `observe` its requests a second, 5xx share and p95; a step with no point is missing, never a zero; and whether the box could ask (`"store"`: `on`, `off` when the box's monitor block has no metrics line or there is none, `unanswered`). No panel, step or query of the reader's: the window is the one choice. Up to 30 s old. Experimental: the route and its JSON may change until a release's notes say otherwise |
+| `/_motel/apps/<app>/logs[?lines=200\|50\|1000][&after=<cursor>]` | the app's own lines, as the box's journal holds them, for a reader of its logs: the newest (200 when none is named), or those after a cursor an earlier answer gave. Read [Reading an app's logs](#reading-an-apps-logs). Experimental: the route and its JSON may change until a release's notes say otherwise |
 | `/_motel/alerts` | every alert the box's Alertmanager holds, for a viewer of the box: as for an app's, and with each the app it names and its instance (a path, a certificate's name, another site's); and every silence that is active or waits to start: its matchers, when it starts and ends, who made it and why (the operator's own words). Not the heartbeat, the test alert or the deploy mute itself, nor the two about a person's key (below), and no expired silence. At most 500 alerts, the newest, and 200 silences, the active ones and then the soonest to start, with `more_alerts` or `more_silences` when the box held more. Up to 5 s old |
 
-The last six rows, from `/_motel/backups` on, are on each release
+The last seven rows, from `/_motel/backups` on, are on each release
 after v0.8.0. A box at v0.8.0 answers each of them `404`, `{"error":"not
 found"}`, to a person it admits.
 
@@ -225,6 +226,105 @@ Who reads what, by the grant that applies from where they are:
 | an app's logs | no | no | A | no | every app |
 | the box's status, backups, every alert and silence, every rule | no | no | no | yes | yes |
 | deploy, roll back, push | no | no | no | no | no |
+
+### Reading an app's logs
+
+On each release after v0.8.0, and with no `motel` command yet: by hand,
+as above, or from a program of yours. A logs reader is sent what the
+app printed, which no filter can make safe: read [what a logs reader
+reads](#what-a-logs-reader-reads) before you give the grant.
+
+`GET /_motel/apps/<app>/logs` is the app's newest lines, `lines` of
+them at most (`200`, `50` or `1000`; 200 when none is named), oldest
+first. With `after`, the `cursor` an earlier answer gave, it is the
+lines after that one: poll with each answer's cursor to follow the
+app. A cursor holds `;`, which a query must escape: `curl -G
+--data-urlencode "after=$cursor"`; a raw `;` is the `422`. The answer:
+
+```json
+{"kept":"on","lines":[{"at":"2026-11-20T09:30:00.123456Z","release":"v42","text":"GET /cart 200 12ms"}],"more":false,"gap":false,"cursor":"s=…;i=…;b=…;m=…;t=…;x=…","redacted_env":["DATABASE_URL"]}
+```
+
+- `kept` is `off` for an app whose `deploy_log_lines` is `0`: it keeps
+  its output on the box, and no line is ever sent.
+- Each line is what the app wrote to its stdout or stderr (the journal
+  does not tell them apart), with when the journal stored it and the
+  release of the unit that wrote it. `release` is `""` when the journal
+  did not keep the unit: a process that exited before journald read
+  its line (a crash loop's lines often), or any line while journald is
+  behind. A line is at most 4 KiB (a longer one is cut and ends in
+  `…`; journald itself stores a line over 48 KiB as several), each run
+  of bytes that are not UTF-8 is one `U+FFFD`, and control characters
+  are as the app wrote them, for your terminal to be kept from.
+- Each line passes the app's filter on its own: the values of its
+  `env_file` in the forms the box knows, and some shapes of
+  credential. `redacted_env` names the keys it replaced. Not a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started):
+  changing a value does not hide it in lines already written, so
+  revoke the old credential.
+- A logs reader who can send the app input (a request to its site, which
+  most apps log) can test a guess of an `env_file` value: a line holding
+  a whole value of 8 characters or more comes back as the marker that
+  names its key, and a wrong guess as written. Never a piece of a value,
+  and never a generated one, which cannot be guessed; a weak one (a
+  word, a reused password) can be. The filter cannot close it, since any
+  visible replacement confirms a match. Keep generated values in
+  `env_file`, and give `logs` only to people you would trust with them:
+  the `access: person read logs` line names the keys a read replaced, so
+  a confirmed guess leaves the person's name and the key in the journal.
+- `more` is `true` when there was more than was sent: the count, or
+  64 KiB of the lines' text as the journal holds it (what is sent can be
+  longer: the filter's markers, JSON's escapes). After a follow the lines left are after
+  the last one sent: ask again at once with the cursor. After a tail
+  (no `after`, or `gap`) they are older than the first one sent, and no
+  read reaches them.
+- `cursor` is where the read got to, the `after` of the next. It is
+  absent when the read took no line: keep the one you sent. Keep it in
+  memory only, never on disk: it is the box's position in its journal.
+  Any cursor the box gave is honoured while the journal holds its line,
+  however old.
+- `gap` is `true` when the `after` you sent was not honoured: a cursor
+  of another app's, of a line the journal no longer holds, or one the
+  box never gave. The lines are then a fresh tail, as with no `after`,
+  and lines between may be missing. With no `cursor` beside it, forget
+  yours and tail, or every poll is a `gap`.
+
+At most four logs reads run at once on the box; a fifth waits a
+second, then is a `503` with `Retry-After: 1`. A journal that cannot be
+read is a `500`, and moteld's journal says why.
+
+**What the box records.** Each read that sends lines is a line in
+moteld's journal, `access: person read logs`, naming the person, the
+app, how many lines, the cursors of the first and the last
+(`first`, `last`), `gap` when there was one and the keys the filter
+replaced. From it you can read on the box what was sent, as the app
+wrote it, while the journal holds it: the lines from `first` to
+`last`. An entry the read passed over as another unit's (moteld's
+journal says when, `lines under an app's identifier from a unit that
+is not the app's were not sent`) is among them, so read on to `last`:
+
+```sh
+journalctl --cursor='<first>' -o json --all SYSLOG_IDENTIFIER=motel-<app> _UID=$(id -u motel) _TRANSPORT=stdout \
+  | sed '/"__CURSOR":"<last>"/q'
+```
+
+A person who follows an app writes one such line for each poll that
+finds new lines: an app that writes at least once a poll, followed at
+a poll every 2 s, makes 1,800 lines an hour (1,200 at 3 s), about 0.5
+to 0.8 MB of journal an hour. They share one message, so `journalctl -u
+moteld -o cat | grep -v '"access: person read logs"'` hides them. A
+person who asks for an app's logs and is refused (no `logs` grant on
+it, or one whose `from` list does not hold their address) is a Warn
+line, `access: person refused logs`, with the address and what was
+needed, at most once a minute for a person and each app of the box, and once a minute for a person and every name that is no app here, together.
+
+**A chatty app can cost another app its lines.** Every app runs under
+one systemd user manager, and journald's rate limit is per unit of the
+system manager, so every app of the box shares one budget (10,000 lines
+in 30 s, more on a box with disk to spare): an app that floods its
+output can make journald drop the lines of every other app, its deploy
+tail included, and a logs answer cannot know what was dropped.
+journald says `Suppressed … messages from user@<uid>.service`, naming
+no app. Issue #628 is about it.
 
 ## When their key is used from somewhere new
 
@@ -286,7 +386,8 @@ list, a network the key has not used before is told as
 `person_new_network`, as always; `person_outside_list` is not told,
 since a grant applies, so the key was not used outside every list. A
 logs read from there is refused with a `403`, and is not told to your
-channels. To hear of their key used outside the office at all, put a
+channels; moteld's journal has it (`access: person refused logs`, at
+most once a minute for a person and each app of the box, and once a minute for a person and every name that is no app here, together). To hear of their key used outside the office at all, put a
 `from` list on the viewer grant too.
 
 Each one-shot also has a line in moteld's journal, `access: a key used

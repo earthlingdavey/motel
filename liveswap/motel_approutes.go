@@ -72,6 +72,7 @@ var motelAppRoutes = []motelAppRoute{
 	{"alerts", access.AppAlerts, nil, (*Handler).appAlerts},
 	{"rules", access.AppRules, nil, (*Handler).appRules},
 	{"series", access.AppSeries, []queryKey{{name: "range", values: wire.SeriesRanges}}, (*Handler).appSeries},
+	{"logs", access.AppLogs, []queryKey{{name: "lines", values: wire.LogsLines}, {name: "after", grammar: journalCursor}}, (*Handler).appLogs},
 }
 
 // parseQuery is the request's query against the keys rt takes, or
@@ -180,6 +181,9 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 	case errors.Is(err, errUnknownApp):
 		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
 	case err != nil:
+		if rt.action == access.AppLogs && p != nil {
+			h.logsRefused(r, p.Name, name, err)
+		}
 		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), nil)
 	}
 	if p == nil {

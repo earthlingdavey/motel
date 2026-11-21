@@ -196,6 +196,8 @@ func decodesAsWire(t *testing.T, what string, w *httptest.ResponseRecorder) {
 		check(body, new(wire.Rules))
 	case w.Code == http.StatusOK && strings.Contains(what, "/series"):
 		check(body, new(wire.Series))
+	case w.Code == http.StatusOK && strings.HasSuffix(what, "/logs"):
+		check(body, new(wire.Logs))
 	case w.Code == http.StatusOK && strings.Contains(what, "/_motel/apps"):
 		check(body, new(wire.Apps))
 	case w.Code == http.StatusForbidden && strings.Contains(body, `"needs":`):

@@ -54,6 +54,7 @@ type twoAppsRig struct {
 	people  map[string]accesstest.Key
 	views   map[string][]string // the apps each caller may read
 	onBox   map[string]bool     // the callers whose grant is on the box
+	journal identLogs           // every app's journal, each its own lines
 }
 
 func newTwoAppsRig(t *testing.T) *twoAppsRig {
@@ -78,7 +79,8 @@ func newTwoAppsRig(t *testing.T) *twoAppsRig {
 			"deployer of appalpha": {"appalpha"},
 			"deployer of appbravo": {"appbravo"},
 		},
-		onBox: map[string]bool{"viewer of the box": true, "logs of the box": true},
+		onBox:   map[string]bool{"viewer of the box": true, "logs of the box": true},
+		journal: identLogs{byIdent: map[string]*scriptedLogs{}},
 	}
 	app := &App{managed: map[string]*managedApp{}, observed: new(sync.Map)}
 	for _, name := range twoApps {
@@ -115,6 +117,13 @@ func newTwoAppsRig(t *testing.T) *twoAppsRig {
 		}
 		fetch.err = nil
 		r.sockets[name] = spec.dirs.root
+		// The journal holds a line of each app under its own identifier,
+		// holding its log canary and its env_file's value.
+		spec.deployLogLines = 200
+		ma.logs = r.journal
+		lines := appJournal(1, func(int) string { return logCanary(name) + " said " + r.canary[name] })
+		lines[0].userUnit = unitPrefix + name + ".v1.0a1b2c3d0a1b2c3d.service"
+		r.journal.byIdent[syslogIdentifier(name)] = &scriptedLogs{journal: lines}
 		app.managed[name] = ma
 	}
 	var l access.Lines
@@ -243,6 +252,24 @@ func motelAppRequest(rt motelAppRoute, app string) *http.Request {
 		return httptest.NewRequest(http.MethodGet, "http://"+personBox+motelAppsPrefix+app+"/"+rt.read, nil)
 	case "series":
 		return httptest.NewRequest(http.MethodGet, "http://"+personBox+motelAppsPrefix+app+"/series?range=24h", nil)
+	case "logs":
+		return httptest.NewRequest(http.MethodGet, "http://"+personBox+motelAppsPrefix+app+"/logs?lines=50", nil)
+	}
+	return nil
+}
+
+// logCanary is in app's journal, which only a read of app's logs holds.
+func logCanary(app string) string { return "log-canary-" + app + "-3e8a1f" }
+
+// identLogs is a journal of several apps: each read is of the
+// identifier its argv selects, and of nothing else.
+type identLogs struct{ byIdent map[string]*scriptedLogs }
+
+func (j identLogs) entries(ctx context.Context, args []string, each func([]byte) bool) error {
+	for _, a := range args {
+		if ident, ok := strings.CutPrefix(a, "SYSLOG_IDENTIFIER="); ok && j.byIdent[ident] != nil {
+			return j.byIdent[ident].entries(ctx, args, each)
+		}
 	}
 	return nil
 }
@@ -255,6 +282,8 @@ func appReadCanaries(read, app string) []string {
 		return ruleCanaries(app)
 	case "series":
 		return []string{strconv.FormatFloat(seriesCanary(app), 'f', -1, 64)}
+	case "logs":
+		return []string{logCanary(app)}
 	}
 	return []string{alertCanary(app)}
 }
@@ -388,8 +417,13 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 				}
 				what := "GET " + req.URL.Path
 				want := http.StatusUnauthorized // a deploy token is judged against the global sources: none here
+				may := views(caller, app)
+				if rt.action == access.AppLogs {
+					// A logs grant's alone: no viewer reads logs.
+					may = may && strings.HasPrefix(caller, "logs of ")
+				}
 				switch {
-				case person(caller) && views(caller, app):
+				case person(caller) && may:
 					want = http.StatusOK
 				case person(caller):
 					want = http.StatusForbidden
@@ -401,7 +435,7 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 				for _, other := range twoApps {
 					// Every read's canaries of the other app: an alerts read
 					// holds no rule of it either.
-					for _, read := range []string{"alerts", "rules", "series"} {
+					for _, read := range []string{"alerts", "rules", "series", "logs"} {
 						for _, c := range appReadCanaries(read, other) {
 							if other != app && strings.Contains(body, c) {
 								t.Errorf("%s, %s: the answer holds %s's %q: %s", caller, what, other, c, body)

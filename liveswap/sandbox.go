@@ -128,9 +128,13 @@ var sandboxBaseView = []string{
 // route: the user manager's private socket and session bus (with
 // PrivateUsers= mapping the app's uid one-to-one, reaching it lets the
 // app ask the manager for a unit with no sandbox at all — read-only is
-// no defence, since connecting to a socket is not a write) and the
-// kernel interfaces the unit gets its own.
-var sandboxNeverReachable = []string{"/run/user", "/dev", "/sys", "/proc"}
+// no defence, since connecting to a socket is not a write), journald's
+// sockets (an app that reached them could write lines under another
+// app's identifier, which an app's logs are read by: /dev/log, under
+// /dev, points into the same directory) and the kernel interfaces the
+// unit gets its own. An app's output reaches journald only as its
+// unit's own stream, which the manager opens before the view exists.
+var sandboxNeverReachable = []string{"/run/user", "/run/systemd/journal", "/dev", "/sys", "/proc"}
 
 // sandboxMotelPaths is the supervisor's own state on a packaged
 // install: TLS keys and certificates, the admin socket's directory,
@@ -456,8 +460,8 @@ func probeSandboxSpec() *sandboxSpec {
 // fails is a failure of its own, named on the line.
 func sandboxProbeCommand(nonce string) []string {
 	// The echo lands in the journal under the probe unit's identifier
-	// (motel-sandbox-probe), so a refused host can be diagnosed
-	// from `journalctl -t motel-sandbox-probe`. The argv reaches the
+	// (probeIdentifier, motel_sandboxprobe), so a refused host can be
+	// diagnosed from `journalctl -t motel_sandboxprobe`. The argv reaches the
 	// shell byte for byte, as every unit's command does (no-env-expand,
 	// see unitProperties), so the script is spelled as a shell reads it.
 	// /proc/self/status is read by the shell itself, so the mode is the
@@ -599,7 +603,7 @@ func probeSandboxCapability(r runner) error {
 		err = attempt()
 	}
 	if err != nil {
-		return fmt.Errorf("sandbox probe unit: %w — check `journalctl -t motel-sandbox-probe` for the probe's own output, if it got as far as running; the supported host is Debian 13: PrivatePIDs= needs systemd 257, both namespaces need a kernel that permits them, and the syscall filter needs seccomp the user manager can apply to the unit (the probe's line says which check failed: \"seccomp 0\" or \"unshare allowed\" means the manager skipped the unit's seccomp settings; an ipc equal to the manager's, or a mqueue owner other than self, means the unit has no IPC namespace of its own, and \"shm write failed\" that its /dev/shm is not writable)", err)
+		return fmt.Errorf("sandbox probe unit: %w — check `journalctl -t motel_sandboxprobe` for the probe's own output, if it got as far as running; the supported host is Debian 13: PrivatePIDs= needs systemd 257, both namespaces need a kernel that permits them, and the syscall filter needs seccomp the user manager can apply to the unit (the probe's line says which check failed: \"seccomp 0\" or \"unshare allowed\" means the manager skipped the unit's seccomp settings; an ipc equal to the manager's, or a mqueue owner other than self, means the unit has no IPC namespace of its own, and \"shm write failed\" that its /dev/shm is not writable)", err)
 	}
 	return nil
 }

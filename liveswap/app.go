@@ -214,6 +214,7 @@ type managedApp struct {
 	clock     clock
 	store     stateStore
 	journal   journalReader
+	logs      logsSource
 	logger    *zap.Logger
 	// installed is closed by the first install of a spec (installSpec),
 	// and nil from then on: what a request whose token verified before
@@ -466,6 +467,7 @@ func (ma *managedApp) installSpec(owner any, spec *appSpec, verifiers []deploytr
 		ma.fetch = &releaseFetcher{client: clients.download}
 		ma.clock = realClock{}
 		ma.journal = journalctlReader{}
+		ma.logs = journalctlLogs{}
 	} else if sr, ok := ma.runner.(*systemdRunner); ok {
 		sr.setLogger(logger)
 	}
@@ -536,6 +538,7 @@ type collaborators struct {
 	clock   clock
 	store   stateStore
 	journal journalReader
+	logs    logsSource
 	logger  *zap.Logger
 	// onPhase is the request's phase listener, carried with the
 	// snapshot so setPhase needs no lock to find it.
@@ -555,6 +558,7 @@ func (ma *managedApp) snapshot() collaborators {
 		clock:    ma.clock,
 		store:    ma.store,
 		journal:  ma.journal,
+		logs:     ma.logs,
 		logger:   ma.logger,
 		notifier: ma.notifier,
 	}
