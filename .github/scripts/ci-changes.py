@@ -7,7 +7,7 @@ commit and its first parent, the base branch), and prints the
 `heavy=true|false` line that job writes to $GITHUB_OUTPUT.
 
 heavy=false only when there are paths and every one is markdown, or a
-usage ledger file (a .csv or .json under usage/), that no job reads: then lint, test, govulncheck, the e2e lanes, package
+usage ledger file (a .csv or .json under usage/), that no job reads: then lint, test, test-integration, govulncheck, the e2e lanes, package
 and install-test are skipped, and ci-ok accepts them skipped. gitleaks,
 usage-check and dependency-review run on every PR whatever this says,
 so usage/ and docs/footprint.md (which usage-check renders and diffs)
