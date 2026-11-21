@@ -400,8 +400,8 @@ func TestLinesEachOnARow(t *testing.T) {
 		}},
 	}
 	// rows says whether each line of ss is drawn on a row of its own,
-	// the row its own text and nothing else (but the zero-width space
-	// the door begins it with).
+	// the row its own text and nothing else (but the word joiner
+	// rowEnd begins it with).
 	rows := func(join func(ss []string) (Shown, []string), ss []string) bool {
 		s, each := join(ss)
 		got := tview.WordWrap(s.s, 1<<30)
@@ -410,7 +410,7 @@ func TestLinesEachOnARow(t *testing.T) {
 		}
 		for i, r := range got {
 			if i > 0 {
-				r = strings.TrimPrefix(r, "\u200b")
+				r = strings.TrimPrefix(r, strings.TrimPrefix(rowEnd, "\n"))
 			}
 			if r != each[i] {
 				return false
@@ -443,5 +443,48 @@ func TestLinesEachOnARow(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestJoinedLinesWrapAsAlone: a line under another, in each way the
+// door joins lines, wraps as it does alone, word wrap on (the help, the
+// stop help, the refused screen) and off (a deploy's log tail after
+// w): each row after the first line's the row it is drawn on as a
+// view's only text. The lines begin with an indent, then a token the
+// rest of a row does not hold. Seen to fail: with rowEnd's line feed
+// followed by a zero-width space, which gives a break after the
+// indent, at widths 6 to 12 with word wrap on (a blank row, then the
+// token at the left edge).
+func TestJoinedLinesWrapAsAlone(t *testing.T) {
+	lines := []string{"    :command-name rest", "    ,comma-word rest", "    )paren-word rest", "    plainword rest", "  -1 rest"}
+	draw := func(s Shown, w int, word bool) []string {
+		const h = 8
+		scr := sim(w, h)
+		tv := tview.NewTextView().SetDynamicColors(true).SetWrap(true).SetWordWrap(word)
+		SetText(tv, s)
+		tv.SetRect(0, 0, w, h)
+		tv.Draw(scr)
+		var rows []string
+		for y := range h {
+			rows = append(rows, row(scr, y, w))
+		}
+		return rows
+	}
+	for _, l := range lines {
+		joins := map[string][2]Shown{
+			"Texts":    {Texts([]termtext.Text{termtext.From("first"), termtext.From(l)}), Texts([]termtext.Text{termtext.From(l)})},
+			"Lines":    {Lines([]model.Line{{{T: termtext.From("first")}}, {{T: termtext.From(l)}}}, true), Lines([]model.Line{{{T: termtext.From(l)}}}, true)},
+			"LitLines": {LitLines("first\n" + l), LitLines(l)},
+		}
+		for name, j := range joins {
+			for _, w := range []int{6, 8, 10, 12, 16} {
+				for _, word := range []bool{true, false} {
+					under, alone := draw(j[0], w, word), draw(j[1], w, word)
+					if !slices.Equal(under[1:], alone[:len(alone)-1]) {
+						t.Errorf("%s, %q at width %d, word wrap %v: under a line %q, alone %q", name, l, w, word, under[1:], alone)
+					}
+				}
+			}
+		}
 	}
 }

@@ -287,13 +287,17 @@ func whole(segs []string) []string {
 }
 
 // rowEnd is what ends each line but the last in Lines, Texts and
-// LitLines: a line feed, then a zero-width space, which tview draws
-// nowhere. uniseg v0.4.7 takes no break before a hyphen a digit follows
-// (LB25, as it reads it), the mandatory one after a line feed among
-// them, so a line that began "-1" would be drawn on the row above it;
-// after the space, a cluster of its own, it begins its own row.
-// TestLinesEachOnARow holds it, in each of the three.
-const rowEnd = "\n\u200b"
+// LitLines: a line feed, then a word joiner, which tview draws nowhere.
+// uniseg v0.4.7 takes no break before a hyphen a digit follows (LB25,
+// as it reads it), the mandatory one after a line feed among them, so a
+// line that began "-1" would be drawn on the row above it; after the
+// joiner, a cluster of its own, it begins its own row.
+// TestLinesEachOnARow holds it, in each of the three. A word joiner,
+// not a zero-width space: a space gives a break after it, and with word
+// wrap on, tview took that one, after a line's indent, before a token
+// that did not fit the rest of the row (a blank row, then the token at
+// the left edge, where hang keeps an entry under its indent).
+const rowEnd = "\n\u2060"
 
 // Lines is model lines as one tview text.
 func Lines(ls []model.Line, colour bool) Shown {
