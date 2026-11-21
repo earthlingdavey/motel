@@ -12,8 +12,9 @@
 # - The module cache, .cache/gomod, once for every job and both
 #   architectures: gomod-<os>-<go.sum>. In one archive a job, 63 % of
 #   what was stored was the same modules again [measured, run
-#   44935635314: ten families each held 1.1 GB of modules, 412 to
-#   438 MB as stored; 4.50 of the set's 7.19 GB, of a 10 GB budget].
+#   44935635314: eleven of the thirteen families each held 1,090 to
+#   1,193 MB of modules, 366 to 438 MB as stored; 4.50 of the set's
+#   7.19 GB, of a 10 GB budget].
 #   One for both architectures because nothing in it is either's: Go
 #   downloads a module whole, whatever it is building for, and the
 #   cache action's entry is found by its key, its paths and how it was
@@ -25,12 +26,14 @@
 # - The job's build cache, without the modules:
 #   gobuild-<family>-<os>-<arch>-<go>-<go.sum>, where a family is one
 #   job's, or the four e2e lanes'. An architecture each, since compiled
-#   objects are. With the Go that fills it in every key: after a new Go
-#   with go.sum unchanged, a key without it hit, nothing was saved, and
-#   the job compiled from nothing until go.sum next changed; and
-#   another Go's objects, restored, are only weight to save again
-#   (ci.yml's e2e job has the figures), so no key of another Go is a
-#   restore-key.
+#   objects are. With the Go that fills it in every key, asked of the
+#   image that compiles (`go-from`: dev's for most, the linter's for
+#   lint, dev-systemd's for test-integration, three pins that move in
+#   pull requests of their own): after a new Go with go.sum unchanged,
+#   a key without it hit, nothing was saved, and the job compiled from
+#   nothing until go.sum next changed; and another Go's objects,
+#   restored, are only weight to save again (ci.yml's e2e job has the
+#   figures), so no key of another Go is a restore-key.
 #
 # Only a run on main saves, and only when the key missed. A cache
 # saved by a pull request can be read by that pull request alone, and
@@ -38,9 +41,11 @@
 # save pushed out caches other runs were reading, main's among them
 # [measured over the fortnight to 2026-11-21: 33 % of the jobs with a
 # large cache restored nothing, 34 to 64 % a day from 11-13 to 11-18;
-# a run that restores nothing is about 1,040 job-seconds longer, 130 s
-# of them on the test job; a pull request's cache was pushed out 20
-# minutes after it was saved]. By github.ref, not the event: called by
+# a pull request's cache was gone within 23 minutes of its save]. A
+# run that restores nothing is about 1,040 job-seconds longer, 130 s
+# of them on the test job [estimated: one run that missed everything,
+# 44596126576, against the next that hit, step by step and summed,
+# with about 100 s of saves]. By github.ref, not the event: called by
 # release.yml the event is push too, and the ref is the tag. So:
 #
 # - a pull request restores main's caches, by key, or by prefix when
@@ -54,7 +59,11 @@
 # - after a Dependabot merge that starts no run on main (one made with
 #   the workflow's token starts none), main has no cache under the new
 #   go.sum until a person merges: runs restore the one before by
-#   prefix meanwhile, as that pull request did.
+#   prefix meanwhile, as that pull request did. When what it moved
+#   is a Go image there is no prefix to restore by, since no
+#   restore-key crosses a Go: the jobs that image compiles for build
+#   from nothing in every run, and save nothing, until a person
+#   merges.
 #
 # Who saves is one job a key, so no two race for it: ci.yml's lint
 # saves the module cache, each job its own build cache, e2e-backup the
@@ -182,8 +191,10 @@ runs:
     # here, a download that breaks tried again, before vet, tidy-check,
     # a build or a lane's e2e/bin.sh needs it (the Makefile's
     # mod-download says what it fetches and what it leaves). On a cache
-    # that holds everything it is about a second [measured locally,
-    # 2026-11-21, with the container's start].
+    # that holds everything it is seconds [measured locally, 2026-11-21,
+    # with the container's start: 1 s in three runs here, 6 s in the
+    # review's one; from nothing, 8 to 15 s in seven jobs of run
+    # 44955689388].
     - shell: bash
       run: make mod-download COMPOSE="docker compose -f docker-compose.yml -f docker-compose.ci.yml"
     # Last, so that a job whose restore or download failed is told

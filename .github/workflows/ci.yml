@@ -290,11 +290,20 @@ jobs:
       # integration, no -cover) is not the test job's, so the cache that
       # job saves does not hold it. The modules are every job's (the
       # lint job and .github/actions/go-cache say how the caches are
-      # kept).
+      # kept). The Go in the key is dev-systemd's, the image that
+      # compiles here: its pin (test/systemd/Dockerfile) is meant to be
+      # dev's, but the two move in pull requests of their own, and a
+      # key with dev's Go would, between them, hold the other Go's
+      # objects, hit, and never be saved again. Asking it builds the
+      # image, which make test-integration would build next anyway
+      # [measured, run 44955689388: 7 s on both architectures; and
+      # locally, built under plain compose, every layer is cached for
+      # the build with the CI file, and no ./.cache is made].
       - id: cache
         uses: ./.github/actions/go-cache
         with:
           build: test-integration
+          go-from: dev-systemd
       - run: make test-integration COMPOSE="$COMPOSE"
       - if: steps.cache.outputs.save == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
