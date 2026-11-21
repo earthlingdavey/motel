@@ -70,6 +70,9 @@ func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake), with ...fun
 	hs.scr = scr
 	hs.u = New(s, false, v)
 	hs.u.App.SetScreen(hs.scr)
+	if _, sim := scr.(tcell.SimulationScreen); !sim {
+		takeFirstResize(t, scr)
+	}
 	done := make(chan struct{})
 	hs.done = done
 	go func() { defer close(done); _ = hs.u.App.Run(); close(hs.u.ended) }()
@@ -79,6 +82,27 @@ func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake), with ...fun
 	t.Cleanup(func() { hs.u.App.QueueEvent(tcell.NewEventKey(tcell.KeyCtrlC, 0, tcell.ModNone)); <-done })
 	hs.sync()
 	return hs
+}
+
+// takeFirstResize takes the size a terminfo screen (the hostile
+// package's) says at its Init, in SetScreen, before the event loop
+// starts, and fails the test if another event comes first. tcell posts
+// it from a goroutine of its own, so tview would draw its frame at no
+// point any wait here orders: a frame that reads the clock as a test
+// moves it, a data race (TestSafeBytesAlertArrives failed so on arm64).
+// Run draws the first frame itself; a simulation screen says no size.
+func takeFirstResize(t *testing.T, scr tcell.Screen) {
+	t.Helper()
+	got := make(chan tcell.Event, 1)
+	go func() { got <- scr.PollEvent() }()
+	select {
+	case ev := <-got:
+		if _, ok := ev.(*tcell.EventResize); !ok {
+			t.Fatalf("the screen's first event is %T, not its size", ev)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the screen said no size in 10 s")
+	}
 }
 
 // pump makes every read the engine would make now, in its order, each
