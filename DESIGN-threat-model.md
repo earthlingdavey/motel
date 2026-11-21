@@ -167,7 +167,11 @@ Properties that matter to the model:
   which states the filter's four rules; every body passes it —
   through `RespondJSON` in liveswap/handler.go, the record route's
   `respondFiltered`, the stream's lines, the record store's write).
-  The
+  What it promises, plainly, within the limits below: when an app
+  prints one of its `env_file` values, motel hides it; motel's own
+  figures and times are never hidden for holding one (the fifth text
+  below), though a body the filter withholds, or sends through it
+  whole in one of its fallbacks, takes its figures with it. The
   response's audience is wider than its caller: the paved road prints
   it into a GitHub Actions log, readable by everyone with read access
   to the repository, retained, and public for a public repository.
@@ -290,14 +294,14 @@ Properties that matter to the model:
   to its `memory_max`) stands there whole, naming no key, where a
   marker inside a time, or a body withheld for a number with the key
   named, said the value was a piece of it; it is replaced everywhere
-  else, digits in a string included; a number that holds a value
-  replaced elsewhere in the same body (by the filter, or in a failed
-  deploy's detail as it was built), beside which it would show the
-  value by difference, has the body withheld as before, though across
-  two answers (a marker in one deploy's record, the number in the
-  status once that deploy is no longer its last: a later deploy, or a
-  moteld restart) a reader can still set them side by side (an accepted row in
-  liveswap/DESIGN-liveswap.md); and a body in which a value would stand across a token's edge goes
+  else, digits in a string included. The figure stands whole beside a
+  marker of the same value too, in the same body (the app printed it,
+  and the filter, or a failed deploy's detail as it was built, replaced
+  it there) or in another answer, and a reader may set the two side by
+  side and take the key's value to be the figure: motel's figures are
+  never hidden for the value they hold (the owner's decision of
+  2026-11-21, an accepted row in liveswap/DESIGN-liveswap.md); and a
+  body in which a value would stand across a token's edge goes
   through whole as before (liveswap/redact.go, rule 7). A figure the
   app's behaviour drives (its memory, its request counts) is a channel
   only for an app that means to send its secret, which can answer any
@@ -317,6 +321,8 @@ Properties that matter to the model:
   refusals echo its version and URL through the app's filter, and a
   version it deploys is named in the status; it can read the app's
   environment by deploying code, so it learns nothing it could not.
+  Nor that a value one of motel's figures or times holds stays
+  unknown: it stands there whole, beside the value's marker or not.
   Nor that a marker hides which key it stands for: it names the key,
   so where a value is replaced inside text the reader already has (the
   app's name when a value is part of it, the unit named after the app)
@@ -1990,3 +1996,8 @@ Dated one-liners; the full text of each is in git.
 - 2026-11-11 — The response observer, `observe`: a handler on
   an observed app's request path that keeps a class, a bucket and a
   cache result, never a request's bytes (#418, slice three).
+- 2026-11-21 — The response filter's promise narrowed by the owner's
+  decision: an app's printing of an `env_file` value is hidden, and
+  motel's own figures and times are never hidden for holding one, now
+  beside the value's marker in the same body too (that body was
+  withheld until then).
