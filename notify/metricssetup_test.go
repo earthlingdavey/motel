@@ -772,6 +772,16 @@ func TestStoreKillIsNamed(t *testing.T) {
 	if ev, n := killedEvent(b); n != 1 || ev.Details["limit"] != strconv.Itoa(mib)+" MiB" {
 		t.Errorf("the kill's line %q reads as %d kills, %+v", b, n, ev)
 	}
+	// Counts it cannot read: taken as the limit's, the usual kill.
+	if err := os.Remove(killed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(events); err != nil {
+		t.Fatal(err)
+	}
+	if out := run("oom-kill"); !strings.HasPrefix(out, "<3>The metrics store was killed by the kernel at its memory limit") {
+		t.Fatalf("with no memory.events it says %q", out)
+	}
 	// No oom counted: the box's own out-of-memory killer took it under
 	// its limit, which a higher one would not help.
 	if err := os.WriteFile(events, []byte("low 0\nhigh 0\nmax 0\noom 0\noom_kill 1\noom_group_kill 0\n"), 0o600); err != nil {

@@ -897,15 +897,16 @@ kill_store() {
 	n0=$(systemctl show -p NRestarts --value victoria-metrics)
 	ks=$(date '+%Y-%m-%d %H:%M:%S')
 	systemctl set-property --runtime victoria-metrics MemorySwapMax=0 MemoryMax=20M
-	i=0
+	end=$(( $(date +%s) + 30 )) killed=1
 	until journalctl -u victoria-metrics --since "$ks" -o cat --no-pager -p err | grep -q 'killed by the kernel' \
 		|| [ "$(systemctl show -p NRestarts --value victoria-metrics)" != "$n0" ]; do
-		i=$((i + 1)); [ "$i" -ge 300 ] && break; sleep 0.1
+		[ "$(date +%s)" -ge "$end" ] && { killed=0; break; }
+		sleep 0.1
 	done
 	systemctl set-property --runtime victoria-metrics MemoryMax="$cap" MemorySwapMax="$swap"
-	[ "$i" -lt 300 ] || return 1
-	i=0
-	until vm http://vm/health | grep -q OK; do i=$((i + 1)); [ "$i" -ge 120 ] && return 1; sleep 0.5; done
+	[ "$killed" = 1 ] || return 1
+	end=$(( $(date +%s) + 60 ))
+	until vm http://vm/health | grep -q OK; do [ "$(date +%s)" -ge "$end" ] && return 1; sleep 0.5; done
 }
 # kill_cleanup: nothing of this part for the parts after it: the
 # runtime limits (not `systemctl revert`, which would take motel's
@@ -929,9 +930,9 @@ line=$(journalctl -u victoria-metrics --since "$since" -o cat --no-pager -p err 
 	|| fail "no err line naming the kill at its limit under the store's unit: $(journalctl -u victoria-metrics --since "$since" -o cat --no-pager | grep -v VictoriaMetrics/ | tail -5)"
 journalctl -u victoria-metrics --since "$since" -o cat --no-pager -p warning | grep -q 'systemctl edit victoria-metrics' \
 	&& pass "and says how to give it more" || fail "no remedy line under the store's unit"
-i=0
-until sinklog | grep -q '/ops firing metrics_store_killed - '; do i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 2; done
-[ "$i" -lt 60 ] && pass "motel told the operator: $(sinklog | grep metrics_store_killed | head -1)" \
+end=$(( $(date +%s) + 120 )) told=1
+until sinklog | grep -q '/ops firing metrics_store_killed - '; do [ "$(date +%s)" -ge "$end" ] && { told=0; break; }; sleep 2; done
+[ "$told" = 1 ] && pass "motel told the operator: $(sinklog | grep metrics_store_killed | head -1)" \
 	|| fail "no metrics_store_killed at the operator's channel in 120 s: moteld says $(journalctl -u moteld --since "$since" -o cat --no-pager | grep -i 'killed' | tail -2)"
 journalctl -u moteld --since "$since" -o cat --no-pager | grep -q 'the metrics store was killed by the kernel; systemd restarted it' \
 	&& pass "and its own journal says so" || fail "no kill line in moteld's journal"
