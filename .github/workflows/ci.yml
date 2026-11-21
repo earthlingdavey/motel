@@ -201,15 +201,16 @@ jobs:
   # sqlite3, the box applier) on both architectures, for the test job's
   # reasons. A job of its own, not a step after make test: in series it
   # waited for the unit tests, in the job that decides when a run is
-  # green, the longest of the run [measured, run 44935635314: the test job 902 s x86, 788 s arm64, 176
-  # and 170 of them this lane; alone it is a job of 219 s x86, 218 s
-  # arm64, its packages as fast as in series]. Not beside make test in
-  # one job either, to save the two runners: the unit tests hold all four
-  # cores, systemd's timings stretch, and tests fail [measured, same run:
-  # 3 red of 10 cells beside, 0 of 10 in series, 0 of 6 alone; liveswap's
-  # integration package 153 s beside against 115 in series on x86, single
-  # tests two to three times as long]. No ca-trust step: it proves the
-  # runner image, and the test job's cells run on these same two.
+  # green, the longest of the run [measured, run 44935635314: the test
+  # job 902 s x86, 788 s arm64, 176 and 170 of them this lane; alone it
+  # is a job of 219 s x86, 218 s arm64, its packages as fast as in
+  # series]. Not beside make test in one job either, to save the two
+  # runners: the unit tests hold all four cores, systemd's timings
+  # stretch, and tests fail [measured, same run: 3 red of 10 cells
+  # beside, 0 of 10 in series, 0 of 6 alone; liveswap's integration
+  # package 153 s beside against 115 in series on x86, single tests up
+  # to three times as long]. No ca-trust step: it proves the runner
+  # image, and the test job's cells run on these same two.
   test-integration:
     needs: [changes]
     if: needs.changes.outputs.heavy == 'true'
