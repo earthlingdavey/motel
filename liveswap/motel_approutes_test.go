@@ -171,7 +171,7 @@ func TestAlertsRoutePaths(t *testing.T) {
 		"/_motel/apps/demo",
 		"/_motel/apps/demo/",
 		"/_motel/apps/",
-		"/_motel/apps/demo/logs",
+		"/_motel/apps/demo/log",
 		"/_motel/apps/demo/alerts%00",
 		"/_motel/apps/demo%20/alerts",
 	} {

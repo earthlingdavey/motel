@@ -164,6 +164,12 @@ below as a contract the sandbox path must keep.
   mapping the app's uid one-to-one, the user manager's private socket
   lets an app ask the manager for a unit with no sandbox at all, and
   connecting to a socket is not a write (`sandboxNeverReachable`).
+  Nor MUST journald's sockets (`/run/systemd/journal`, and `/dev/log`,
+  which points into it): a process that reached them could write lines
+  under another app's identifier, which is what an app's logs are read
+  by (`GET /_motel/apps/<app>/logs`). An app's output reaches journald
+  only as its unit's own stream, opened by the manager before the view
+  exists.
   `/sys/fs/cgroup` MUST be read-only (`ProtectControlGroups=`): the
   delegated subtree is owned by the app's own UID, so resource caps
   are otherwise rewritable.
@@ -469,7 +475,7 @@ makes first, which the unit's `TimeoutStartSec=240s` is sized above — the
 retry must reach its own verdict, not be cut off by a start timeout
 whose restart would begin the sequence again. The probe also proves
 the base view: `/bin/sh` has to exist inside the unit for the script
-to run at all. Its output lands in `journalctl -t motel-sandbox-probe`,
+to run at all. Its output lands in `journalctl -t motel_sandboxprobe`,
 which the refusal message names. The verdict is cached against the
 manager connection's generation
 (`userManagerClient.cachedSandboxCapability`): later activations on

@@ -102,7 +102,13 @@ import (
 //     times are put back after the last pass: the store's points, its
 //     step, the window's end and the box's own words of closed sets
 //     (the store's word, the window) (motel_series.go, filterSeries), and
-//     Alertmanager's times (filterAlerts), never the app's bytes.
+//     Alertmanager's times (filterAlerts), never the app's bytes. An
+//     app's logs (GET /_motel/apps/<app>/logs) are a body whose texts
+//     each passed the whole filter on its own, before it was cut, and
+//     whose body then passes the final pass alone (lastPass), its times
+//     held as rule 7 holds them; after it the route adds the cursor,
+//     journald's text of the box's own journal, and redacted_env
+//     (motel_logs.go, filterLogs).
 //  3. The outcome vocabulary is structural, never textual. A pair
 //     "status":"<word>", "phase":"<word>" or "name":"<word>", the
 //     word one of the deploy vocabulary (app.go), is the one place
@@ -824,6 +830,46 @@ func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
 		}
 	}
 	return r.filterWhole(raw, seen)
+}
+
+// lastPass is the final known-value pass alone, for a body whose every
+// string of the app's bytes has passed the whole filter already, one by
+// one (Redact): an app's logs, whose lines are filtered each before it
+// is cut (motel_logs.go). Every form of every known value is replaced
+// once more, so none the body's own escaping made (a value with a quote
+// in it, which a line the app wrote JSON-escaped already holds as the
+// form layer 1 replaced) is in the bytes written; its times are held
+// out and put back as rule 7 holds them, and the keys it found are
+// added to seen. false, for the caller to send the body whole through
+// redactJSON, when the filter withholds every body, when a time's hold
+// does not put back (a value across a time's edge), or when the body is
+// no JSON after the pass (a value of JSON's own punctuation). A body
+// that is JSON of another shape after it (two strings made one) is its
+// caller's to find. It runs no heuristic: what it is given has been
+// through them, and so is never a body of words no layer saw.
+func (r *Redactor) lastPass(raw []byte, seen map[string]bool) (string, bool) {
+	if r != nil && r.withhold != "" {
+		return "", false
+	}
+	if r == nil || len(r.secrets) == 0 {
+		return string(raw), json.Valid(raw)
+	}
+	body, held := holdOut(string(raw))
+	found := map[string]bool{}
+	out := r.replaceKnown(body, found, true)
+	if len(held) > 0 {
+		var ok bool
+		if out, ok = r.putBack(out, held); !ok {
+			return "", false
+		}
+	}
+	if !json.Valid([]byte(out)) {
+		return "", false
+	}
+	for k := range found {
+		seen[k] = true
+	}
+	return out, true
 }
 
 // filterWhole is filterBody over every byte of the body.

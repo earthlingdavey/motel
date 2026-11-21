@@ -4,6 +4,7 @@ package unit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -348,6 +349,61 @@ func TestIntegrationStderrReachesTheFileNamed(t *testing.T) {
 	must(t, err)
 	if string(gotOut) != "to-stdout\n" || string(gotErr) != "to-stderr\n" {
 		t.Fatalf("stdout %q, stderr %q", gotOut, gotErr)
+	}
+}
+
+// What a unit run as the data user writes on stderr is stored under
+// SyslogIdentifier, not its command's name: the roles run
+// /usr/bin/motel-backup, which journald would otherwise store as
+// motel-backup, the identifier of an app named backup, from the uid
+// every app runs as. The command here is a shell copied to that name.
+// Its line carries the unit as the system manager's (_SYSTEMD_UNIT) and
+// no user unit, which liveswap's logs read takes as no app's line.
+func TestIntegrationStderrIsStoredUnderTheUnitsIdentifier(t *testing.T) {
+	r := runner(t)
+	self := "/usr/local/bin/motel-backup"
+	raw, err := os.ReadFile("/bin/sh")
+	must(t, err)
+	must(t, os.WriteFile(self, raw, 0o755))
+	t.Cleanup(func() { _ = os.Remove(self) })
+	mark := fmt.Sprintf("role-stderr-%d", time.Now().UnixNano())
+	o, err := r.Run(context.Background(), Spec{
+		Name: name(t), Argv: []string{self, "-c", "echo " + mark + " >&2"}, User: "motel", SameUIDNamespaces: true,
+	})
+	if err != nil || !o.OK() {
+		t.Fatalf("%+v, %v", o, err)
+	}
+	idOut, err := exec.Command("id", "-u", "motel").Output()
+	must(t, err)
+	uid := strings.TrimSpace(string(idOut))
+	type entry struct {
+		Ident    string `json:"SYSLOG_IDENTIFIER"`
+		UID      string `json:"_UID"`
+		Unit     string `json:"_SYSTEMD_UNIT"`
+		UserUnit string `json:"_SYSTEMD_USER_UNIT"`
+		Message  string `json:"MESSAGE"`
+	}
+	var got []entry
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+		out, _ := exec.Command("journalctl", "--no-pager", "--quiet", "-o", "json", "--grep", mark).Output()
+		got = got[:0]
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			var e entry
+			if json.Unmarshal([]byte(line), &e) == nil && e.Message == mark {
+				got = append(got, e)
+			}
+		}
+		if len(got) > 0 || time.Now().After(deadline) {
+			break
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("the line in the journal: %+v", got)
+	}
+	e := got[0]
+	t.Logf("a data user's unit's stderr line: SYSLOG_IDENTIFIER=%q _UID=%s _SYSTEMD_UNIT=%q _SYSTEMD_USER_UNIT=%q", e.Ident, e.UID, e.Unit, e.UserUnit)
+	if e.Ident != SyslogIdentifier || e.UID != uid || e.Unit != name(t) || e.UserUnit != "" {
+		t.Errorf("stored as %+v, want under %s from uid %s, the unit %s and no user unit", e, SyslogIdentifier, uid, name(t))
 	}
 }
 

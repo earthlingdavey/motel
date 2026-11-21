@@ -294,6 +294,9 @@ func (h *Handler) installing(w http.ResponseWriter, ma *managedApp) error {
 // reads that app alone, through that app's filter.
 type appHandle struct {
 	ma *managedApp
+	// who is the name of the principal Decide allowed: a person's, for
+	// the journal line a read writes (motel_logs.go).
+	who string
 }
 
 // errUnknownApp is allowApp's answer for a name that is no app here,
@@ -311,7 +314,7 @@ func (h *Handler) allowApp(p access.Principal, a access.Action, name string) (ap
 	if ma == nil {
 		return appHandle{}, errUnknownApp
 	}
-	return appHandle{ma: ma}, nil
+	return appHandle{ma: ma, who: p.Name}, nil
 }
 
 // ForbiddenBody is the 403's body for Decide's refusal: what the caller

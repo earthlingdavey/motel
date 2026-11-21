@@ -8,6 +8,8 @@ import (
 	"time"
 
 	sddbus "github.com/coreos/go-systemd/v22/dbus"
+
+	"github.com/smallhoursorg/motel/liveswap/backupdecl"
 )
 
 func validSpec() Spec {
@@ -111,6 +113,38 @@ func TestOpenByHandleAtIsDeniedExactlyWhereTheCapabilityIsHeld(t *testing.T) {
 	}
 	if _, ok := has(without, "SystemCallFilter"); ok {
 		t.Error("a unit with only CAP_CHOWN carries a system-call filter")
+	}
+}
+
+// Every unit writes under SyslogIdentifier, whoever it runs as, and
+// that is no app's identifier (motel-<app>, liveswap's): a person who
+// reads an app's logs is never sent a unit's line, whatever the app is
+// called.
+func TestEveryUnitWritesUnderAnIdentifierNoAppHas(t *testing.T) {
+	if rest, ok := strings.CutPrefix(SyslogIdentifier, "motel-"); ok && backupdecl.ValidAppName(rest) {
+		t.Fatalf("%q is the identifier of an app named %q", SyslogIdentifier, rest)
+	}
+	for _, s := range []Spec{
+		validSpec(),
+		{Name: "motel_backup_y.service", Argv: []string{"/usr/bin/restic"}, AsRoot: true, Capabilities: []Capability{CapChown}},
+		{Name: "motel_backup_z.service", Argv: []string{"/usr/bin/motel-backup", "dump"}, User: "motel", SameUIDNamespaces: true, StderrFile: "/run/x/err"},
+	} {
+		props, err := s.properties()
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, p := range props {
+			if p.Name == "SyslogIdentifier" {
+				n++
+				if p.Value.Value() != SyslogIdentifier {
+					t.Errorf("%s writes under %v", s.Name, p.Value)
+				}
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s: SyslogIdentifier sent %d times", s.Name, n)
+		}
 	}
 }
 
