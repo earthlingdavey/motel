@@ -2,6 +2,7 @@ package door
 
 import (
 	"bytes"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -173,5 +174,27 @@ func TestWholeAllocatesOnce(t *testing.T) {
 		if few, many := allocs(1000), allocs(30000); many > few {
 			t.Errorf("whole of %q: %v allocations for 1,000, %v for 30,000", c, few, many)
 		}
+	}
+}
+
+// TestUnbreakWritesOnce: the bytes unbreak allocates grow with the
+// text, not with its square: a box's line of many emoji with skin
+// tones has an escape after each one, and each frame draws it. Seen to
+// fail: with each escape written in by a copy of its segment
+// (s[:i] + escape(r) + s[i+n:]): 35,516,600 bytes for 1,000 thumbs-up
+// and skin tones, 559,185,616 for 4,000.
+func TestUnbreakWritesOnce(t *testing.T) {
+	alloc := func(n int) uint64 {
+		segs := []string{"level ", strings.Repeat("\U0001f44d\U0001f3fd", n)}
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		unbreak(segs)
+		runtime.ReadMemStats(&after)
+		return after.TotalAlloc - before.TotalAlloc
+	}
+	if few, many := alloc(1000), alloc(4000); many > 8*few {
+		t.Errorf("unbreak allocates %d bytes for 1,000 escapes, %d for 4,000", few, many)
+	} else {
+		t.Logf("%d bytes for 1,000 escapes, %d for 4,000", few, many)
 	}
 }

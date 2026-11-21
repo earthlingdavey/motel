@@ -81,18 +81,30 @@ func unbreak(segs []string) []string {
 		if len(at) == 0 {
 			return segs
 		}
-		// From the last, so that the offsets before it still hold.
-		for k := len(at) - 1; k >= 0; k-- {
-			i := at[k]
-			for j, s := range segs {
-				if i < len(s) {
-					r := []rune(s[i:])[0]
-					segs[j] = s[:i] + escape(r) + s[i+len(string(r)):]
-					break
+		// Each segment a break falls in is written once, its breaks in
+		// order (at is in order).
+		k, base := 0, 0
+		out := make([]string, 0, len(segs))
+		for _, s := range segs {
+			if k < len(at) && at[k] < base+len(s) {
+				var b strings.Builder
+				from := 0
+				for ; k < len(at) && at[k] < base+len(s); k++ {
+					i := at[k] - base
+					r, n := utf8.DecodeRuneInString(s[i:])
+					b.WriteString(s[from:i])
+					b.WriteString(escape(r))
+					from = i + n
 				}
-				i -= len(s)
+				b.WriteString(s[from:])
+				base += len(s)
+				out = append(out, b.String())
+				continue
 			}
+			base += len(s)
+			out = append(out, s)
 		}
+		segs = out
 	}
 }
 

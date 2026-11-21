@@ -409,7 +409,10 @@ func TestLinesEachOnARow(t *testing.T) {
 			return false
 		}
 		for i, r := range got {
-			if strings.TrimPrefix(r, "\u200b") != each[i] {
+			if i > 0 {
+				r = strings.TrimPrefix(r, "\u200b")
+			}
+			if r != each[i] {
 				return false
 			}
 		}

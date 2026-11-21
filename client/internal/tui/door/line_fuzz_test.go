@@ -108,34 +108,42 @@ func checkLine(t *testing.T, l model.Line, colour bool) {
 	if _, st, _ := scr.Get(0, 1); st != lineStyle() {
 		t.Errorf("%s (colour %v) leaves a style open: the line under it is drawn %v", lineName(l), colour, st)
 	}
+	// The clusters in order, each from the cell the one before ended at,
+	// as wide as uniseg says (tview draws one of no width nowhere), with
+	// the class of the segment each begins in.
+	type cell struct {
+		c   string
+		w   int
+		cls model.Class
+	}
+	var cells []cell
+	segs := doorSegs(l)
+	at, seg, end := 0, 0, 0
+	for rest, state := strings.Join(segs, ""), -1; rest != ""; {
+		var c string
+		var b int
+		c, rest, b, state = uniseg.StepString(rest, state)
+		for seg < len(segs) && at >= end+len(segs[seg]) {
+			end += len(segs[seg])
+			seg++
+		}
+		at += len(c)
+		if cw := b >> uniseg.ShiftWidth; cw > 0 {
+			cells = append(cells, cell{c, cw, l[seg].C})
+		}
+	}
 	for _, y := range []int{0, 2} {
 		if got, want := written(scr, y), l.Width(Width); got != want {
 			t.Errorf("%s (colour %v) is drawn %d cells wide on row %d, and its Width says %d", lineName(l), colour, got, y, want)
 			return
 		}
-		// The clusters in order, each from the cell the one before ended
-		// at, as wide as uniseg says (tview draws one of no width nowhere).
-		segs := doorSegs(l)
-		x, at, seg, end := 0, 0, 0, 0
-		for rest, state := strings.Join(segs, ""), -1; rest != ""; {
-			var c string
-			var b int
-			c, rest, b, state = uniseg.StepString(rest, state)
-			for seg < len(segs) && at >= end+len(segs[seg]) {
-				end += len(segs[seg])
-				seg++
-			}
-			at += len(c)
-			cw := b >> uniseg.ShiftWidth
-			if cw == 0 {
-				continue
-			}
-			cls := l[seg].C
-			if _, st, _ := scr.Get(x, y); st != classStyle(cls, colour) {
-				t.Errorf("%s (colour %v): cell %d (%q) on row %d is drawn %v, not as its segment, %s", lineName(l), colour, x, c, y, st, className[cls])
+		x := 0
+		for _, c := range cells {
+			if _, st, _ := scr.Get(x, y); st != classStyle(c.cls, colour) {
+				t.Errorf("%s (colour %v): cell %d (%q) on row %d is drawn %v, not as its segment, %s", lineName(l), colour, x, c.c, y, st, className[c.cls])
 				return
 			}
-			x += cw
+			x += c.w
 		}
 	}
 }
