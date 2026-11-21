@@ -3,6 +3,7 @@ package door
 import (
 	"bytes"
 	"math"
+	"os"
 	"runtime"
 	"slices"
 	"sort"
@@ -208,5 +209,15 @@ func TestUnbreakWritesOnce(t *testing.T) {
 		t.Errorf("unbreak allocates %d bytes for 1,000 escapes, %d for 4,000", few, many)
 	} else {
 		t.Logf("%d bytes for 1,000 escapes, %d for 4,000", few, many)
+	}
+}
+
+// TestRowbreakKeepsATest: rowbreak keeps a test file of its own, which
+// keeps make test's time: without one, go test -cover given several
+// packages at once instrumented it into the door's test binary (its
+// package comment has the numbers).
+func TestRowbreakKeepsATest(t *testing.T) {
+	if _, err := os.Stat("rowbreak/rowbreak_test.go"); err != nil {
+		t.Errorf("rowbreak has no test file of its own: %v", err)
 	}
 }

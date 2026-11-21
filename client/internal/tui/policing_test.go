@@ -122,7 +122,7 @@ func TestTUIImports(t *testing.T) {
 	}
 	walk(mod+"internal/tui", ".")
 	walk(mod+"internal/tui/demo", "demo")
-	for _, want := range []string{mod + "internal/tui/model", mod + "internal/tui/door", mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"} {
+	for _, want := range []string{mod + "internal/tui/model", mod + "internal/tui/door", mod + "internal/tui/door/rowbreak", mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"} {
 		if !seen[want] {
 			t.Errorf("the walk never reached %s: the test reads the wrong tree", want)
 		}
