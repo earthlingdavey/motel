@@ -98,18 +98,27 @@ jobs:
           git -c core.quotePath=false diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed"
           python3 -I -B "$rule" < "$RUNNER_TEMP/changed" >> "$GITHUB_OUTPUT"
 
-  # One cell per module: the golangci runs share no state, so
-  # they parallelize cleanly (serial they were the slowest lane). Cache
-  # keys are per-module so each cell restores exactly its own objects.
+  # tidy-check and lint over every module (the Makefile's MODULES), in
+  # one job. They were once a cell per module, split when lint, run in
+  # series, was the slowest lane; in series it is now a fraction of the
+  # longest jobs, test and e2e-notify [measured: test 609 s arm and
+  # 802 s x86, medians of 8 runs to 2026-11-21], and each cell
+  # spent most of its ~55 s starting a runner, pulling images and
+  # restoring a cache of its own. One job is shorter in runner time,
+  # and a heavy run starts 13 jobs together, not 19, which matters
+  # because waiting for runners is what makes a run slow [measured
+  # 2026-11-21, run 44935635314: 145 s (141-146, n=3) for the one job,
+  # its restore taken at the measured rate, against 397 job-seconds
+  # for the seven cells; one cache archive of 683 MB against 2,908 MB
+  # for the seven, of a 10 GB budget]. A failure is one red check, not
+  # a named cell: the log names each module as it starts, and the run
+  # goes on after a module fails and ends naming every one that did
+  # (the Makefile's tidy-check and lint say how). A new module needs
+  # only the Makefile's MODULES.
   lint:
     needs: [changes]
     if: needs.changes.outputs.heavy == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        module: [".", "backups", "box", "client", "liveswap", "notify", "penaltybox"]
     runs-on: ubuntu-latest
-    name: lint (${{ matrix.module }})
     steps:
       # Before checkout: git, gh and dockerd's pulls on the runner read
       # the system store, and the runner images can trail the distro's
@@ -141,14 +150,14 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache
-          key: lint-${{ matrix.module }}-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: lint-${{ matrix.module }}-${{ runner.os }}-
-      # Here, not in test: per module and in parallel like lint, and
-      # once (test runs per arch; tidy considers every platform anyway).
-      - run: make tidy-check COMPOSE="$COMPOSE" MODULES="${{ matrix.module }}"
+          key: lint-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: lint-${{ runner.os }}-
+      # Here, not in test: once (test runs per arch; tidy considers
+      # every platform anyway), on the module cache this job restores.
+      - run: make tidy-check COMPOSE="$COMPOSE"
       # Even after a tidy-check failure, so one run shows both.
       - if: ${{ !cancelled() }}
-        run: make lint COMPOSE="$COMPOSE" MODULES="${{ matrix.module }}"
+        run: make lint COMPOSE="$COMPOSE"
 
   # Unit tests on both architectures: arm64 is a first-class deploy
   # target (cheap ARM VPSes), and the race detector is arch-specific
