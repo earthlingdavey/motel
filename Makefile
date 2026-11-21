@@ -412,6 +412,18 @@ install-test: ## install dist/'s .deb under real systemd (DISTRO=debian:13); run
 	docker rm -f motel-smoke >/dev/null; \
 	exit $$status
 
+# The Go the e2e, e2e-notify and e2e-metrics images take (and soak's,
+# the e2e stack's), built in the dev container right before each builds
+# its images, as e2e-backup builds its box's: there Go's caches are the
+# volumes `make build` and `make test` fill (in CI, ./.cache), where a
+# build inside the image starts cold on any builder that kept no cache,
+# CI's always. e2e/bin.sh says what it builds; build/<lane> is the
+# images' `bin` context, which the target names to compose with
+# E2E_LANE. After the cgroup check, so a host that cannot run the lane
+# is told so before it compiles anything.
+# $(call e2e_bin,<lane>[ notify-tests])
+e2e_bin = $(COMPOSE) run --rm dev sh e2e/bin.sh $(1)
+
 # The main suites run via the e2e-runner entrypoint. Then the systemd
 # suite runs INSIDE the motel container (it needs systemctl,
 # journalctl and the process tree): restart survival, moteld's own
@@ -427,7 +439,8 @@ install-test: ## install dist/'s .deb under real systemd (DISTRO=debian:13); run
 # holds).
 e2e: ## the liveswap, penaltybox, systemd, recovery, box and people suites against the shipped binary
 	$(cgroup2_preflight)
-	$(COMPOSE) up --build -d e2e-motel e2e-upstream e2e-artifacts
+	$(call e2e_bin,e2e)
+	E2E_LANE=e2e $(COMPOSE) up --build -d e2e-motel e2e-upstream e2e-artifacts
 	status=0; \
 	$(COMPOSE) run --rm e2e-runner || status=1; \
 	echo "════ systemd suite: restart survival, reattach, cgroup teardown ════"; \
@@ -462,8 +475,9 @@ NOTIFY_LIMIT ?= 1800
 e2e-notify: ## the notify suite; NOTIFY_SPLITS= core reload (the default), heartbeat, or all
 	$(cgroup2_preflight)
 	$(if $(strip $(NOTIFY_SPLITS)),,$(error NOTIFY_SPLITS is empty: name a split, or all))
+	$(call e2e_bin,e2e-notify)
 	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null
-	$(COMPOSE) up --build -d --scale e2e-notify-box=$(words $(NOTIFY_SPLITS)) e2e-notify-box e2e-sink e2e-artifacts
+	E2E_LANE=e2e-notify $(COMPOSE) up --build -d --scale e2e-notify-box=$(words $(NOTIFY_SPLITS)) e2e-notify-box e2e-sink e2e-artifacts
 	logs=$$(mktemp -d); i=0; \
 	for s in $(NOTIFY_SPLITS); do \
 		i=$$((i + 1)); \
@@ -507,8 +521,9 @@ METRICS_LIMIT ?= 900
 e2e-metrics: ## the metrics suite; METRICS_SPLITS= view vmalert store rules (the default), or all
 	$(cgroup2_preflight)
 	$(if $(strip $(METRICS_SPLITS)),,$(error METRICS_SPLITS is empty: name a split, or all))
+	$(call e2e_bin,e2e-metrics notify-tests)
 	$(COMPOSE) rm -sf e2e-metrics-box e2e-sink >/dev/null
-	$(COMPOSE) up --build -d --scale e2e-metrics-box=$(words $(METRICS_SPLITS)) e2e-metrics-box e2e-sink e2e-artifacts
+	E2E_LANE=e2e-metrics $(COMPOSE) up --build -d --scale e2e-metrics-box=$(words $(METRICS_SPLITS)) e2e-metrics-box e2e-sink e2e-artifacts
 	logs=$$(mktemp -d); i=0; \
 	for s in $(METRICS_SPLITS); do \
 		i=$$((i + 1)); \
@@ -603,7 +618,8 @@ e2e-backup: ## the backup suites, a box each; BACKUP_SUITES= setup backup units 
 # evidence — same as the e2e target above, tail-bounded here because a
 # soak pushes 15-20 minutes of churn through the stub servers.
 soak: ## ~20 min leak hunt: deploy/reload churn, goroutine/fd assertions
-	$(COMPOSE) up --build -d e2e-motel e2e-upstream e2e-artifacts
+	$(call e2e_bin,e2e)
+	E2E_LANE=e2e $(COMPOSE) up --build -d e2e-motel e2e-upstream e2e-artifacts
 	status=0; \
 	$(COMPOSE) run --rm -e SOAK_DEPLOYS -e SOAK_RELOADS -e SOAK_CLIENTS -e SOAK_REQS \
 		--entrypoint "/bin/sh /soak.sh" e2e-runner || status=1; \

@@ -19,7 +19,10 @@ COMPOSE="${COMPOSE:-docker compose}"
 project=$(basename "$(pwd)")
 [ "$#" -gt 0 ] || set -- "bare=http://e2e-motel:8080/"
 
-$COMPOSE up --build -d e2e-motel e2e-upstream e2e-artifacts >/dev/null
+# The binaries first, from the source as it is now (e2e/bin.sh): the
+# images take them built, and would otherwise hold the last run's.
+$COMPOSE run --rm -T dev sh e2e/bin.sh e2e
+E2E_LANE=e2e $COMPOSE up --build -d e2e-motel e2e-upstream e2e-artifacts >/dev/null
 $COMPOSE run --rm -T --entrypoint /bin/sh e2e-runner -c '
 	HOOK=http://e2e-motel:8081/demo ART=http://e2e-artifacts:8080/artifacts
 	. /lib.sh
