@@ -9,4 +9,5 @@ person bob@example.com ssh-ed25519 SHA256:VJCVcnKkvz2Vo4FkkTiINJzjsKMVdlgl+qiLpT
 grant alice@example.com viewer box
 grant bob@example.com viewer app example
 grant bob@example.com viewer app blog from 198.51.100.0/24 2001:db8:5::/48
+grant bob@example.com logs app example from 198.51.100.0/24
 warning signer carol@example.com: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol@example.com with an ed25519 key (ssh-keygen -t ed25519)

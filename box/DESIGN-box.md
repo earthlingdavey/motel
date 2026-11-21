@@ -200,6 +200,7 @@ box {
 	person bob@example.com   ssh-ed25519 AAAAC3Nz…                    # a person who is not a signer
 	grant bob@example.com   viewer app example
 	grant bob@example.com   viewer app blog from 198.51.100.0/24 2001:db8:5::/48
+	grant bob@example.com   logs app example from 198.51.100.0/24      # example's logs too, from the office alone
 	grant alice@example.com viewer box
 }
 ```
@@ -229,7 +230,10 @@ box {
 - `grant <name> <role> box [from <prefix>…]` or `grant <name> <role>
   app <app> [from <prefix>…]`: the name first, as on every line about
   a person, so one search finds all of them; the scope always written;
-  `from` last. The one role is `viewer`. `deployer`, `signer` and
+  `from` last. The roles are `viewer`, which reads an app's reads on
+  its scope and never logs, and `logs`, which reads what `viewer`
+  reads on the same scope and the logs of the app, or on the box of
+  every app (liveswap/access/DESIGN-access.md). `deployer`, `signer` and
   `root` are refused by name, each saying who holds it today (a
   `deploy_trust` block, a `signer` line, root's key); `signer` is a
   reserved word, which a later release may take as a second spelling
@@ -248,8 +252,8 @@ the block is read, each refusal naming its lines:
 | a `grant` for a name no `person` or `signer` line declares | refused |
 | a `grant` for a name whose only keys are `ssh-rsa` signer keys | refused, naming the remedy |
 | a `grant` on an app the `liveswap` block does not run, or runs under a name written through a placeholder (the walk reads the name as written) | refused. The walk refuses both; the `box` app, at load and so at `moteld validate`, asks the `liveswap` app which apps the config runs and refuses a grant on any other (a config with no `liveswap` block runs none). It sees a placeholder's name resolved, so a grant on an app named through a placeholder is refused by the walk alone: such a line written at the console loads, and leaves an installed file that no longer walks, so every push is refused and no person is admitted (the load's journal says why) until root mends the line |
-| two grants for one name on one scope | refused |
-| a box grant and an app grant for one name | taken, warned: the box grant covers the app |
+| two grants for one name, of one role, on one scope | refused: `… already has a logs grant on app blog; one per role and scope`. A `viewer` and a `logs` grant on one scope are two lines, each with its own `from` list or none |
+| a grant that another grant of the name gives from everywhere: a `viewer` app grant beside a `viewer` box grant; a `viewer` grant beside a `logs` grant on the same app or on the box; a `logs` app grant beside a `logs` box grant | taken, warned (`… the box grant already covers it`, `… the logs grant on app blog already covers it`, `… the logs grant on the box already covers it`), only when the covering grant has no `from` list: outside a list, the covered grant is all the person holds |
 | a `person` name with no grant and no `signer` line | taken, warned |
 | an `ssh-rsa` signer whose name has no other key a person may hold | taken, warned |
 | people and no `monitor` block with a channel | taken, warned: by the walk (`moteld box describe`, and the journal at each load), and by `moteld validate`, which reads the adapted config; the module cannot see the `monitor` block |
@@ -2058,7 +2062,7 @@ line — `host <host>`, then `app <name>` and `signer <principal>
 <key-type> <base64>`, each kind in file order; with a `person` or
 `grant` line in the box block, then `person <name> <key-type>
 SHA256:<fingerprint>` for each key a person's token may be signed with
-(ending ` signer` for a signer line's key), `grant <name> viewer
+(ending ` signer` for a signer line's key), `grant <name> <role>
 <scope> [from …]` for each grant, and a `warning <text>` line for each
 warning of "People and grants" — for the template's `make check`,
 which prints its line for each box from it and compares the boxes'

@@ -66,11 +66,13 @@ wait_for_token # $TOKEN: the e2e deploy token, audience e2e
 # fran views the box from 198.51.100.0/24 only, an address this client
 # does not have; nora is declared with no grant; lena views demo from
 # 127.0.0.0/8, the client's own address, so that fran's refusal is the
-# list's; stranger's key no line lists. Every person's key is Ed25519,
+# list's; lara views demo from anywhere and reads its logs from
+# 198.51.100.0/24 only; lars reads demo's logs, and so views it, from
+# anywhere; stranger's key no line lists. Every person's key is Ed25519,
 # the one kind a box takes for now; eve's is ECDSA, which no box takes
 # yet, so her line is refused (people 0) and the client will not
 # sign with it (people 1).
-for k in alice vera otto fran nora lena stranger; do ssh-keygen -q -t ed25519 -N '' -C "$k" -f "$work/$k"; done
+for k in alice vera otto fran nora lena lara lars stranger; do ssh-keygen -q -t ed25519 -N '' -C "$k" -f "$work/$k"; done
 ssh-keygen -q -t ecdsa -b 256 -N '' -C eve -f "$work/eve"
 key() { cut -d' ' -f1,2 "$work/$1.pub"; }
 fp() { ssh-keygen -lf "$work/$1.pub" | cut -d' ' -f2; }
@@ -84,7 +86,12 @@ REST="		person fran@e2e.test $(key fran)
 		grant fran@e2e.test viewer box from 198.51.100.0/24
 		person nora@e2e.test $(key nora)
 		person lena@e2e.test $(key lena)
-		grant lena@e2e.test viewer app demo from 127.0.0.0/8"
+		grant lena@e2e.test viewer app demo from 127.0.0.0/8
+		person lara@e2e.test $(key lara)
+		grant lara@e2e.test viewer app demo
+		grant lara@e2e.test logs app demo from 198.51.100.0/24
+		person lars@e2e.test $(key lars)
+		grant lars@e2e.test logs app demo"
 
 # The e2e config as this box's file: imports inlined (a signed file
 # has none), no trusted_proxies, HTTPS on 443 for the one bare-hostname
@@ -330,6 +337,23 @@ client whoami --box "$HOST" --key "$work/lena"
 expect "lena, inside her from list: whoami" 0
 has "lena: whoami gives demo's viewer role from here" "$work/out" "roles    viewer of app demo"
 
+# A logs grant reads what a viewer grant reads on its scope, and nothing
+# more here: the logs read itself is not served yet. lara's logs grant
+# holds from her list alone, so from here whoami lists her viewer grant
+# and nothing else.
+matrix lars 0 0 0 5 0 5 0 5
+grep -qx "roles    logs of app demo" "$work/lars.0.out" \
+	&& pass "lars: whoami gives demo's logs role, said as the client's word" || fail "lars: whoami: $(cat "$work/lars.0.out")"
+[ "$(cat "$work/lars.1.out")" = demo ] && pass "lars: apps lists demo alone" || fail "lars: apps: $(cat "$work/lars.1.out")"
+has "lars: status demo names the version deployed" "$work/lars.2.out" "$DV"
+has "lars: told it needs the viewer role on the box" "$work/lars.7.err" "it needs the viewer role on the box"
+client whoami --box "$HOST" --key "$work/lara"
+expect "lara, outside her logs grant's list: whoami" 0
+grep -qx "roles    viewer of app demo" "$work/out" \
+	&& pass "lara: whoami gives demo's viewer role alone from here" || fail "lara: whoami: $(cat "$work/out")"
+client status demo --box "$HOST" --key "$work/lara"
+expect "lara: status demo, on her viewer grant" 0
+
 # eve's ECDSA key: the client refuses it before it signs or sends, and
 # `motel key` prints no person line the box would refuse.
 for cmd in "whoami --box $HOST" key; do
@@ -346,6 +370,11 @@ expect "vera: whoami --json" 0
 [ "$(jget "$work/out" 'j.name + " " + j.box + " " + j.key + " " + j.version + " " + j.protocol + " " + j.roles.map(r => r.role + ":" + r.scope).join(",")')" = "vera@e2e.test $HOST $(fp vera) $RELEASE 1 viewer:box" ] \
 	&& pass "vera: whoami --json parses and holds her name, the box, her key, the release and her role" \
 	|| fail "vera: whoami --json: $(jget "$work/out" 'JSON.stringify(j)')"
+client whoami --json --box "$HOST" --key "$work/lars"
+expect "lars: whoami --json" 0
+[ "$(jget "$work/out" 'j.roles.map(r => r.role + ":" + r.scope).join(",")')" = "logs:app:demo" ] \
+	&& pass "lars: whoami --json holds the role logs on app:demo" \
+	|| fail "lars: whoami --json: $(jget "$work/out" 'JSON.stringify(j)')"
 client apps --json --box "$HOST" --key "$work/otto"
 expect "otto: apps --json" 0
 [ "$(app_names "$work/out")" = demo ] && pass "otto: apps --json parses and holds demo alone" \

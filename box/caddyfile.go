@@ -44,7 +44,7 @@ func parseGlobalOption(d *caddyfile.Dispenser, existing any) (any, error) {
 //	    deploy_trust <preset> { ... }               # who may push (repeatable)
 //	    signer <principal> <key-type> <base64>      # who may sign (repeatable)
 //	    person <name> <key-type> <base64>           # a person's key (repeatable)
-//	    grant <name> viewer box|app <app> [from <prefix>...]  # what a person may read (repeatable)
+//	    grant <name> viewer|logs box|app <app> [from <prefix>...]  # what a person may read (repeatable)
 //	}
 //
 // person and grant lines are read and checked here, so a bad one fails

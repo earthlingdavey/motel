@@ -38,17 +38,45 @@ func TestEveryRouteHasAnAction(t *testing.T) {
 	}
 }
 
+// arrivesWithItsRead are the actions Decide's table holds whose row
+// arrives with the read itself, in the next change: app.logs, whose
+// cell, case and 403 were reviewed with the grant that gives it. The
+// two tests that hold every action to a row pass over these, and
+// TestArrivesWithItsReadHasNoRow fails once a row for one exists, so
+// the list is emptied by the change that adds the row.
+var arrivesWithItsRead = []access.Action{access.AppLogs}
+
+// hasRow reports whether liveswap_webhook has a row for the action, on
+// /<app> or under /_motel/.
+func hasRow(a access.Action) bool {
+	return slices.ContainsFunc(routes, func(rt route) bool { return rt.action == a }) ||
+		slices.ContainsFunc(motelAppRoutes, func(rt motelAppRoute) bool { return rt.action == a }) ||
+		slices.ContainsFunc(motelRoutes, func(rt motelRoute) bool { return rt.action == a })
+}
+
+// TestArrivesWithItsReadHasNoRow: every action arrivesWithItsRead names
+// is one Decide's table holds and liveswap_webhook has no row for yet.
+func TestArrivesWithItsReadHasNoRow(t *testing.T) {
+	for _, a := range arrivesWithItsRead {
+		switch {
+		case !slices.Contains(access.Actions(), a):
+			t.Errorf("arrivesWithItsRead names %s, which Decide's table does not hold", a)
+		case hasRow(a):
+			t.Errorf("arrivesWithItsRead names %s, which has its row now: take it off the list", a)
+		}
+	}
+}
+
 // TestEveryActionHasARoute is the reverse: every app action Decide
 // allows to someone has a row, on /<app> or under /_motel/apps/<app>/,
 // so a row cannot be removed and leave its action allowed with no
 // route. The box actions are box's to hold.
 func TestEveryActionHasARoute(t *testing.T) {
 	for _, a := range access.Actions() {
-		if !strings.HasPrefix(string(a), "app.") {
+		if !strings.HasPrefix(string(a), "app.") || slices.Contains(arrivesWithItsRead, a) {
 			continue
 		}
-		if !slices.ContainsFunc(routes, func(rt route) bool { return rt.action == a }) &&
-			!slices.ContainsFunc(motelAppRoutes, func(rt motelAppRoute) bool { return rt.action == a }) {
+		if !hasRow(a) {
 			t.Errorf("action %q has no route on liveswap_webhook", a)
 		}
 	}
