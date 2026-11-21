@@ -297,42 +297,61 @@ for people's tokens.
 
 ## Getting it
 
-Each release after v0.8.0 carries the client for an M-series Mac,
-`motel_<version>_darwin_arm64.tar.gz`, on the same
+Each release after v0.8.0 carries the client for an M-series Mac and
+for Linux on amd64 and arm64, `motel_<version>_darwin_arm64.tar.gz`,
+`motel_<version>_linux_amd64.tar.gz` and
+`motel_<version>_linux_arm64.tar.gz`, on the same
 [releases](https://github.com/smallhoursorg/motel/releases) page as
 the server and in the same `checksums.txt`, with the release's own
 number: `motel version` prints `motel v<version>`. Releases up to
-v0.8.0 carry no client. In Terminal, this fetches the latest
-release's, checks it, and puts `motel` in `~/.local/bin`:
+v0.8.0 carry no client. In a terminal, this picks the archive for the
+machine it runs on, fetches the latest release's, checks it, and puts
+`motel` in `~/.local/bin`:
 
 ```sh
+case $(uname -s)/$(uname -m) in
+  Darwin/arm64) p=darwin_arm64 ;;
+  Linux/x86_64) p=linux_amd64 ;;
+  Linux/aarch64) p=linux_arm64 ;;
+  *) p=; echo "no release carries motel for $(uname -s) $(uname -m): build it from a clone" >&2 ;;
+esac
 v=$(curl -fsSL -o /dev/null -w '%{url_effective}' \
   https://github.com/smallhoursorg/motel/releases/latest)
 v=${v##*/v}
-f=motel_${v}_darwin_arm64.tar.gz
+f=motel_${v}_$p.tar.gz
 base=https://github.com/smallhoursorg/motel/releases/download/v$v
-cd "$(mktemp -d)" &&
+[ -n "$p" ] && cd "$(mktemp -d)" &&
   curl -fsSLO "$base/$f" && curl -fsSLO "$base/checksums.txt" &&
-  grep " $f\$" checksums.txt | shasum -a 256 -c - &&
+  grep " $f\$" checksums.txt |
+  if [ "$p" = darwin_arm64 ]; then shasum -a 256 -c -; else sha256sum -c -; fi &&
   tar -xzf "$f" motel && mkdir -p ~/.local/bin && mv motel ~/.local/bin/ &&
   ~/.local/bin/motel version
 ```
 
-The first two lines take the latest release's tag without its `v`;
-for a release candidate, or any other release, write the tag in their
-place instead, without its `v` and with its hyphen: `v=0.8.1-rc1`.
-The `&&`s stop the block at the first step that fails, and `shasum`
-checks the one line of `checksums.txt` that names the archive: with
-no such line it fails, rather than passing with nothing checked. When
-`motel` alone is then not found, `~/.local/bin` is not on your PATH:
-`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile`, and open
-a new Terminal window. Unpack the archive with `tar`, as above: a
-browser's download unpacked by a double-click in Finder gives `motel`
-macOS's quarantine mark, and macOS refuses to run it until `xattr -d
-com.apple.quarantine ~/.local/bin/motel` clears the mark.
+The `case` names the archive from `uname`; on any other machine (an
+Intel Mac, Linux on another architecture, Windows) it says so, and the
+block stops before it downloads an archive. The two lines after it take
+the latest release's tag without its `v`; for a release candidate, or
+any other release after v0.8.0, write the tag in their place instead,
+without its `v` and with its hyphen: `v=0.8.1-rc1`. Not an earlier
+one: v0.6.0 to v0.7.0 have a `motel_<version>_linux_<arch>.tar.gz`
+too, which is the old server, and on Linux the block would install
+that as `motel`. The `&&`s stop the block at
+the first step that fails, and the checksum step checks the one line
+of `checksums.txt` that names the archive, with macOS's `shasum -a
+256` or Linux's `sha256sum` (GNU's, or BusyBox's on Alpine): with no
+such line either one fails, rather than passing with nothing checked.
+When `motel` alone is then not found, `~/.local/bin` is not on your
+PATH: `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile` on
+a Mac, or `~/.profile` on Linux, and open a new terminal. On a Mac,
+unpack the archive with `tar`, as above: a browser's download unpacked
+by a double-click in Finder gives `motel` macOS's quarantine mark, and
+macOS refuses to run it until `xattr -d com.apple.quarantine
+~/.local/bin/motel` clears the mark.
 
-On Linux and on an Intel Mac, where no release carries a client, build
-it from a clone of this repository, with Go 1.27.1 or later. `go
+On an Intel Mac, or any other machine no release carries a client
+for, build it from a clone of this repository, with Go 1.27.1 or
+later. `go
 install …/client/cmd/motel@<version>` does not work: the module names
 its sibling `liveswap` by a local `replace`, which `go install`
 refuses.
@@ -351,8 +370,11 @@ Accepted, for the release's archive and the block above:
 | Residual | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
 | Until the first release after v0.8.0 is out, the block reads v0.8.0 as the latest, whose release has no client, and `curl` stops it at a 404 that names only the address; the paragraph above it says releases up to v0.8.0 carry none | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: it lasts until the next release |
-| The archive's line in `checksums.txt` is picked by `grep`, where each `.` of the name matches any character: an asset whose name differed from the archive's only there would be picked too, and `shasum` would fail on the file not downloaded | 2 | 2 | 1 | 4 | 1 (`awk`'s exact match), risk 2 | accepted: no release has such an asset; it fails red, naming the file |
+| The archive's line in `checksums.txt` is picked by `grep`, where each `.` of the name matches any character: an asset whose name differed from the archive's only there would be picked too, and `shasum` or `sha256sum` would fail on the file not downloaded | 2 | 2 | 1 | 4 | 1 (`awk`'s exact match), risk 2 | accepted: no release has such an asset; it fails red, naming the file |
 | That `tar` in Terminal leaves the unpacked `motel` without the quarantine mark of a browser's download rests on Apple's forum answer (the 2026-11-16 research), not a run on a Mac: were it wrong, macOS refuses `motel` and the `xattr` line above clears it | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: the block's own path, `curl` then `tar`, is not concerned; to be tried on a Mac with the first release that has the archive |
+| The `case` knows each archive by one `uname -m` spelling: a Linux that prints `arm64` or `amd64`, or a shell under Rosetta on an M-series Mac (`x86_64`), is told no release carries `motel` and to build it from a clone, though an archive would run there | 2 | 5 | 1 | 10 | 1 (text: more patterns), risk 2 | accepted: refused before any archive is downloaded, naming the system and machine it saw, and the build from a clone works there |
+| On Linux, the PATH line added to `~/.profile` reaches a new login, not a new terminal window, whose shell does not read `~/.profile` (and bash skips it where `~/.bash_profile` exists, and zsh never reads it): `motel` alone is still not found until the next login, or until `. ~/.profile`; with zsh, not at all, until the line is in `~/.zprofile` | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: `command not found`, after the block has run `~/.local/bin/motel version` by its full path; Debian's and Ubuntu's own `~/.profile` add `~/.local/bin` at login once it exists |
+| The block needs `curl`, which some minimal systems lack (Alpine's base image, named above for its BusyBox `sha256sum`): there the first `curl` is not found, `v` is empty, and the download fails | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: red at the first `curl`, `not found` |
 
 ## How box text is kept out of the client's voice
 

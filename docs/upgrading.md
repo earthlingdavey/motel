@@ -362,10 +362,24 @@ is the exception, and takes this release's template before its next
 push: in one commit, copy `.github/workflows/apply.yml`,
 `.gitattributes`, `Makefile` and `bin/` from `examples/box/` over its
 own, and delete its `bin/install-motel` (`bin/install-hotserve` in one
-from before v0.6.0). With no pin, that script asks the latest release
-for an archive under the old name, which no `moteld` release has, so
-both of the workflow's jobs fail at their install step, naming the
-address tried, and no push applies. A pin that names a release from
+from before v0.6.0). Unless its repository variable names a release
+up to v0.7.0, no push applies until it does, whatever a box's
+`MOTEL_VERSION` file names: the apply job installs the default release
+alone and asks it each box's address. With no variable,
+`bin/install-hotserve` asks the latest release for a `hotserve_…`
+archive, which no release since v0.5.0 has, and both of the workflow's
+jobs fail at their install step, naming the address tried.
+`bin/install-motel` asks it for `motel_<version>_linux_<arch>.tar.gz`,
+the server's archive name up to v0.7.0. v0.8.0 has none, and the jobs
+fail the same way. Every release after v0.8.0 has one, the laptop
+client's ([client/](../client/README.md)): the script checks it
+against `checksums.txt` and installs it as `motel`. The apply job's
+`bin/apply` then fails for every box, before it sends that box
+anything, with `apply: <host>/Caddyfile: motel: unknown command
+"webhook" for "motel box"; motel box --help says more`; the check
+job's `make check` fails for each box with no file naming an earlier
+release, with `check: motel: unknown command "describe" for "motel
+box"; motel box --help says more`. A pin that names a release from
 before `moteld` is removed, or set to this release, at the same time:
 the repository variable, and any `<host>/MOTEL_VERSION` file (a
 template from before v0.6.0 names both `HOTSERVE_VERSION`, which the

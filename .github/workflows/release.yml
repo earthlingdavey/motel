@@ -1,6 +1,7 @@
 # Product releases: push a tag like v0.1.0 and this builds the binaries
-# and OS packages and attaches them to the GitHub release, then brings
-# the example apps' template repositories up to it.
+# and OS packages, and the laptop client's archives, and attaches them
+# to the GitHub release, then brings the example apps' template
+# repositories up to it.
 # (Submodule tags like liveswap/v0.1.0 do not match the v* filter.)
 name: release
 
@@ -53,7 +54,12 @@ jobs:
       - uses: ./.github/actions/runner-sample
       - run: make build
       - run: make package VERSION="${GITHUB_REF_NAME#v}"
-      # Raw binaries ship as per-arch tar.gz (binary + LICENSE + a
+      # make package has left the .debs and the laptop client's
+      # archives in dist/: motel_<version>_<os>_<arch>.tar.gz for an
+      # M-series Mac and Linux amd64/arm64 (motel + LICENSE), which
+      # the checksum and upload below take with the rest.
+      # The server's raw binaries ship as per-arch tar.gz, made here
+      # (moteld_<version>_linux_<arch>.tar.gz: binary + LICENSE + a
       # README saying what the packages would have done for you):
       # Apache-2.0 redistribution should carry the license text, the
       # compressed download is a third the size, and the shape matches

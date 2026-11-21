@@ -25,8 +25,9 @@ hardware key. Ask them for the line `motel key
 --name <their name>` prints: the `person` line for their key, ready to
 paste (the `motel` command is the laptop client, experimental; without
 it, the one line of their `.pub` file, with `person <name>` in front).
-No release up to v0.8.0 carries the client: on those, there is nothing
-to download, and they build it from a clone of this repository
+No release up to v0.8.0 carries the client (the
+`motel_<version>_linux_<arch>.tar.gz` of v0.6.0 to v0.7.0 is the old
+server): on those, they build it from a clone of this repository
 (client/README.md, "Getting it").
 Once you have pushed, `motel whoami` tells them who the box takes them
 to be and what they may read from where they are. If their key lives in
@@ -181,9 +182,9 @@ The last six rows, from `/_motel/backups` on, are on each release
 after v0.8.0. A box at v0.8.0 answers each of them `404`, `{"error":"not
 found"}`, to a person it admits.
 
-The `motel` command (for an M-series Mac, an archive on each release
-after v0.8.0; elsewhere, built from a clone of this repository:
-client/README.md, "Getting it") makes
+The `motel` command (for an M-series Mac and for Linux on amd64 and
+arm64, an archive on each release after v0.8.0; elsewhere, built from a
+clone of this repository: client/README.md, "Getting it") makes
 the token and asks:
 `motel whoami --box deploy.example.com`, `motel apps`, `motel status
 <app>`, `motel deploys <app> [<version>]`, `motel box status`; on each
