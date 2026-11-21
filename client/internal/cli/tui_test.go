@@ -955,3 +955,32 @@ func TestBellOn(t *testing.T) {
 		}
 	}
 }
+
+// blocks is a signer that never signs: an agent asking with nobody to
+// answer.
+type blocks struct{}
+
+func (blocks) Sign(ctx context.Context, _ sshkey.Key, _ string, _ []byte) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestSignWithin: a signature that takes longer than the TUI's signer
+// allows fails, saying why (a read's failure, not its context's end, so
+// the engine stops every read with it); one the read's own context
+// ends is that context's end.
+func TestSignWithin(t *testing.T) {
+	s := &signer{inner: blocks{}, now: time.Now, within: 20 * time.Millisecond}
+	_, err := s.Sign(context.Background(), sshkey.Key{Shown: "~/.ssh/id_ed25519.pub"}, "ns", nil)
+	if err == nil || errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "did not sign within") || !strings.Contains(err.Error(), "r asks again") {
+		t.Errorf("past the deadline: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.Sign(ctx, sshkey.Key{Shown: "k"}, "ns", nil); !errors.Is(err, context.Canceled) {
+		t.Errorf("the read left: %v", err)
+	}
+	if signWithin != time.Minute {
+		t.Errorf("signWithin is %s", signWithin)
+	}
+}

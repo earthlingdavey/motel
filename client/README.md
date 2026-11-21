@@ -462,7 +462,8 @@ made by hand. Accepted:
 | After an answer about another key and `r`, a whoami that comes back refused (a 403, or a release that is not `N.N.N`, as in the row on such a build above) leaves the stop screen up, saying `stopped` and the old reason until another read is answered, then the whoami's refusal, and offering `r`, while the reads run behind it (the list and every status; the title bar says `live`); `r` does nothing there, since no read is stopped; `q` leaves | 3 | 2 | 3 | 18 | 2 | accepted: it takes a box that answers about another key and then refuses whoami, and the screen still says what was refused |
 | Opening and closing who am I again and again (`?` then esc: each esc opens it again) reads whoami at each opening while its last answer is over a minute old, or it has never answered, and its newest read failed without being held (a release that is not `N.N.N`, as in the row on such a build above): 41 reads in 10 s were measured, within the engine's rate | 2 | 5 | 1 | 10 | 2 | accepted |
 | Per-frame work has no bound in what a box sends: every table and text view is rebuilt at each frame (one a second, and one a key), so a hostile box's list of tens of thousands of names, or a record with hundreds of thousands of log lines, all within the client's 4 MiB cap on an answer, makes every key take seconds (the review measured 55,000 names at 6.2 s a frame, 550,000 log lines at 2.0 s a frame, with the fixture client); an honest box cannot | 2 | 2 | 1 | 4 | 3 | accepted |
-| `door.Line` does not hold its own tags against the text beside them: tview steps a grapheme cluster at a time and reads a tag only at a cluster's start, so where a tag of a dressed (coloured or styled) segment stands inside a cluster of the line's text (a character that joins the one before it across the tag) tview draws that cluster twice: 1 or 2 cells wider than `Width` says for a spacing mark, a Hangul vowel or final after its syllable's start, a flag's second half or a pictograph after a zero width joiner, and no wider for a combining mark, which adds no cell; and a Prepend character (U+0600, U+0D4E) directly before a tag takes its `[` into its cluster, so the tag is drawn as text and its style is not closed, the next line dressed too. No row is begun: `FuzzLine` and `TestClassesBesideATag` hold every line to one row, and the review's report of one was not reproduced. No screen puts box text beside a tag today, only the client's own words (and, in the stop line after a key failed to sign, the key's path as the person named it); those tests hold styles and width only where no tag stands inside a cluster, no test holds the screens' lines to that, and a comment on `door.Line` says so. A fix (each cluster moved into the segment it begins in, and a zero-width space between a Prepend character and a tag) is about 25 lines | 2 | 1 | 3 | 6 | 3 | accepted: rescored at #570, severity 3 to 2, since no row is begun |
+| `door.Line` draws each grapheme cluster in the style of the segment it begins in, since tview reads a tag only between two clusters: a character that joins the one before it across two segments (a combining or spacing mark, a Hangul vowel or final, a flag's second half, a pictograph after a zero width joiner) is drawn in the earlier segment's style. So a line of the box's on the backups screen that begins with such a mark shows the mark in its level's colour, as the start of a key's path does after `not asking: `; and text ending in a Prepend character (U+0600, U+0D4E), a Hangul leading consonant, half a flag, or a pictograph and joiner, directly before a dressed segment, would draw that segment's first character in its own style (no screen puts a box's or a person's text directly before a tag: a survey of the model's lines at `58bbd74a`, which read most of them) | 2 | 2 | 3 | 12 | 2 | accepted: one row, the width, and styles closed at a line's end are held for every line (`FuzzLine`, `TestClassesBesideATag`, `TestPairsBesideATag`); a tag inside a cluster is what drew the cluster twice |
+| With wrap on, tview does not draw the cluster that overflows a row where a word longer than the row is split, when a grapheme Control follows it directly: the line feed that ends the line, or the zero-width space `door` writes after a `[`. So in a record's tail after `w`, the last character of a long token that ends its line one cell into a new row is not drawn (`abcdefgh` at width 7 draws `abcdefg` and an empty row), nor is a `[` at such a split; on the help and stop pages it takes a word of the client's own wider than the row. It was so before #637, and plain tview does the same. Since #637 it also holds for a Prepend character (U+0600, U+0D4E) that ends a dressed segment at such a split, where `door` writes a zero-width space before the tag: of the wrapped views only the refused screen draws dressed lines, and no dressed segment ends in a box's or a person's text | 3 | 5 | 5 | 75 | 3 (the door wraps a wrapped view itself, by `Width`, and hands tview its rows; or tview sizes a new row's first cluster from the state before it) | owed: a change of its own; found by the review of #637 |
 | The cap cuts through the client's own quotation of box text: a failure's sentence is capped (200 characters in an apps row's reason, 400 in a "the last read failed" sentence, 800 alone on a screen) after the box's value is quoted, so a quotation that runs past the cap loses its closing quote before `…[cut]`. On the apps screen, cut to the window on one row, it shows only in a window over about 230 columns; who am I, the box screen and an app's "the last read failed" lay the sentence on rows, so there it shows at any width when the quoted value is long in escapes (200 bidi overrides, each written as `\u202e`, make 1200), on an app's screen only while the sentence fits in half the window (the row on that sentence below) | 2 | 2 | 3 | 12 | 2 | accepted |
 | ctrl-z on the `:` line after an answer about another key and `r` brings back what was typed there before (the input field's own undo; the stop empties the line but not its history), which can be an app's name the dropped box gave | 2 | 2 | 3 | 12 | 2 | accepted |
 | whoami's name and release may spell one of the title bar's own words (`"name":"PAUSED"`, `"version":"0.0.0-SIGNED-OUT"`): within their grammars; no space, `·`, `│` or `:` can be forged | 2 | 2 | 3 | 12 | 2 | accepted |
@@ -495,7 +496,7 @@ made by hand. Accepted:
 | `status --follow` ends at the first read that fails (no answer, a 5xx, a 429 that stood after its wait, a moteld restarting), with that read's exit and its sentence saying the deploy may still run, though it may end well a moment later; it is not asked again | 2 | 3 | 1 | 6 | 2 (a retry at its turn, and a count) | accepted: it ends red and named, and run again it follows the same deploy if it still runs |
 | `status --follow` signs its tokens as every command does, each lasting 300 s, so a follow of more than about 3.5 minutes with a hardware key asks for a touch on the terminal mid-follow, the reads waiting until it is given; the TUI's tokens last 600 s (`TestForTUI` holds the longer life to the TUI's client) | 2 | 3 | 1 | 6 | 1, risk 2 (a captured token then lasts twice as long) | accepted: a deploy's usual length is under a minute |
 | A phase a newer box names that this client does not know, in the deploy in flight's phases, makes the whole status "not moteld's answer", exit 3 (on the screens the app is `unknown`), for the rest of that deploy, as one in `last_deploy` already did until the next deploy and one in the status's phase while it lasts: since #580 the phases are printed, and so held to the outcome vocabulary | 2 | 5 | 1 | 10 | 2 (an unknown phase shown in the client's words) | accepted: it is said, and a client of the box's release knows its phases |
-| A TUI left without a key for 10 minutes pauses (the title bar says PAUSED), so a person waiting on an app's screen for CI to reach its deploy sees nothing of a deploy that begins after that until a key; `status --follow` follows only a deploy already in flight when it starts | 2 | 5 | 1 | 10 | 2 (no pause while an app's screen is open: a new rule for the rate and a hardware key's touches) | accepted: the pause is the owner's rule for an unattended TUI, and says itself |
+| A TUI left without a key for 10 minutes pauses every read but the alerts the title bar counts (the title bar says PAUSED), so a person waiting on an app's screen for CI to reach its deploy sees nothing of a deploy that begins after that until a key; `status --follow` follows only a deploy already in flight when it starts | 2 | 5 | 1 | 10 | 2 (no pause while an app's screen is open: a new rule for the rate and a hardware key's touches) | accepted: the pause is the owner's rule for an unattended TUI, and says itself |
 | An app's `ended` line puts its key hint last (`· d opens its record`), and its `phases` line the failed phase's `✖`: at 80 columns the line of a failure in soaking with 12-character versions is 85 cells, so the hint is cut (`…`), and a failed phase of 100 s or more cuts its `✖`; the line still says `failed in <phase>`, and help lists `d` | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: what is cut is a hint and a repeated mark |
 | `motel backup status` whose stdout takes none of its human output (a full disk, a closed pipe) exits 2 with the write's error, not the box's verdict (1, 3): every command's human output fails so | 2 | 3 | 1 | 6 | 2 | accepted: red and named; `--json` and the verdict's exit are what a script reads |
 | On the backups screen in a window 14 columns wide or less, far below the smallest the screens are laid for (60), a could not tell's quoted why is laid one character a row, each past its 14 columns of indent, so the rows show blank | 2 | 5 | 1 | 10 | 2 | accepted: no screen is laid for such a width; `y` shows the answer |
@@ -509,7 +510,10 @@ made by hand. Accepted:
 | The bell is not heard where the terminal is silent (Ghostty's, Alacritty's and VS Code's defaults, a terminal whose bell was turned off), and is not forwarded by a tmux with `visual-bell on` or a screen with `vbell on` (Debian's `/etc/screenrc` sets it), so a person away from the screen is not called there | 2 | 5 | 3 | 30 | 3 (a desktop notification, OSC 9 or 777, per terminal and wrapped for tmux) | accepted over the bar, by the owner's decisions of 2026-11-20 (#576): the bell alone, no OSC 9/777/99; the mark is the channel, the bell its call, and the mark stays reversed until a key |
 | A bell rung into a detached tmux session is not replayed when it is attached (tested on tmux 3.5a) | 2 | 5 | 1 | 10 | 3 | accepted: the mark is held reversed, with how many are new, until a key |
 | The mark's glyph is the worst alert's: a critical one beside warnings shows `✖` before the count of them all, which does not say how many are critical | 2 | 5 | 1 | 10 | 2 | accepted: `:alerts` lists each, marked by its severity |
-| After ten idle minutes the TUI pauses (the row on the pause above), the alerts it counts with it: an alert that fires while it is paused is neither drawn nor rung until a key, and the mark meanwhile shows its count as old (`✖ 3?`, `as of 10m ago`) | 2 | 5 | 1 | 10 | 2 (the alerts read alone through the pause, for a key that needs no touch) | accepted: the pause is the owner's rule for an unattended TUI; reading the alerts through it is #576's next change |
+| After ten idle minutes the alerts the title bar counts are read every minute, not every 15 s: an alert that fires while the TUI is paused is counted and rung up to a minute after the box holds it (and the box's own 5 s hold); for a person with app grants only each app's at its own interval, longer with many apps (63.5 s at 40) | 2 | 5 | 1 | 10 | 1 (a shorter interval: more reads all night) | accepted: the owner's decision of 2026-11-20 (#576: 60 s while paused); the bar says the alerts are still read |
+| A key that cannot sign with nobody there is asked about every nine minutes while the TUI reads through the pause (the alerts, and whoami even with no grant to watch): a hardware key (an `sk-` type, whose touch the box requires: the title bar says `TOUCH YOUR KEY to sign` and the key blinks), and a key in an agent that asks before each signature (`ssh-add -c`; a password manager's agent, such as 1Password's with Touch ID, once it has locked itself; the common setup on a Mac. A Secure Enclave key, Secretive's, is ECDSA, which the client does not take yet: the title bar says `waiting 12s for the key to sign` from 5 s on). No one answers, the signature fails (the authenticator's own timeout, or the TUI's minute), and every read stops, so the person comes back to `NOT SIGNED: r signs again`, the stop line saying why, not to PAUSED, and the alerts were watched only until then, at most about nine minutes into the pause; the mark says its count is old. What such an agent does with a prompt nobody answers (waits for ever, times out, stacks the prompts), and how long an authenticator waits for a touch, are unverified; the client cannot tell an agent that asks from one that signs at once (`ssh-add -L` shows no constraint) | 2 | 5 | 1 | 10 | 2 (a signature that fails while paused stops the watch until a key, rather than every read until `r`) or 3 (a case of its own for a hardware key) | accepted: the stop is said and named, and `r` signs again; the owner's decision of 2026-11-21 is that hardware keys get no case of their own now (`TestPausedHardwareKeyAsAnyKey`) |
+| At the pause's first moment an answer applied just after it is judged by the paused minute, though its next read was scheduled 15 s on: if that read then hangs, the mark says its count is old 65 s after it, not 20 s | 2 | 2 | 3 | 12 | 1, risk 2 (the interval each read was scheduled at kept on its entry) | accepted: it takes a read that hangs in the second the pause begins |
+| A signature that takes longer than 60 s at the keys (a person slow to answer an agent's prompt, or to touch a hardware key) fails, and every read stops until `r`, where before the reads waited for it | 2 | 3 | 1 | 6 | 1 (a longer deadline) | accepted: a person at the keys answers within a minute, and the stop says why |
 | An alert that fires and ends within a gap of the reads (the pause, STALE, a sleep) is never counted nor rung: no read gives what fired before it | 2 | 5 | 5 | 50 | 3 (a read of what fired since, on the box) | accepted over the bar, by the owner's decision of 2026-11-20 (#576: no history of a gap); notify's channels still told it, and the mark says its count was old |
 | Against a moteld older than the alerts read (a 404), the title bar says `alerts not known` (`alerts ?`) in the warning colour on every screen until ctrl-r, though the box refused nothing | 2 | 5 | 1 | 10 | 2 (a dim word of its own for a box that cannot say) | accepted: the decision of 2026-11-20 (#576, READS.md section 3): the box cannot say, and the mark never reads as none firing; `:alerts` says the 404 and why |
 | While the box says it holds more alerts than it sends (`more_alerts`, past 500), every alert the watch has counted and the box no longer sends is kept as maybe firing until an answer without it, so the keys kept grow for as long as that lasts, and one not yet seen stays counted as new until a key | 2 | 2 | 3 | 12 | 2 | accepted: it takes an Alertmanager holding over 500 alerts, far past what motel posts; the count says `+` |
@@ -785,7 +789,7 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   if it is still open); a read of it that fails, a 5xx too, is not asked again by
   itself, and the record read before stays on screen beside a failure
   that is not a refusal: a 403 or a 404 is said alone, as on an app's
-  screen and the box screen, and drops the status, record or box's status held (not who am I's: the title bar and who am I say its age and that it failed; nor the apps list: the apps screen shows it as of its time, says the last read failed, and `y` there still gives it, which is bearable since it is said to be old and failed and each name's status is still asked, and dropped on its own refusal), so `y` and `P` have no answer of it to give (`y` says the box refused the read, or answered it 404). Ten idle minutes pause it, the alerts the title bar counts too, whose count then says it is old.
+  screen and the box screen, and drops the status, record or box's status held (not who am I's: the title bar and who am I say its age and that it failed; nor the apps list: the apps screen shows it as of its time, says the last read failed, and `y` there still gives it, which is bearable since it is said to be old and failed and each name's status is still asked, and dropped on its own refusal), so `y` and `P` have no answer of it to give (`y` says the box refused the read, or answered it 404). Ten idle minutes pause it: every read stops but the alerts the title bar counts, which go on at a minute or more (a viewer of the box's every minute, 470 reads in the 7 h 50 min after the pause of 8 hours away and about 54 signatures, as at 15 s; a person with app grants only, each app's at the interval it had at the keys and never under a minute: 0.017 a second with 1 app, 0.083 with 5, 0.2 with 12, 0.63 with 40, measured on the fake clock, `TestAppWatchThroughThePause`; with the apps list every minute and whoami every five, which say which apps are watched, so one added or granted meanwhile is; whoami is read through the pause, whatever is watched, so a grant removed by a push and given back while away is seen, and a read a 403 held is asked again; a grant limited by `from` that drops out on another network is seen too while another grant still lets the key in, but with none left the box refuses the key (401), every read stops, and only `r` asks again), and the title bar says `PAUSED (idle 10m), alerts still read: any key resumes` (while their newest reads answered: one that failed has it say `PAUSED (idle 10m): any key resumes`, and the mark its count old; one waited for, `waiting`); an alert new meanwhile moves the mark and rings the bell as at the keys, and the mark stays reversed until the key that resumes. Every key is read for so, a hardware key too: one that cannot sign with nobody there stops the reads at its next signature (the accepted row on a key that cannot sign with nobody there).
 - **What fires.** The title bar's first cells, on every screen, count
   the alerts that fire that this person may see, after the glyph of the
   worst (`✖ 3 firing`; `▲ 1 firing` when none is critical; `✖ 3` and
@@ -810,8 +814,8 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   does not know; a read that failed before any answer; an answer about
   another key or box) it says `alerts not known` (`alerts ?`, `?`),
   never a zero, and the title bar's word is not turned to `refused` by
-  it. Where the count held is old (the reads paused or stopped, its
-  read's last try failed, a 429, or its answer older than its interval
+  it. Where the count held is old (the reads stopped; its read's last
+  try failed, a 429, or its answer older than its interval
   and 5 s: a read or a signature that waits, a sleep) it is shown with
   `?` (`✖ 3?`, `✖ 3 firing as of 10m ago`, `0?` for none). An alert is
   new when it is counted and was not at the last answer that said what
@@ -842,7 +846,14 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   the first at 130 s, each shown at the next read.
 - **The token** lasts 600 s, the longest a box takes, and is signed
   again a minute before it ends: a hardware key is touched about every
-  nine minutes, and the title bar says when. The TUI never asks for a
+  nine minutes, and the title bar says when. It is signed for the
+  alerts read through the pause too, about as often, with nobody there
+  to touch a hardware key (the row on a key that cannot sign with nobody
+  there). A signature
+  waited for 5 s or more has the title bar say so (`waiting 12s for the
+  key to sign`, an agent that asks first, say), and one that takes over
+  a minute fails: every read stops, the screen says why, and `r` signs
+  again. The TUI never asks for a
   passphrase or a PIN: every signature runs ssh-keygen in a session of
   its own, with no controlling terminal, and with
   `SSH_ASKPASS_REQUIRE=force` and an `SSH_ASKPASS` that fails, so a key
@@ -881,10 +892,28 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   character that is one, but uniseg v0.4.7 reports one too after an
   emoji modifier that ends a cluster begun by an emoji base (a
   thumbs-up with a skin tone), so box text could begin a row of its
-  own. `door` asks tview's own splitter where it would begin a row
-  inside a text and writes the character before each such break as an
-  escape (`\U0001f3fd`), as `termtext` writes one it will not pass; the
-  input field's text that the person typed is put back as it was.
+  own. `door` finds where tview would begin a row inside a text and
+  writes the character before each such break as an escape
+  (`\U0001f3fd`), as `termtext` writes one it will not pass; the input
+  field's text that the person typed is put back as it was. A tag
+  changes where: tview judges the break after a cluster a tag follows
+  by the one character after the tag, where uniseg would read two (no
+  break before a hyphen a digit follows), so a thumbs-up with a skin
+  tone before `-0` began a row once a tag stood after it or after the
+  hyphen. So `door` asks uniseg, of each cluster, what tview asks with
+  a tag after it (`rowbreak.At`, a package of its own only for the
+  time `make test` takes: its comment says why): that finds every break tview begins with no tag as
+  well, since uniseg reads the second character only to take a break
+  away, and the drawn tests below hold it. The escape is written in
+  every text, tagged or not, so that the width measured is the width
+  drawn. uniseg also takes no break before a hyphen a digit
+  follows, the mandatory one after a line feed among them, so a line
+  that began `-1` was drawn on the row above it; `door` writes a
+  word joiner (U+2060), which tview draws nowhere, after each line
+  feed it joins lines with (`Lines`, `Texts`, `LitLines`): a
+  zero-width space there let a wrapped line break straight after its
+  indent, and `TestJoinedLinesWrapAsAlone` holds a joined line to wrap
+  as it does alone.
   `TestOneRow` has tview draw every code point, every
   Extended_Pictographic character with each modifier, and a modifier
   after a combining mark, in every widget kind used, each on one row.
@@ -894,8 +923,16 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   one row, and as wide as `door.Width` says in the widgets that hold
   the box's text; `FuzzInert` holds any string so in the same widgets,
   and that no tag in it is read; and `FuzzLine` and
-  `TestClassesBesideATag` hold whole lines (the accepted row on
-  `door.Line`). `FuzzOverlay` and `FuzzPrintedCommand` hold the
+  `TestClassesBesideATag` hold whole lines: one row, each cell in its
+  segment's style, styles closed at the line's end, and as wide as
+  `Width` says. `TestPairsBesideATag` holds one row with two
+  characters after a tag, the tag before the two and between them,
+  for each cluster of two or three code points before it after which
+  uniseg can report a mandatory break (the others are left to
+  `FuzzLine`). `TestLinesEachOnARow` holds each joined line to a row
+  of its own, whatever begins the line under it, and `FuzzLine` draws
+  its line first and last with `-0` between, and between two lines
+  through `Texts` and `LitLines`. `FuzzOverlay` and `FuzzPrintedCommand` hold the
   overlays and the printed command to the rules above, the second
   reading the line back as a POSIX shell does.
   `TestOneDoor` fails if the screens hand tview text or make a widget
@@ -918,6 +955,7 @@ DATA in the title bar, with no box.
 | `internal/local` | the programs it runs and the box repository it may be in |
 | `internal/tui` | the TUI's screens, on tview |
 | `internal/tui/door` | the one way text reaches tview |
+| `internal/tui/door/rowbreak` | where tview would begin a row inside a text, for the door to escape |
 | `internal/tui/model` | what the screens read and when (the refresh engine), and what they show, with no terminal library |
 | `internal/tui/demo` | a box made of fixtures: `--demo`, and the TUI's tests |
 | `internal/tui/hostile` | test support: the hostile fixture's attacks, and a terminal that records bytes |

@@ -66,8 +66,9 @@ var allows = map[string][]string{
 	"tui": {"context", "runtime/debug", "slices", "strconv", "strings", "sync", "sync/atomic", "time",
 		"github.com/rivo/tview", "github.com/gdamore/tcell/v2",
 		mod + "internal/termtext", mod + "internal/tui/model", mod + "internal/tui/door"},
-	"door": {"strings", "github.com/rivo/tview", "github.com/gdamore/tcell/v2",
-		mod + "internal/termtext", mod + "internal/tui/model"},
+	"door": {"strings", "unicode/utf8", "github.com/rivo/tview", "github.com/rivo/uniseg", "github.com/gdamore/tcell/v2",
+		mod + "internal/termtext", mod + "internal/tui/model", mod + "internal/tui/door/rowbreak"},
+	"rowbreak": {"unicode/utf8", "github.com/rivo/uniseg"},
 	"model": {"bytes", "context", "encoding/json", "errors", "math", "regexp", "slices", "strconv", "strings", "sync", "time",
 		mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"},
 	"demo": {"context", "embed", "encoding/json", "fmt", "io/fs", "math", "regexp", "strconv", "sync", "time",
@@ -121,7 +122,7 @@ func TestTUIImports(t *testing.T) {
 	}
 	walk(mod+"internal/tui", ".")
 	walk(mod+"internal/tui/demo", "demo")
-	for _, want := range []string{mod + "internal/tui/model", mod + "internal/tui/door", mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"} {
+	for _, want := range []string{mod + "internal/tui/model", mod + "internal/tui/door", mod + "internal/tui/door/rowbreak", mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"} {
 		if !seen[want] {
 			t.Errorf("the walk never reached %s: the test reads the wrong tree", want)
 		}

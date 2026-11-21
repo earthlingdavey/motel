@@ -52,8 +52,10 @@ type Session struct {
 	BoxRulesSt  *Got[wire.Rules]
 	BoxRulesErr error
 	// Signing is set while a token is being signed: a hardware key
-	// waits for its touch.
-	Signing bool
+	// waits for its touch, and an agent may ask before it signs.
+	// SigningAt is when it began.
+	Signing   bool
+	SigningAt time.Time
 	// StopErr is the failure that stopped every read.
 	StopErr error
 
@@ -192,7 +194,7 @@ func (s *Session) seen(now time.Time) {
 				}
 			}
 		}
-		move(&s.last, &s.backAt, &s.alarm.newAt, &s.alarm.rungAt)
+		move(&s.last, &s.backAt, &s.alarm.newAt, &s.alarm.rungAt, &s.SigningAt)
 		for k, at := range s.alarm.unseen {
 			move(&at)
 			s.alarm.unseen[k] = at

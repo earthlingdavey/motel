@@ -147,8 +147,9 @@ func TestWaitingNotCancelled(t *testing.T) {
 }
 
 // TestWaitingStops: a read waited for that ends in a stop says the
-// stop; while stopped nothing is waited for. PAUSED is said over a read
-// still in flight when the person has gone.
+// stop; while stopped nothing is waited for. With the watch's reads
+// going on through the pause, a read in flight when the person has gone
+// is waited for, and said so.
 func TestWaitingStops(t *testing.T) {
 	s, f, now, j := settled(t)
 	*now = now.Add(8 * time.Second)
@@ -166,7 +167,7 @@ func TestWaitingStops(t *testing.T) {
 	}
 
 	s, _, now, _ = settled(t)
-	if w := word(s, now.Add(model.Idle)); !strings.HasPrefix(w, "PAUSED") {
+	if w := word(s, now.Add(model.Idle)); !strings.HasPrefix(w, "waiting 10m") {
 		t.Errorf("idle 10 minutes, a read in flight: %q", w)
 	}
 }

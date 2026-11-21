@@ -100,9 +100,23 @@ func TestTitleWordsAt60(t *testing.T) {
 			h.now = h.now.Add(model.MeAlways)
 			h.pump()
 		}},
-		{"PAUSED (idle 10m): any key resumes", nil, func(h *harness) {
+		// Paused, the watch's read going on: its 53 cells beside the
+		// tiny mark, fresh.
+		{"PAUSED (idle 10m), alerts still read: any key resumes", nil, func(h *harness) {
 			h.now = h.now.Add(model.Idle)
+			h.pump()
 			h.on(func() {})
+		}},
+		// Paused, the watch's read refused: nothing is said read, and
+		// the mark says the count is not known.
+		{"PAUSED (idle 10m): any key resumes", nil, func(h *harness) {
+			h.fake.Set("box-alerts", forbidden)
+			h.now = h.now.Add(model.Idle)
+			h.pump()
+			h.on(func() {})
+		}},
+		{"waiting 6s for the key to sign · 0s ago", nil, func(h *harness) {
+			h.on(func() { h.s.Signing, h.s.SigningAt = true, h.now.Add(-6*time.Second) })
 		}},
 		{"slowed by the box (429) until 15:12:40 UTC · 1h left", nil, func(h *harness) {
 			failAll(h, &model.Failure{Kind: model.FailSlowed, Message: "slow", RetryAfter: time.Hour})

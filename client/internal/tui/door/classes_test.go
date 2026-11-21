@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rivo/tview"
+	"github.com/rivo/uniseg"
+
 	"github.com/smallhoursorg/motel/client/internal/termtext"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
@@ -172,50 +175,320 @@ func culprit(cases []string, holds func(string) bool) string {
 // segment), plain then dressed (the one that opens it), and one dressed
 // class then another (both); a few hundred pairs at a time as one
 // Line, each pair alone between zero-width spaces, which begin and end
-// a grapheme cluster whatever is beside them. Each is held as checkLine holds a
-// line: one row always, and its styles and width where no tag stands
-// inside a grapheme cluster (tagInCluster, the accepted row on
-// door.Line). Seen to fail: with Line's unbreak taken out, on the
-// thumbs-up then the skin tone across a tag (4 cells drawn, Width 14:
-// the tag keeps it on one row, and Width counts the escape); with Line
-// writing no closing tag, in every batch (a style left open).
+// a grapheme cluster whatever is beside them. Each is held as checkLine
+// holds a line. Seen to fail: with Line's unbreak taken out, on the
+// thumbs-up then the skin tone across a tag (not on one row); with Line
+// writing no closing tag, in every batch (a style left open); with
+// whole taken out of Line, on a spacing mark across a tag (5 cells
+// drawn, Width 4); with no zero-width space before a tag after a
+// Prepend character, on an Arabic number sign before a tag and a
+// zero-width space (7 cells drawn, Width 3, a style left open); with
+// whole leaving the zero-width space after a [ in the segment after it,
+// on an Arabic number sign then a [ across a tag (a [ with a tag after
+// it).
 func TestClassesBesideATag(t *testing.T) {
 	type pair struct {
 		a, b   model.Class
 		colour bool
 	}
-	held, rowsOnly := 0, 0
 	for _, p := range []pair{{model.Bad, model.Plain, true}, {model.Plain, model.Bad, true}, {model.Dim, model.Strong, false}} {
 		name := className[p.a] + " then " + className[p.b]
 		t.Run(name, func(t *testing.T) {
-			var lines [2]model.Line // lines[1]: pairs with a tag inside a cluster
+			var l model.Line
 			for _, x := range reps {
 				for _, y := range reps {
-					one := model.Line{{T: termtext.From("q" + string(x.r)), C: p.a}, {T: termtext.From(string(y.r) + "q"), C: p.b}}
-					in := 0
-					if tagInCluster(one, p.colour) {
-						in = 1
-					}
-					lines[in] = append(lines[in], model.Seg{T: termtext.From("\u200b")})
-					lines[in] = append(lines[in], one...)
+					l = append(l, model.Seg{T: termtext.From("\u200b")})
+					l = append(l, model.Seg{T: termtext.From("q" + string(x.r)), C: p.a}, model.Seg{T: termtext.From(string(y.r) + "q"), C: p.b})
 				}
 			}
-			held += len(lines[0]) / 3
-			rowsOnly += len(lines[1]) / 3
 			const batch = 3 * 300
-			for _, l := range lines {
-				for i := 0; i < len(l); i += batch {
-					b := l[i:min(i+batch, len(l))]
-					if !t.Run(strconv.Itoa(i/batch), func(t *testing.T) { checkLine(t, b, p.colour) }) {
-						for j := 0; j < len(b); j += 3 {
-							if !t.Run("alone", func(t *testing.T) { checkLine(t, b[j+1:j+3], p.colour) }) {
-								break
-							}
+			for i := 0; i < len(l); i += batch {
+				b := l[i:min(i+batch, len(l))]
+				if !t.Run(strconv.Itoa(i/batch), func(t *testing.T) { checkLine(t, b, p.colour) }) {
+					for j := 0; j < len(b); j += 3 {
+						if !t.Run("alone", func(t *testing.T) { checkLine(t, b[j+1:j+3], p.colour) }) {
+							break
 						}
 					}
 				}
 			}
 		})
 	}
-	t.Logf("%d pairs held whole, %d to one row only (a tag inside a cluster)", held, rowsOnly)
+}
+
+// TestPairsBesideATag: every pair of reps after a tag, with a pair or a
+// triple of reps that is one grapheme cluster before it
+// (TestClassesBesideATag has each rep alone before one); in a Line, as l | z w, a dressed segment
+// then a plain one (the closing tag before the pair), and as l z | w,
+// plain then dressed (the opening tag inside the pair); a few hundred
+// at a time as one Line, each after a zero-width space, which ends the
+// cluster before it, and an a, after which uniseg reads an unassigned
+// pictograph as one (it does not after a space or a zero-width space).
+// Each is held to one row by tview's own splitter, as a text view
+// begins its rows; TestClassesBesideATag and FuzzLine hold Width beside
+// a tag, drawn. tview judges the row break after a cluster a tag
+// follows by that cluster and the one character after the tag, so a
+// break that hangs on the character after that (uniseg's LB25, a
+// hyphen then a digit) is reached only with two characters after the
+// tag, or one each side of it, and one that hangs on a cluster's state
+// (an emoji modifier after an emoji base) only with that cluster
+// before it. The clusters before it are the ones after which uniseg
+// reports a mandatory break with one rep, and nothing, after them
+// (canEnd): a tag hides all but that one, and uniseg reads more only
+// to take a break away, so after no other cluster can a tag begin a
+// row. The others (a letter and a combining mark, a Hangul syllable, a
+// flag) are not swept here; FuzzLine reaches them. Seen to fail: with
+// rowbreak.At judging each cluster by the text after it, on a thumbs-up
+// or an unassigned pictograph and a skin tone, then a tag, then a
+// hyphen and a digit, and on them and a hyphen, then a tag, then a
+// digit (not on one row).
+func TestPairsBesideATag(t *testing.T) {
+	seg := func(s string, c model.Class) model.Seg { return model.Seg{T: termtext.From(s), C: c} }
+	var lefts []string
+	for _, x := range reps {
+		for _, y := range reps {
+			if c := string(x.r) + string(y.r); uniseg.GraphemeClusterCount(c) == 1 {
+				if canEnd("\u200ba", c) {
+					lefts = append(lefts, c)
+				}
+				for _, z := range reps {
+					if c := c + string(z.r); uniseg.GraphemeClusterCount(c) == 1 && canEnd("\u200ba", c) {
+						lefts = append(lefts, c)
+					}
+				}
+			}
+		}
+	}
+	forms := []struct {
+		name string
+		mk   func(l, z, w string) model.Line
+	}{
+		{"l then zw", func(l, z, w string) model.Line {
+			return model.Line{seg("\u200ba", model.Plain), seg(l, model.Bad), seg(z+w, model.Plain)}
+		}},
+		{"lz then w", func(l, z, w string) model.Line {
+			return model.Line{seg("\u200ba", model.Plain), seg(l+z, model.Plain), seg(w, model.Strong)}
+		}},
+	}
+	const batch, parts = 400, 4
+	for _, f := range forms {
+		for p := range parts {
+			t.Run(f.name+"/"+strconv.Itoa(p+1), func(t *testing.T) {
+				t.Parallel()
+				var l model.Line
+				check := func() {
+					if len(l) == 0 {
+						return
+					}
+					s := Line(l, true).s
+					if len(tview.WordWrap(s+"x", 1<<30)) == 1 {
+						l = l[:0]
+						return
+					}
+					alone := false
+					for j := 0; j < len(l); j += 3 {
+						one := l[j : j+3]
+						s := Line(one, true).s
+						if rows := len(tview.WordWrap(s+"x", 1<<30)); rows != 1 {
+							t.Errorf("%s (colour true) is not on one row: %d rows", lineName(one[1:]), rows)
+							alone = true
+						}
+					}
+					if !alone {
+						t.Errorf("the cases from %s to %s are not on one row, and each alone is", lineName(l[1:3]), lineName(l[len(l)-2:]))
+					}
+					l = l[:0]
+				}
+				for i := p; i < len(lefts); i += parts {
+					for _, z := range reps {
+						for _, w := range reps {
+							l = append(l, f.mk(lefts[i], string(z.r), string(w.r))...)
+							if len(l) >= 3*batch {
+								check()
+							}
+						}
+					}
+				}
+				check()
+			})
+		}
+	}
+	t.Logf("%d lefts, each before %d pairs", len(lefts), len(reps)*len(reps))
+}
+
+// canEnd says whether uniseg reports a mandatory break after c, after
+// before, with a rep after c and nothing after that, for some rep.
+func canEnd(before, c string) bool {
+	for _, z := range reps {
+		s := before + c + string(z.r)
+		for at, rest, state := 0, s, -1; rest != ""; {
+			var cl string
+			var b int
+			cl, rest, b, state = uniseg.StepString(rest, state)
+			at += len(cl)
+			if at == len(before)+len(c) && rest != "" && b&uniseg.MaskLine == uniseg.LineMustBreak {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestLinesEachOnARow: each pair of reps as a line under a line "q",
+// and each pair of reps as a line over a line "-0", in each way the door
+// joins lines (Texts, Lines with the line above plain and dressed,
+// LitLines): each line on a row of its own, the row its own text, by
+// tview's own splitter, a few thousand lines at a time. uniseg takes no
+// break before a hyphen a digit follows, the mandatory one after a line
+// feed among them, so the line under is what matters: what ends the
+// line above was not seen to (every pair of reps over "-0" joined
+// alike), and is not swept against every line under. Seen to fail: with
+// the door's line feed written alone, on a hyphen and a digit under
+// each line, in every join.
+func TestLinesEachOnARow(t *testing.T) {
+	type pair struct{ above, under string }
+	var pairs []pair
+	for _, x := range reps {
+		for _, y := range reps {
+			xy := string(x.r) + string(y.r)
+			pairs = append(pairs, pair{"q", xy}, pair{xy, "-0"})
+		}
+	}
+	plain := func(s string) model.Line { return model.Line{{T: termtext.From(s)}} }
+	// Each join is of lines, and says each line's text alone.
+	joins := []struct {
+		name string
+		join func(ss []string) (Shown, []string)
+	}{
+		{"Texts", func(ss []string) (Shown, []string) {
+			var ts []termtext.Text
+			var each []string
+			for _, s := range ss {
+				ts = append(ts, termtext.From(s))
+				each = append(each, Inert(termtext.From(s)).s)
+			}
+			return Texts(ts), each
+		}},
+		{"Lines", func(ss []string) (Shown, []string) {
+			var ls []model.Line
+			var each []string
+			for _, s := range ss {
+				ls = append(ls, plain(s))
+				each = append(each, Line(plain(s), true).s)
+			}
+			return Lines(ls, true), each
+		}},
+		{"Lines, the line above dressed", func(ss []string) (Shown, []string) {
+			var ls []model.Line
+			var each []string
+			for i, s := range ss {
+				l := plain(s)
+				if i%2 == 0 {
+					l = model.Line{{T: termtext.From(s), C: model.Bad}}
+				}
+				ls = append(ls, l)
+				each = append(each, Line(l, true).s)
+			}
+			return Lines(ls, true), each
+		}},
+		{"LitLines", func(ss []string) (Shown, []string) {
+			var each []string
+			for _, s := range ss {
+				each = append(each, Lit(s).s)
+			}
+			return LitLines(strings.Join(ss, "\n")), each
+		}},
+	}
+	// rows says whether each line of ss is drawn on a row of its own,
+	// the row its own text and nothing else (but the word joiner
+	// rowEnd begins it with).
+	rows := func(join func(ss []string) (Shown, []string), ss []string) bool {
+		s, each := join(ss)
+		got := tview.WordWrap(s.s, 1<<30)
+		if len(got) != len(each) {
+			return false
+		}
+		for i, r := range got {
+			if i > 0 {
+				r = strings.TrimPrefix(r, strings.TrimPrefix(rowEnd, "\n"))
+			}
+			if r != each[i] {
+				return false
+			}
+		}
+		return true
+	}
+	const batch = 1000
+	for _, j := range joins {
+		t.Run(j.name, func(t *testing.T) {
+			t.Parallel()
+			for i := 0; i < len(pairs); i += batch {
+				ps := pairs[i:min(i+batch, len(pairs))]
+				var ss []string
+				for _, p := range ps {
+					ss = append(ss, p.above, p.under)
+				}
+				if rows(j.join, ss) {
+					continue
+				}
+				alone := false
+				for _, p := range ps {
+					if !rows(j.join, []string{p.above, p.under}) {
+						t.Errorf("%s then %s are not a line to a row", runes(p.above), runes(p.under))
+						alone = true
+					}
+				}
+				if !alone {
+					t.Errorf("the lines from %s to %s are not a line to a row, and each pair alone is", runes(ps[0].above), runes(ps[len(ps)-1].under))
+				}
+			}
+		})
+	}
+}
+
+// TestJoinedLinesWrapAsAlone: a line under another, in each way the
+// door joins lines, wraps as it does alone, word wrap on (the help, the
+// stop help, the refused screen) and off (a deploy's log tail after
+// w): each row after the first line's the row it is drawn on as a
+// view's only text. The lines begin with an indent, then a token the
+// rest of a row does not hold. Seen to fail: with rowEnd's line feed
+// followed by a zero-width space, which gives a break after the
+// indent, at widths 6 to 12 with word wrap on (a blank row, then the
+// token at the left edge).
+func TestJoinedLinesWrapAsAlone(t *testing.T) {
+	lines := []string{"    :command-name rest", "    ,comma-word rest", "    )paren-word rest", "    plainword rest", "  -1 rest"}
+	draw := func(s Shown, w int, word bool) []string {
+		const h = 12
+		scr := sim(w, h)
+		tv := tview.NewTextView().SetDynamicColors(true).SetWrap(true).SetWordWrap(word)
+		SetText(tv, s)
+		tv.SetRect(0, 0, w, h)
+		tv.Draw(scr)
+		var rows []string
+		for y := range h {
+			rows = append(rows, row(scr, y, w))
+		}
+		return rows
+	}
+	for _, l := range lines {
+		joins := map[string][2]Shown{
+			"Texts":          {Texts([]termtext.Text{termtext.From("first"), termtext.From(l)}), Texts([]termtext.Text{termtext.From(l)})},
+			"Lines":          {Lines([]model.Line{{{T: termtext.From("first")}}, {{T: termtext.From(l)}}}, true), Lines([]model.Line{{{T: termtext.From(l)}}}, true)},
+			"LitLines":       {LitLines("first\n" + l), LitLines(l)},
+			"Lines, dressed": {Lines([]model.Line{{{T: termtext.From("first")}}, {{T: termtext.From(l), C: model.Bad}}}, true), Lines([]model.Line{{{T: termtext.From(l), C: model.Bad}}}, true)},
+		}
+		for name, j := range joins {
+			for _, w := range []int{6, 8, 10, 12, 16} {
+				for _, word := range []bool{true, false} {
+					under, alone := draw(j[0], w, word), draw(j[1], w, word)
+					if alone[len(alone)-2] != "" {
+						t.Fatalf("%s, %q at width %d takes more rows than are drawn: %q", name, l, w, alone)
+					}
+					if !slices.Equal(under[1:], alone[:len(alone)-1]) {
+						t.Errorf("%s, %q at width %d, word wrap %v: under a line %q, alone %q", name, l, w, word, under[1:], alone)
+					}
+				}
+			}
+		}
+	}
 }

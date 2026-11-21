@@ -23,12 +23,13 @@ package door
 // Extended_Pictographic code point (a thumbs-up and a skin tone,
 // U+1F44D U+1F3FD): box text could begin a row of its own, at the
 // row's start, where it reads as the client's. So the door asks
-// tview's own splitter (WordWrap, with no width to wrap at) where it
-// would begin a row inside a text, and writes the last character
+// uniseg, as tview would, where tview would begin a row inside a text,
+// a tag beside a cluster or not (rowbreak), and writes the last character
 // before each such break as an escape, as termtext writes a character
 // it will not pass: the thumbs-up, then \U0001f3fd. TestOneRow holds
-// it, in every widget kind used here. SetInput alone does not: it puts
-// back the person's own keys, as the field drew them when typed.
+// it, in every widget kind used here, and TestPairsBesideATag and
+// FuzzLine beside a tag. SetInput alone does not: it puts back the
+// person's own keys, as the field drew them when typed.
 //
 // TestOneDoor holds the rest: no file of the screens' package calls a
 // method that hands tview text, calls String, or imports fmt, so text
@@ -36,11 +37,15 @@ package door
 
 import (
 	"strings"
+	"unicode/utf8"
+
+	"github.com/rivo/uniseg"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
 	"github.com/smallhoursorg/motel/client/internal/termtext"
+	"github.com/smallhoursorg/motel/client/internal/tui/door/rowbreak"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -73,40 +78,35 @@ func unbreak(segs []string) []string {
 		return segs // no character of ASCII ends a row but the ones termtext escapes
 	}
 	for {
-		at := breaks(strings.Join(segs, ""))
+		at := rowbreak.At(strings.Join(segs, ""))
 		if len(at) == 0 {
 			return segs
 		}
-		// From the last, so that the offsets before it still hold.
-		for k := len(at) - 1; k >= 0; k-- {
-			i := at[k]
-			for j, s := range segs {
-				if i < len(s) {
-					r := []rune(s[i:])[0]
-					segs[j] = s[:i] + escape(r) + s[i+len(string(r)):]
-					break
+		// Each segment a break falls in is written once, its breaks in
+		// order (at is in order).
+		k, base := 0, 0
+		out := make([]string, 0, len(segs))
+		for _, s := range segs {
+			if k < len(at) && at[k] < base+len(s) {
+				var b strings.Builder
+				from := 0
+				for ; k < len(at) && at[k] < base+len(s); k++ {
+					i := at[k] - base
+					r, n := utf8.DecodeRuneInString(s[i:])
+					b.WriteString(s[from:i])
+					b.WriteString(escape(r))
+					from = i + n
 				}
-				i -= len(s)
+				b.WriteString(s[from:])
+				base += len(s)
+				out = append(out, b.String())
+				continue
 			}
+			base += len(s)
+			out = append(out, s)
 		}
+		segs = out
 	}
-}
-
-// breaks is the byte offset in row of the last character before each
-// row tview would begin inside it or at its end, but for one in ASCII,
-// which is left as it is. tview's own splitter says where: "x" stands
-// for what follows the row, and the width is no limit, so only a
-// mandatory break splits.
-func breaks(row string) (at []int) {
-	lines := tview.WordWrap(row+"x", 1<<30)
-	end := 0
-	for _, l := range lines[:len(lines)-1] {
-		end += len(l)
-		if r := []rune(l); len(r) > 0 && r[len(r)-1] >= 0x80 {
-			at = append(at, end-len(string(r[len(r)-1])))
-		}
-	}
-	return at
 }
 
 // escape is r as termtext.Quote writes one: \u and four hex digits, or
@@ -173,43 +173,109 @@ func tags(c model.Class, colour bool) (string, string) {
 	return "", ""
 }
 
-// Line is a model line as tview text. It does not hold its own tags
-// against the text beside them: tview steps a grapheme cluster at a
-// time and reads a tag only at a cluster's start, so where a tag (a
-// dressed segment's, one tags dresses) stands inside a cluster of the
-// line's text, a character beside it joining the one across it, that
-// cluster is drawn twice, wider than Width says unless the character
-// adds no cell (a combining mark); and a Prepend character before a
-// tag takes its [ into its cluster, so the tag is drawn as text and
-// its style is not closed. No screen puts box text
-// beside a tag today, only the client's own words (and, in the stop
-// line after a key failed to sign, the key's path as the person named
-// it, after the closing tag of "not asking: "), and no test would
-// fail if one did: put box free text only between plain or label
-// segments, or inside a dressed one between words of the client's own.
-// FuzzLine and TestClassesBesideATag hold every line to one row, and
-// to its styles and Width wherever no tag stands inside a cluster.
+// Line is a model line as tview text, each segment dressed by tags.
+// tview steps a grapheme cluster at a time and reads a tag only at a
+// cluster's start, so the door puts each tag between two clusters of
+// the line's text (whole: a character that joins the one before it
+// goes with it, into its segment and its style), and a zero-width
+// space between a tag and a Prepend character before it (dressTag).
+// A character that joins the one before it across two segments is so
+// drawn in the earlier segment's style: a box's free text directly
+// before a dressed segment can take that segment's first character, and
+// no test holds the screens to that. FuzzLine and TestClassesBesideATag
+// hold every line to one row, its styles, its styles closed at its end,
+// and Width; TestPairsBesideATag to one row with two characters beside
+// a tag.
 func Line(l model.Line, colour bool) Shown {
 	var b strings.Builder
 	segs := make([]string, len(l))
 	for i, s := range l {
 		segs[i] = tagless(s.T.String())
 	}
-	for i, t := range unbreak(segs) {
+	for i, t := range whole(unbreak(segs)) {
 		open, close := tags(l[i].C, colour)
-		b.WriteString(open)
+		dressTag(&b, open)
 		b.WriteString(t)
-		b.WriteString(close)
+		dressTag(&b, close)
 	}
 	return Shown{b.String()}
 }
+
+// dressTag writes tag after b, with a zero-width space before it when
+// b ends in a character that takes a [ after it into its own grapheme
+// cluster (a Prepend one), where tview would draw the tag as text. The
+// space is a cluster of its own whatever is beside it, and of no width.
+func dressTag(b *strings.Builder, tag string) {
+	if tag == "" {
+		return
+	}
+	if r, _ := utf8.DecodeLastRuneInString(b.String()); r >= 0x80 && uniseg.GraphemeClusterCount(string(r)+"[") == 1 {
+		b.WriteString("\u200b")
+	}
+	b.WriteString(tag)
+}
+
+// whole is segs with each grapheme cluster of their joined text in the
+// segment it begins in: tview reads a tag only between two clusters, so
+// one a tag cuts is drawn twice. The zero-width space tagless writes
+// after a [ goes with it, though it is a cluster of its own, so that no
+// tag comes between them (a [ ends a cluster a Prepend character
+// begins in the segment before). Each end is moved to the start of the
+// next cluster and the joined text sliced there, once each.
+func whole(segs []string) []string {
+	ascii := true
+	for _, s := range segs {
+		for i := 0; i < len(s) && ascii; i++ {
+			ascii = s[i] < 0x80
+		}
+	}
+	if ascii || len(segs) < 2 {
+		return segs // a cluster of ASCII is one character: termtext escapes CR and LF
+	}
+	joined := strings.Join(segs, "")
+	out := make([]string, len(segs))
+	j, start, end, bracket, state := 0, 0, len(segs[0]), false, -1
+	for at, rest := 0, joined; rest != ""; {
+		var c string
+		c, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		if !bracket || c != "\u200b" {
+			for j < len(segs)-1 && end <= at {
+				out[j], start = joined[start:at], at
+				j++
+				end += len(segs[j])
+			}
+		}
+		bracket = strings.HasSuffix(c, "[")
+		at += len(c)
+	}
+	for ; j < len(segs); j++ {
+		out[j], start = joined[start:], len(joined)
+	}
+	return out
+}
+
+// rowEnd is what ends each line but the last in Lines, Texts and
+// LitLines: a line feed, then a word joiner, which tview draws nowhere.
+// uniseg v0.4.7 takes no break before a hyphen a digit follows (LB25,
+// as it reads it), the mandatory one after a line feed among them, so a
+// line that began "-1" would be drawn on the row above it; after the
+// joiner, a cluster of its own, it begins its own row.
+// TestLinesEachOnARow holds it, in each of the three. A word joiner,
+// not a zero-width space: a space gives a break after it, and with word
+// wrap on, tview took that one, after a line's indent, before a token
+// that did not fit the rest of the row (a blank row, then the token at
+// the left edge, where hang keeps an entry under its indent). With the
+// joiner a line under another wraps as it does alone
+// (TestJoinedLinesWrapAsAlone), but for one that begins with a
+// combining mark, which the joiner keeps with the character after it.
+const rowEnd = "\n\u2060"
 
 // Lines is model lines as one tview text.
 func Lines(ls []model.Line, colour bool) Shown {
 	var b strings.Builder
 	for i, l := range ls {
 		if i > 0 {
-			b.WriteByte('\n')
+			b.WriteString(rowEnd)
 		}
 		b.WriteString(Line(l, colour).s)
 	}
@@ -221,7 +287,7 @@ func Texts(ts []termtext.Text) Shown {
 	var b strings.Builder
 	for i, t := range ts {
 		if i > 0 {
-			b.WriteByte('\n')
+			b.WriteString(rowEnd)
 		}
 		b.WriteString(Inert(t).s)
 	}
@@ -249,12 +315,13 @@ func Width(t termtext.Text) int { return tview.TaggedStringWidth(Inert(t).s) }
 
 // AsIs says whether t is drawn as it is, character for character: the
 // cells tview draws for it in a text view, as the overlays are drawn,
-// read back from a screen, are t. It asks tview, as Width and unbreak
-// do, rather than listing characters: one the door writes as an escape
-// is drawn as the escape, and tview draws nothing for one of no width
-// (a soft hyphen, a zero-width space), which is then not there to
-// select. The zero-width space the door puts after a [ is one of
-// these, so a [ is drawn as it is.
+// read back from a screen, are t. It asks tview, as Width does (and as
+// unbreak asks uniseg what tview would judge), rather than listing
+// characters: one the door writes as an escape is drawn as the escape,
+// and tview draws nothing for one of no width (a soft hyphen, a
+// zero-width space), which is then not there to select. The zero-width
+// space the door puts after a [ is one of these, so a [ is drawn as it
+// is.
 func AsIs(t termtext.Text) bool {
 	s := Inert(t).s
 	w := tview.TaggedStringWidth(s)
@@ -298,7 +365,7 @@ func LitLines(s string) Shown {
 	for i, l := range ls {
 		ls[i] = Lit(l).s
 	}
-	return Shown{strings.Join(ls, "\n")}
+	return Shown{strings.Join(ls, rowEnd)}
 }
 
 // SetTitle titles a framed widget with the TUI's own words.
