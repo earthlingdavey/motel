@@ -284,6 +284,7 @@ make e2e-notify        # the notify suite: a box with Debian's Alertmanager and 
 make e2e-metrics       # the metrics suite: notify's box with Debian's victoria-metrics and the same receiver, its splits a box each; not beside e2e-notify on one host
 make lint vet tidy     # golangci-lint (gofmt-gated), go vet, go mod tidy
 make tidy-check        # fails if go mod tidy would change a module's go.mod/go.sum; CI runs it on every PR that changes code
+make mod-download      # every module's dependencies into Go's module cache, a download that breaks tried three times; CI runs it first in every job that runs Go
 make vulncheck         # govulncheck, all modules (tool dep in go.mod — Dependabot-bumped)
 make secretscan        # gitleaks secret scan: full history, or the working tree in a git worktree (same image as the CI gate)
 make usage             # what building this costs (Claude Code, Actions minutes, Copilot) → usage/ CSVs + docs/footprint.md; needs gh auth login
