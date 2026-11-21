@@ -344,12 +344,13 @@ func Width(t termtext.Text) int { return tview.TaggedStringWidth(Inert(t).s) }
 
 // AsIs says whether t is drawn as it is, character for character: the
 // cells tview draws for it in a text view, as the overlays are drawn,
-// read back from a screen, are t. It asks tview, as Width and unbreak
-// do, rather than listing characters: one the door writes as an escape
-// is drawn as the escape, and tview draws nothing for one of no width
-// (a soft hyphen, a zero-width space), which is then not there to
-// select. The zero-width space the door puts after a [ is one of
-// these, so a [ is drawn as it is.
+// read back from a screen, are t. It asks tview, as Width does (and as
+// unbreak asks uniseg what tview would judge), rather than listing
+// characters: one the door writes as an escape is drawn as the escape,
+// and tview draws nothing for one of no width (a soft hyphen, a
+// zero-width space), which is then not there to select. The zero-width
+// space the door puts after a [ is one of these, so a [ is drawn as it
+// is.
 func AsIs(t termtext.Text) bool {
 	s := Inert(t).s
 	w := tview.TaggedStringWidth(s)
