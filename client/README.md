@@ -891,7 +891,11 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   a skin tone before `-0` began a row once a tag stood after it or
   after the hyphen. `door` asks uniseg what tview asks there and writes the same
   escape, in every text, tagged or not, so that the width measured is
-  the width drawn.
+  the width drawn. uniseg also takes no break before a hyphen a digit
+  follows, the mandatory one after a line feed among them, so a line
+  that began `-1` was drawn on the row above it; `door` writes a
+  zero-width space, which tview draws nowhere, after each line feed it
+  joins lines with (`Lines`, `Texts`, `LitLines`).
   `TestOneRow` has tview draw every code point, every
   Extended_Pictographic character with each modifier, and a modifier
   after a combining mark, in every widget kind used, each on one row.
@@ -905,7 +909,10 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   segment's style, styles closed at the line's end, and as wide as
   `Width` says. `TestPairsBesideATag` holds one row with a cluster of
   two code points before a tag and two characters after it, the tag
-  before the two and between them. `FuzzOverlay` and `FuzzPrintedCommand` hold the
+  before the two and between them. `TestLinesEachOnARow` holds each
+  joined line to a row of its own, whatever begins the line under it,
+  and `FuzzLine` draws its line between two others, through `Texts`
+  and `LitLines` too. `FuzzOverlay` and `FuzzPrintedCommand` hold the
   overlays and the printed command to the rules above, the second
   reading the line back as a POSIX shell does.
   `TestOneDoor` fails if the screens hand tview text or make a widget
