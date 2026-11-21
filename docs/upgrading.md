@@ -722,7 +722,7 @@ Until it is, the store keeps `MemoryMax=256M`, under which every app's
 long windows read at once, or ten apps' windows read over an hour, get
 it killed by the kernel, and a kill is told by nothing but systemd's
 `Failed with result 'oom-kill'` under its unit. The re-run writes the
-384 MiB cap and the drop-in's `ExecStopPost=`, which names a kill at err
+384 MiB cap (with no swap, `MemorySwapMax=0`) and the drop-in's `ExecStopPost=`, which names a kill at err
 under the store's unit and leaves the line motel tells the operator's
 channels of (`metrics_store_killed`); it restarts the store and
 vmalert, so a push may fail meanwhile. A cap of your own, set with

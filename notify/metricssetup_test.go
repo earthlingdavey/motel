@@ -407,7 +407,7 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		}
 	}
 	has("the drop-in", unitVMDropIn, "ExecStart=\n", "-httpListenAddr=127.0.0.1:8428 ", "NetworkNamespacePath=/run/netns/motel-metrics",
-		"MemoryMax=384M", "-memory.allowedBytes=96MiB", "-retentionPeriod=14d",
+		"MemoryMax=384M\n", "MemorySwapMax=0\n", "-memory.allowedBytes=96MiB", "-retentionPeriod=14d",
 		// The sandbox: the store's process writes its directory alone.
 		"ProtectSystem=strict\n", "ProtectHome=yes\n", "PrivateTmp=yes\n", "NoNewPrivileges=yes\n", "ReadWritePaths=/var/lib/victoria-metrics\n", "-promscrape.config="+DefaultMetricsStateDir+"/"+scrapeName,
 		"Requires=motel-metrics-netns.service",

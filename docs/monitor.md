@@ -707,7 +707,8 @@ answered "store":"unanswered"`, with the app, the window and the
 error (at most one per app and window every 30 seconds).
 
 The store's memory is capped at 384 MiB (`MemoryMax=384M` in motel's
-drop-in for its unit). What fills it is how many apps and windows
+drop-in for its unit, with no swap: at the cap it is killed and told,
+not paged out and slow). What fills it is how many apps and windows
 people read at once, not how long the windows are. Measured with six
 every-app rules running, each reading watched an hour after:
 
