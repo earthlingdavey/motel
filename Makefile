@@ -285,7 +285,10 @@ usage-check: pin-watch-check ci-changes-check ## usage.py's tests, then fails if
 # container's root.
 # The trailing chmod is for Linux CI runners: the container runs as
 # root, so without it the bind-mounted build/ is unwritable to the
-# host user and package's cp/rm staging fails (macOS masks this).
+# host user and package's cp/rm staging fails (macOS masks this). Of
+# build/ itself and the four binaries, not a walk: build/ also holds
+# the e2e lanes' directories, which a lane empties as it starts
+# (e2e/bin.sh).
 # The two arch builds run concurrently: cache-warm, wall time is
 # mostly the two large links, and those overlap cleanly.
 build: ## cross-compile moteld and motel-backup for linux amd64/arm64 into build/
@@ -299,7 +302,7 @@ build: ## cross-compile moteld and motel-backup for linux amd64/arm64 into build
 		if go version -m build/motel-backup-linux-amd64 build/motel-backup-linux-arm64 | grep -q -- "-tags=.*e2e"; then \
 			echo "build/motel-backup-linux-*: built with -tags e2e, which shortens the setup clock for the e2e box: not a binary to ship"; exit 1; \
 		fi; \
-		chmod -R a+rwX build'
+		chmod a+rwx build; chmod a+rwX build/moteld-linux-* build/motel-backup-linux-*'
 
 # Builds the laptop client as a release must: in client/, with the
 # workspace off (GOWORK=off), so the binary links exactly the versions
@@ -315,7 +318,7 @@ build-client: ## the laptop client into build/; GOOS= GOARCH= cross-build
 		git config --global --add safe.directory /src; \
 		os=$$(go env GOOS); arch=$$(go env GOARCH); \
 		cd client && go build -trimpath -ldflags "-s -w -X main.version=v$(VERSION)" -o ../build/motel-$$os-$$arch ./cmd/motel && \
-		chmod -R a+rwX ../build && echo build/motel-$$os-$$arch'
+		chmod a+rwx ../build && chmod a+rwX ../build/motel-$$os-$$arch && echo build/motel-$$os-$$arch'
 
 # The laptop client's release targets, each GOOS/GOARCH. package builds
 # each with build-client and packs it as
@@ -569,17 +572,21 @@ e2e-metrics: ## the metrics suite; METRICS_SPLITS= view vmalert store rules (the
 # image started cold every time. motel-backup is built with -tags
 # e2e, which shortens setup's clock alone (backups/engine/
 # setupclock_e2e.go): the package's binary is never built with it,
-# and `make build` refuses one that was.
+# and `make build` refuses one that was. build/ and the lane's
+# directory are made writable to the host's user (the container is
+# root), and nothing below them is touched: the binaries stay 0755,
+# as the package installs them, and no walk of build/ meets another
+# lane's directory as it is emptied (e2e/bin.sh).
 BACKUP_SUITES ?= setup backup units status restore check
 SUITE_LIMIT ?= 600
 e2e-backup: ## the backup suites, a box each; BACKUP_SUITES= setup backup units status restore check (the default)
 	$(cgroup2_preflight)
 	$(if $(strip $(BACKUP_SUITES)),,$(error BACKUP_SUITES is empty: name a suite, or leave it unset))
 	$(COMPOSE) run --rm -e CGO_ENABLED=0 dev sh -c '\
+		mkdir -p build/e2e-backup && chmod a+rwx build build/e2e-backup || exit 1; \
 		go build -trimpath -o build/e2e-backup/moteld ./cmd/moteld & p1=$$!; \
 		(cd backups && go build -trimpath -tags e2e -o ../build/e2e-backup/motel-backup ./cmd/motel-backup) & p2=$$!; \
-		wait $$p1 || exit 1; wait $$p2 || exit 1; \
-		chmod -R a+rwX build'
+		wait $$p1 || exit 1; wait $$p2 || exit 1'
 	$(COMPOSE) rm -sf e2e-backup-box e2e-s3 >/dev/null
 	$(COMPOSE) up --build -d --scale e2e-backup-box=$(words $(BACKUP_SUITES)) e2e-s3 e2e-backup-box
 	logs=$$(mktemp -d); i=0; \

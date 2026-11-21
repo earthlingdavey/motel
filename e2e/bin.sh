@@ -45,6 +45,15 @@ t0=$(date +%s)
 
 rm -rf "$out"
 mkdir -p "$out"
+# The container is root: the host's user must be able to remove build/
+# and this lane's directory. Only those two, and now: a walk of build/
+# would meet another lane's directory as that lane empties it, and a
+# build that fails below must not leave a directory only root can
+# remove. The binaries stay as Go writes them, 0755 and root's, which
+# the host's user can read and, in a directory it may write, remove:
+# the images copy them with that mode, the package's (a recursive
+# a+rwX made them 0777 in the boxes).
+chmod a+rwx build "$out"
 
 build moteld go build -trimpath -ldflags "-X github.com/caddyserver/caddy/v2.CustomVersion=v0.0.0-e2e" -o "$out/moteld" ./cmd/moteld
 
@@ -63,8 +72,5 @@ status=0
 for p in $pids; do
 	wait "$p" || status=1
 done
-# The container is root: without this the host's user could not remove
-# build/ (make build's chmod says the same).
-chmod -R a+rwX build
 echo "e2e/bin.sh: $out in $(($(date +%s) - t0)) s"
 exit $status
