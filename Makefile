@@ -33,7 +33,7 @@ VERSION ?= $(shell (git describe --tags --exact-match 2>/dev/null || echo v0.0.0
 # Distro image for the package install smoke test (install-test).
 DISTRO ?= debian:13
 
-.PHONY: test help test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-dist install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
+.PHONY: test help test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-dist install-test e2e e2e-backup e2e-notify e2e-metrics e2e-warm soak e2e-logs clean
 
 # -timeout 20m: a stopgap, client/internal/tui reaches go test's default 10 m on CI's x86 (#642).
 test: ## unit tests, all modules (race + coverage); PKGS= some packages, RUN= a go test -run pattern
@@ -606,6 +606,21 @@ e2e-backup: ## the backup suites, a box each; BACKUP_SUITES= setup backup units 
 	$(COMPOSE) rm -sf e2e-backup-box e2e-s3 >/dev/null; \
 	exit $$status
 	$(call narrowed_note,BACKUP_SUITES)
+
+# Every e2e lane's Go, built once and the binaries removed: it fills
+# Go's caches and nothing else. For CI, whose four e2e jobs share one cache an
+# architecture (ci.yml's e2e job says why one): a cache is saved by the
+# first job to finish a run whose key missed, with only what that job
+# compiled, so a job whose key missed builds every lane's first, and
+# whichever saves, saves what all four use. The three lanes' binaries
+# are the metrics lane's set (e2e/bin.sh, with notify's test binary);
+# e2e-backup's own are moteld, compiled the same, and motel-backup with
+# -tags e2e, built here with the flags its target above builds it with.
+# On a machine whose caches are volumes that stay, nothing needs this.
+e2e-warm: ## every e2e lane's Go, built to fill Go's caches (CI, when its cache key missed)
+	$(call e2e_bin,e2e-warm notify-tests)
+	$(COMPOSE) run --rm -e CGO_ENABLED=0 dev sh -c 'cd backups && go build -trimpath -tags e2e -o /dev/null ./cmd/motel-backup'
+	rm -rf build/e2e-warm
 
 # Leak-hunting soak against the product binary: deploy/reload/traffic
 # churn, then goroutine/fd return-to-baseline assertions over the admin
