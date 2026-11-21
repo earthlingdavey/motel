@@ -881,17 +881,20 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   character that is one, but uniseg v0.4.7 reports one too after an
   emoji modifier that ends a cluster begun by an emoji base (a
   thumbs-up with a skin tone), so box text could begin a row of its
-  own. `door` asks tview's own splitter where it would begin a row
-  inside a text and writes the character before each such break as an
-  escape (`\U0001f3fd`), as `termtext` writes one it will not pass; the
-  input field's text that the person typed is put back as it was.
-  A tag changes where: tview judges the break after a cluster a tag
-  follows by the one character after the tag, where uniseg would read
-  two (no break before a hyphen a digit follows), so a thumbs-up with
-  a skin tone before `-0` began a row once a tag stood after it or
-  after the hyphen. `door` asks uniseg what tview asks there and writes the same
-  escape, in every text, tagged or not, so that the width measured is
-  the width drawn. uniseg also takes no break before a hyphen a digit
+  own. `door` finds where tview would begin a row inside a text and
+  writes the character before each such break as an escape
+  (`\U0001f3fd`), as `termtext` writes one it will not pass; the input
+  field's text that the person typed is put back as it was. A tag
+  changes where: tview judges the break after a cluster a tag follows
+  by the one character after the tag, where uniseg would read two (no
+  break before a hyphen a digit follows), so a thumbs-up with a skin
+  tone before `-0` began a row once a tag stood after it or after the
+  hyphen. So `door` asks uniseg, of each cluster, what tview asks with
+  a tag after it: that finds every break tview begins with no tag as
+  well, since uniseg reads the second character only to take a break
+  away, and the drawn tests below hold it. The escape is written in
+  every text, tagged or not, so that the width measured is the width
+  drawn. uniseg also takes no break before a hyphen a digit
   follows, the mandatory one after a line feed among them, so a line
   that began `-1` was drawn on the row above it; `door` writes a
   zero-width space, which tview draws nowhere, after each line feed it
@@ -907,12 +910,14 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   and that no tag in it is read; and `FuzzLine` and
   `TestClassesBesideATag` hold whole lines: one row, each cell in its
   segment's style, styles closed at the line's end, and as wide as
-  `Width` says. `TestPairsBesideATag` holds one row with a cluster of
-  two code points before a tag and two characters after it, the tag
-  before the two and between them. `TestLinesEachOnARow` holds each
-  joined line to a row of its own, whatever begins the line under it,
-  and `FuzzLine` draws its line between two others, through `Texts`
-  and `LitLines` too. `FuzzOverlay` and `FuzzPrintedCommand` hold the
+  `Width` says. `TestPairsBesideATag` holds one row with two
+  characters after a tag, the tag before the two and between them,
+  for each cluster of two or three code points before it after which
+  uniseg can report a mandatory break (the others are left to
+  `FuzzLine`). `TestLinesEachOnARow` holds each joined line to a row
+  of its own, whatever begins the line under it, and `FuzzLine` draws
+  its line first and last with `-0` between, and between two lines
+  through `Texts` and `LitLines`. `FuzzOverlay` and `FuzzPrintedCommand` hold the
   overlays and the printed command to the rules above, the second
   reading the line back as a POSIX shell does.
   `TestOneDoor` fails if the screens hand tview text or make a widget
