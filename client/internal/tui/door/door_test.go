@@ -2,6 +2,10 @@ package door
 
 import (
 	"bytes"
+	"math"
+	"os"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -155,5 +159,65 @@ func TestEscapeHolds(t *testing.T) {
 	tv.SetText(Inert(termtext.From("[red]x[-]")).s)
 	if got := tv.GetText(true); !strings.Contains(got, "red") {
 		t.Errorf("inert text lost its tag's words: %q", got)
+	}
+}
+
+// TestWholeAllocatesOnce: whole's allocations do not grow with the
+// text, ASCII or not: a box can send a line of many thousands of
+// characters, and each frame draws it. Seen to fail: with each cluster
+// added to its segment one at a time (out[k] += c): 30,009 allocations
+// for 30,000 zero-width spaces, or for 30,000 of e with an acute
+// accent, against 1,009 for 1,000.
+func TestWholeAllocatesOnce(t *testing.T) {
+	for _, c := range []string{"\u200b", "\u00e9"} {
+		allocs := func(n int) float64 {
+			segs := []string{"level ", strings.Repeat(c, n) + "x", " ok"}
+			return testing.AllocsPerRun(5, func() { whole(segs) })
+		}
+		if few, many := allocs(1000), allocs(30000); many > few {
+			t.Errorf("whole of %q: %v allocations for 1,000, %v for 30,000", c, few, many)
+		}
+	}
+}
+
+// TestUnbreakWritesOnce: the bytes unbreak allocates grow with the
+// text, not with its square: a box's line of many emoji with skin
+// tones has an escape after each one, and each frame draws it. Seen to
+// fail: with each escape written in by a copy of its segment
+// (s[:i] + escape(r) + s[i+n:]): 35,516,600 bytes for 1,000 thumbs-up
+// and skin tones, 559,185,616 for 4,000.
+// The least of three runs, after one to warm up, is taken: another
+// goroutine's allocations only add to a run.
+func TestUnbreakWritesOnce(t *testing.T) {
+	alloc := func(n int) uint64 {
+		segs := []string{"level ", strings.Repeat("\U0001f44d\U0001f3fd", n)}
+		want := strings.Repeat("\U0001f44d\\U0001f3fd", n)
+		if got := unbreak(slices.Clone(segs)); got[0] != "level " || got[1] != want {
+			t.Fatalf("unbreak of %d thumbs-up and skin tones: %q", n, got)
+		}
+		least := uint64(math.MaxUint64)
+		for range 3 {
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			unbreak(slices.Clone(segs))
+			runtime.ReadMemStats(&after)
+			least = min(least, after.TotalAlloc-before.TotalAlloc)
+		}
+		return least
+	}
+	if few, many := alloc(1000), alloc(4000); many > 8*few {
+		t.Errorf("unbreak allocates %d bytes for 1,000 escapes, %d for 4,000", few, many)
+	} else {
+		t.Logf("%d bytes for 1,000 escapes, %d for 4,000", few, many)
+	}
+}
+
+// TestRowbreakKeepsATest: rowbreak keeps a test file of its own, which
+// keeps make test's time: without one, go test -cover given several
+// packages at once instrumented it into the door's test binary (its
+// package comment has the numbers).
+func TestRowbreakKeepsATest(t *testing.T) {
+	if _, err := os.Stat("rowbreak/rowbreak_test.go"); err != nil {
+		t.Errorf("rowbreak has no test file of its own: %v", err)
 	}
 }

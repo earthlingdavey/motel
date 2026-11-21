@@ -462,7 +462,8 @@ made by hand. Accepted:
 | After an answer about another key and `r`, a whoami that comes back refused (a 403, or a release that is not `N.N.N`, as in the row on such a build above) leaves the stop screen up, saying `stopped` and the old reason until another read is answered, then the whoami's refusal, and offering `r`, while the reads run behind it (the list and every status; the title bar says `live`); `r` does nothing there, since no read is stopped; `q` leaves | 3 | 2 | 3 | 18 | 2 | accepted: it takes a box that answers about another key and then refuses whoami, and the screen still says what was refused |
 | Opening and closing who am I again and again (`?` then esc: each esc opens it again) reads whoami at each opening while its last answer is over a minute old, or it has never answered, and its newest read failed without being held (a release that is not `N.N.N`, as in the row on such a build above): 41 reads in 10 s were measured, within the engine's rate | 2 | 5 | 1 | 10 | 2 | accepted |
 | Per-frame work has no bound in what a box sends: every table and text view is rebuilt at each frame (one a second, and one a key), so a hostile box's list of tens of thousands of names, or a record with hundreds of thousands of log lines, all within the client's 4 MiB cap on an answer, makes every key take seconds (the review measured 55,000 names at 6.2 s a frame, 550,000 log lines at 2.0 s a frame, with the fixture client); an honest box cannot | 2 | 2 | 1 | 4 | 3 | accepted |
-| `door.Line` does not hold its own tags against the text beside them: tview steps a grapheme cluster at a time and reads a tag only at a cluster's start, so where a tag of a dressed (coloured or styled) segment stands inside a cluster of the line's text (a character that joins the one before it across the tag) tview draws that cluster twice: 1 or 2 cells wider than `Width` says for a spacing mark, a Hangul vowel or final after its syllable's start, a flag's second half or a pictograph after a zero width joiner, and no wider for a combining mark, which adds no cell; and a Prepend character (U+0600, U+0D4E) directly before a tag takes its `[` into its cluster, so the tag is drawn as text and its style is not closed, the next line dressed too. No row is begun: `FuzzLine` and `TestClassesBesideATag` hold every line to one row, and the review's report of one was not reproduced. No screen puts box text beside a tag today, only the client's own words (and, in the stop line after a key failed to sign, the key's path as the person named it); those tests hold styles and width only where no tag stands inside a cluster, no test holds the screens' lines to that, and a comment on `door.Line` says so. A fix (each cluster moved into the segment it begins in, and a zero-width space between a Prepend character and a tag) is about 25 lines | 2 | 1 | 3 | 6 | 3 | accepted: rescored at #570, severity 3 to 2, since no row is begun |
+| `door.Line` draws each grapheme cluster in the style of the segment it begins in, since tview reads a tag only between two clusters: a character that joins the one before it across two segments (a combining or spacing mark, a Hangul vowel or final, a flag's second half, a pictograph after a zero width joiner) is drawn in the earlier segment's style. So a line of the box's on the backups screen that begins with such a mark shows the mark in its level's colour, as the start of a key's path does after `not asking: `; and text ending in a Prepend character (U+0600, U+0D4E), a Hangul leading consonant, half a flag, or a pictograph and joiner, directly before a dressed segment, would draw that segment's first character in its own style (no screen puts a box's or a person's text directly before a tag: a survey of the model's lines at `58bbd74a`, which read most of them) | 2 | 2 | 3 | 12 | 2 | accepted: one row, the width, and styles closed at a line's end are held for every line (`FuzzLine`, `TestClassesBesideATag`, `TestPairsBesideATag`); a tag inside a cluster is what drew the cluster twice |
+| With wrap on, tview does not draw the cluster that overflows a row where a word longer than the row is split, when a grapheme Control follows it directly: the line feed that ends the line, or the zero-width space `door` writes after a `[`. So in a record's tail after `w`, the last character of a long token that ends its line one cell into a new row is not drawn (`abcdefgh` at width 7 draws `abcdefg` and an empty row), nor is a `[` at such a split; on the help and stop pages it takes a word of the client's own wider than the row. It was so before #637, and plain tview does the same. Since #637 it also holds for a Prepend character (U+0600, U+0D4E) that ends a dressed segment at such a split, where `door` writes a zero-width space before the tag: of the wrapped views only the refused screen draws dressed lines, and no dressed segment ends in a box's or a person's text | 3 | 5 | 5 | 75 | 3 (the door wraps a wrapped view itself, by `Width`, and hands tview its rows; or tview sizes a new row's first cluster from the state before it) | owed: a change of its own; found by the review of #637 |
 | The cap cuts through the client's own quotation of box text: a failure's sentence is capped (200 characters in an apps row's reason, 400 in a "the last read failed" sentence, 800 alone on a screen) after the box's value is quoted, so a quotation that runs past the cap loses its closing quote before `…[cut]`. On the apps screen, cut to the window on one row, it shows only in a window over about 230 columns; who am I, the box screen and an app's "the last read failed" lay the sentence on rows, so there it shows at any width when the quoted value is long in escapes (200 bidi overrides, each written as `\u202e`, make 1200), on an app's screen only while the sentence fits in half the window (the row on that sentence below) | 2 | 2 | 3 | 12 | 2 | accepted |
 | ctrl-z on the `:` line after an answer about another key and `r` brings back what was typed there before (the input field's own undo; the stop empties the line but not its history), which can be an app's name the dropped box gave | 2 | 2 | 3 | 12 | 2 | accepted |
 | whoami's name and release may spell one of the title bar's own words (`"name":"PAUSED"`, `"version":"0.0.0-SIGNED-OUT"`): within their grammars; no space, `·`, `│` or `:` can be forged | 2 | 2 | 3 | 12 | 2 | accepted |
@@ -891,10 +892,28 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   character that is one, but uniseg v0.4.7 reports one too after an
   emoji modifier that ends a cluster begun by an emoji base (a
   thumbs-up with a skin tone), so box text could begin a row of its
-  own. `door` asks tview's own splitter where it would begin a row
-  inside a text and writes the character before each such break as an
-  escape (`\U0001f3fd`), as `termtext` writes one it will not pass; the
-  input field's text that the person typed is put back as it was.
+  own. `door` finds where tview would begin a row inside a text and
+  writes the character before each such break as an escape
+  (`\U0001f3fd`), as `termtext` writes one it will not pass; the input
+  field's text that the person typed is put back as it was. A tag
+  changes where: tview judges the break after a cluster a tag follows
+  by the one character after the tag, where uniseg would read two (no
+  break before a hyphen a digit follows), so a thumbs-up with a skin
+  tone before `-0` began a row once a tag stood after it or after the
+  hyphen. So `door` asks uniseg, of each cluster, what tview asks with
+  a tag after it (`rowbreak.At`, a package of its own only for the
+  time `make test` takes: its comment says why): that finds every break tview begins with no tag as
+  well, since uniseg reads the second character only to take a break
+  away, and the drawn tests below hold it. The escape is written in
+  every text, tagged or not, so that the width measured is the width
+  drawn. uniseg also takes no break before a hyphen a digit
+  follows, the mandatory one after a line feed among them, so a line
+  that began `-1` was drawn on the row above it; `door` writes a
+  word joiner (U+2060), which tview draws nowhere, after each line
+  feed it joins lines with (`Lines`, `Texts`, `LitLines`): a
+  zero-width space there let a wrapped line break straight after its
+  indent, and `TestJoinedLinesWrapAsAlone` holds a joined line to wrap
+  as it does alone.
   `TestOneRow` has tview draw every code point, every
   Extended_Pictographic character with each modifier, and a modifier
   after a combining mark, in every widget kind used, each on one row.
@@ -904,8 +923,16 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   one row, and as wide as `door.Width` says in the widgets that hold
   the box's text; `FuzzInert` holds any string so in the same widgets,
   and that no tag in it is read; and `FuzzLine` and
-  `TestClassesBesideATag` hold whole lines (the accepted row on
-  `door.Line`). `FuzzOverlay` and `FuzzPrintedCommand` hold the
+  `TestClassesBesideATag` hold whole lines: one row, each cell in its
+  segment's style, styles closed at the line's end, and as wide as
+  `Width` says. `TestPairsBesideATag` holds one row with two
+  characters after a tag, the tag before the two and between them,
+  for each cluster of two or three code points before it after which
+  uniseg can report a mandatory break (the others are left to
+  `FuzzLine`). `TestLinesEachOnARow` holds each joined line to a row
+  of its own, whatever begins the line under it, and `FuzzLine` draws
+  its line first and last with `-0` between, and between two lines
+  through `Texts` and `LitLines`. `FuzzOverlay` and `FuzzPrintedCommand` hold the
   overlays and the printed command to the rules above, the second
   reading the line back as a POSIX shell does.
   `TestOneDoor` fails if the screens hand tview text or make a widget
@@ -928,6 +955,7 @@ DATA in the title bar, with no box.
 | `internal/local` | the programs it runs and the box repository it may be in |
 | `internal/tui` | the TUI's screens, on tview |
 | `internal/tui/door` | the one way text reaches tview |
+| `internal/tui/door/rowbreak` | where tview would begin a row inside a text, for the door to escape |
 | `internal/tui/model` | what the screens read and when (the refresh engine), and what they show, with no terminal library |
 | `internal/tui/demo` | a box made of fixtures: `--demo`, and the TUI's tests |
 | `internal/tui/hostile` | test support: the hostile fixture's attacks, and a terminal that records bytes |
