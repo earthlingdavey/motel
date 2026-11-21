@@ -384,6 +384,13 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		{"an array of URLs", `["https://x.example/a?b=c","https://y.example/b","plain words here"]`, `["https://x.example/a?[redacted:query]","https://y.example/b","plain words here"]`},
 		// A marker layer 1 wrote is not a credential, behind a backslash too.
 		{"a marker behind a backslash", `password=\[redacted:K] end`, `password=\[redacted:K] end`},
+		// Two quotes inside it neither.
+		{"two quotes inside a query", `GET https://s3.example/a?q=""&X-Amz-Signature=abc123def`, `GET https://s3.example/a?[redacted:query]`},
+		// A value is counted as the body holds it: backslashes count.
+		{"a backslash inside a short secret", `password=abcd\efg`, `password=[redacted:credential]`},
+		{"a backslash before a short secret", `password=\hunter2`, `password=[redacted:credential]`},
+		{"backslashes through a short secret", `password=a\b\c\d\e`, `password=[redacted:credential]`},
+		{"seven characters", `password=hunter2 next`, `password=hunter2 next`},
 		// A quote inside the query does not end it.
 		{"a quote inside a query", `GET https://s3.example/a?q="x"&X-Amz-Signature=abc123def`, `GET https://s3.example/a?[redacted:query]`},
 		// A secret holding a backslash is masked whole, in a body as in
@@ -422,6 +429,8 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		{`password=hunter2\ next`, `password=[redacted:credential] next`},
 		{`password=\[redacted:K] end`, `password=\[redacted:K] end`},
 		{`password=\abcdefgh12 end`, `password=[redacted:credential] end`},
+		{`password=\hunter2 end`, `password=[redacted:credential] end`},
+		{`password=hunter2 end`, `password=hunter2 end`},
 		{`--api-key=C:\keys\app.key`, `--api-key=[redacted:credential]`},
 		// A backslash in text is the text's own: a token after it is
 		// masked whole.

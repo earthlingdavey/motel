@@ -199,7 +199,12 @@ func FuzzHeuristicsKeepJSON(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if js := (*Redactor)(nil).redactJSON(body); strings.Contains(js, "response withheld") || js == `{"error":"[#0]"}` {
+		// Withheld is structural: a filtered body keeps its log_tail, and
+		// every withheld body is an error alone (the line may say
+		// "response withheld" itself).
+		js := (*Redactor)(nil).redactJSON(body)
+		var got map[string]json.RawMessage
+		if json.Unmarshal([]byte(js), &got) != nil || got["log_tail"] == nil {
 			t.Fatalf("a filter that knows no value withheld %q: %s", line, js)
 		}
 	})

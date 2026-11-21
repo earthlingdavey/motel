@@ -719,9 +719,10 @@ func (sf *secretForm) at(s string, from int, inBody bool) int {
 var shapeRules = []struct {
 	re   *regexp.Regexp
 	repl string
-	// body, when set, is re as it runs over a JSON body, whose strings
-	// hold the app's text escaped (inBody); re is then the text's.
-	body *regexp.Regexp
+	// body, when set, is the rule as it runs over a JSON body, whose
+	// strings hold the app's text escaped (inBody); re is then the
+	// text's.
+	body *bodyRule
 }{
 	// PEM private keys, whole block.
 	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`), "[redacted:private-key]", nil},
@@ -740,7 +741,7 @@ var shapeRules = []struct {
 	// runs on through \u0026, the & between its parameters as
 	// encoding/json writes it, and through a quote inside the query.
 	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?[^\s"']+`), "$1?[redacted:query]",
-		regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?(?:` + bodyRun(`'`, `',`) + `)+`)},
+		&bodyRule{re: regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?(?:` + bodyRun(`'`, `',`) + `)+`)}},
 	// Provider prefixes.
 	{regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`), "[redacted:aws-key]", nil},
 	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`), "[redacted:github-token]", nil},
@@ -759,9 +760,48 @@ var shapeRules = []struct {
 	// tail, a JSON line inside another), and the value read in escape
 	// units (bodyRun), so it ends on an escape's edge; an escaped
 	// backslash it ends with, before a quote or a space, is the value's
-	// (`hunter2\`), and the quote or space is put back ($3).
-	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)\\*[^\s"',;\[/{\\][^\s"',;]{7,}`), "$1$2[redacted:credential]$3",
-		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)(?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:` + bodyRun(`',;`, `',;`) + `){6,}(?:` + bodyRun(`',;`, `',;`) + `|(?:\\\\)+(["\s]))`)},
+	// (`hunter2\`), and the quote or space is put back ($5). Its 8 bytes
+	// are counted as the body holds them (bodyRule.min), as the text
+	// rule counts the text's; a value behind backslashes counts them.
+	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)(?:[^\s"',;\[/{\\][^\s"',;]{7,}|\\+[^\s"',;\[/{\\][^\s"',;]{6,})`), "$1$2[redacted:credential]$5",
+		&bodyRule{re: regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)((?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:` + bodyRun(`',;`, `',;`) + `)*)(?:((?:\\\\)+)(["\s]))?`), min: 8}},
+}
+
+// bodyRule is a shape rule's pattern over a JSON body. min, when set,
+// is the fewest bytes the value (its third group and fourth, an escaped
+// backslash it ends with) must hold, as written in the body, for the
+// match to be replaced: escape units cannot be counted by a pattern's
+// repetition, which counts \\e as one where the text rule counts \e
+// as two.
+type bodyRule struct {
+	re  *regexp.Regexp
+	min int
+}
+
+// replace is the rule over s with repl.
+func (b *bodyRule) replace(s, repl string) string {
+	if b.min == 0 {
+		return b.re.ReplaceAllString(s, repl)
+	}
+	var out []byte
+	at := 0
+	for _, m := range b.re.FindAllStringSubmatchIndex(s, -1) {
+		end := m[9] // the fourth group's end, or the third's
+		if end < 0 {
+			end = m[7]
+		}
+		out = append(out, s[at:m[0]]...)
+		if end-m[6] < b.min {
+			out = append(out, s[m[0]:m[1]]...)
+		} else {
+			out = b.re.ExpandString(out, repl, s, m)
+		}
+		at = m[1]
+	}
+	if out == nil {
+		return s
+	}
+	return string(append(out, s[at:]...))
 }
 
 // credentialWords are the words of a key the credential rule takes.
@@ -772,14 +812,14 @@ const credentialWords = `(?:password|passwd|secret|api[_-]?key|access[_-]?token|
 // the , after a URL's string in the app's JSON), or one of stops: a character that is
 // none of them; a run of backslashes and the character after it (\\x,
 // \u0026, a level down \\\\x), which is never a quote, a space or
-// another backslash; or a quote, escaped at any depth (an odd run of
-// backslashes before it: an even one escapes itself, and the quote
+// another backslash; or quotes, each escaped at any depth (an odd run
+// of backslashes before it: an even one escapes itself, and the quote
 // ends the string), that a character of the run follows (a quote inside a query or a password), or the u
 // of an escape (\"\u0026). So a match ends on an escape's edge: it
 // never takes the backslash of a \" and leaves the quote to end the
 // string, which left the body unparsable and withheld whole.
 func bodyRun(stops, afterQuote string) string {
-	return `[^\s"\\` + stops + `]|\\+[^"\s\\]|\\(?:\\\\)*"(?:[^\s"\\:})\]` + afterQuote + `]|\\+u)`
+	return `[^\s"\\` + stops + `]|\\+[^"\s\\]|(?:\\(?:\\\\)*")+(?:[^\s"\\:})\]` + afterQuote + `]|\\+u)`
 }
 
 // basicCredentialRe finds "Basic <base64>"; the decode check is in
@@ -991,11 +1031,11 @@ func (r *Redactor) protectSafe(s string) (string, func(string) string) {
 // heuristics is layers 3 and 4; inBody is whether s is a JSON body.
 func (r *Redactor) heuristics(s string, inBody bool) string {
 	for _, rule := range shapeRules {
-		re := rule.re
 		if inBody && rule.body != nil {
-			re = rule.body
+			s = rule.body.replace(s, rule.repl)
+			continue
 		}
-		s = re.ReplaceAllString(s, rule.repl)
+		s = rule.re.ReplaceAllString(s, rule.repl)
 	}
 	s = basicCredentialRe.ReplaceAllStringFunc(s, func(m string) string {
 		// Basic's credential is base64 of user:password, and is one at
