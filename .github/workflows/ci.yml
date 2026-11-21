@@ -101,19 +101,20 @@ jobs:
   # tidy-check and lint over every module (the Makefile's MODULES), in
   # one job. They were once a cell per module, split when lint, run in
   # series, was the slowest lane; in series it is now a fraction of the
-  # longest job (the test and e2e-notify jobs, 10-13 min), and each
-  # cell spent most of its ~55 s starting a runner, pulling images and
-  # restoring a cache of its own. One job is shorter in runner time, and a heavy
-  # run starts 13 jobs together, not 19, which matters because waiting
-  # for runners is what makes a run slow [measured 2026-11-21, run
-  # 44935635314: 145 s (141-146, n=3) for the one job, its restore
-  # taken at the measured rate, against 397 job-seconds for the seven
-  # cells; one cache archive of 683 MB against 2,908 MB for the seven,
-  # of a 10 GB budget]. A failure is one red check, not a named cell:
-  # the log names each module as it starts, and the run goes on after a
-  # module fails and ends naming every one that did (the Makefile's
-  # tidy-check and lint say how). A new module needs only the
-  # Makefile's MODULES.
+  # longest jobs, test and e2e-notify [measured: test 609 s arm and
+  # 802 s x86, medians of 8 runs to 2026-11-21], and each cell
+  # spent most of its ~55 s starting a runner, pulling images and
+  # restoring a cache of its own. One job is shorter in runner time,
+  # and a heavy run starts 13 jobs together, not 19, which matters
+  # because waiting for runners is what makes a run slow [measured
+  # 2026-11-21, run 44935635314: 145 s (141-146, n=3) for the one job,
+  # its restore taken at the measured rate, against 397 job-seconds
+  # for the seven cells; one cache archive of 683 MB against 2,908 MB
+  # for the seven, of a 10 GB budget]. A failure is one red check, not
+  # a named cell: the log names each module as it starts, and the run
+  # goes on after a module fails and ends naming every one that did
+  # (the Makefile's tidy-check and lint say how). A new module needs
+  # only the Makefile's MODULES.
   lint:
     needs: [changes]
     if: needs.changes.outputs.heavy == 'true'

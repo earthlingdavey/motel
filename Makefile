@@ -114,13 +114,17 @@ tidy: ## go mod tidy in each of MODULES
 # Each module's output starts with its name (the diff says only
 # current/go.mod), and a module that fails does not stop the others:
 # CI checks every module in one job, and the run ends naming each that
-# failed. Only exit 1 (the diff, or a go error) goes on to the next;
-# any other status, an interrupt among them, stops the run there. The
-# trap is for Ctrl-C under a shell that, like bash, would go on to the
-# next module when the one it waits on handles the interrupt itself.
+# failed. Only exit 1 (the diff, a go error, or compose's own failure,
+# such as an image it cannot pull: each module then fails in turn,
+# each naming the cause) goes on to the next; any other status, an
+# interrupt among them, stops the run there. The trap is for Ctrl-C
+# under a shell that, like bash, would go on to the next module when
+# the one it waits on handles the interrupt itself. The loop is not
+# echoed: its headings say what runs, and an echoed copy would put
+# "failed in:" in every log, green ones too.
 tidy-check: ## fails if go mod tidy would change a module's go.mod/go.sum
 	$(if $(strip $(MODULES)),,$(error MODULES is empty: name a module, or leave it unset))
-	failed=; trap 'exit 130' INT; \
+	@failed=; trap 'exit 130' INT; \
 	for m in $(MODULES); do \
 		echo "════ tidy-check $$m ════"; \
 		$(COMPOSE) run --rm -T -w /src/$$m dev go mod tidy -diff; rc=$$?; \
@@ -133,13 +137,14 @@ tidy-check: ## fails if go mod tidy would change a module's go.mod/go.sum
 # integration-tagged files, so neither the linters nor gofmt see them.
 # A single `run.build-tags: [integration]` in .golangci.yml would not
 # do: it drops the `!integration` goleak TestMain files instead.
-# As tidy-check, each run is named and the others still run after
-# one finds issues (golangci-lint's exit 1); the end names each that
-# failed, and any other status (the linter's own failure, an
-# interrupt) stops the run there.
+# As tidy-check, each run is named, the loop is not echoed, and the
+# others still run after one exits 1 (golangci-lint's issues, or
+# compose's own failure); the end names each that failed, and any
+# other status (the linter's own failure, an interrupt) stops the run
+# there.
 lint: ## golangci-lint (gofmt-gated), both tag sets; MODULES= the modules you touched
 	$(if $(strip $(MODULES)),,$(error MODULES is empty: name a module, or leave it unset))
-	failed=; trap 'exit 130' INT; \
+	@failed=; trap 'exit 130' INT; \
 	for m in $(MODULES); do \
 		for tags in "" integration; do \
 			echo "════ lint $$m$${tags:+, $$tags tags} ════"; \
