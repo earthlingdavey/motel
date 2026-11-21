@@ -319,9 +319,10 @@ Properties that matter to the model:
   error page as a probe's body), a percent-escape other than Go's query
   and path escaping (lower-case hex, Python's `quote` keeping `/`),
   `\a \v \e` or octal; or an encoding of the escaped text (base64 of
-  a JSON line); a value with more than 512 characters that are not
-  letters or digits in any escaping but encoding/json's (its pattern
-  would cost every body too much); a value under 8 characters, a secret split across lines,
+  a JSON line); a value, or one of its encodings (its base64, say),
+  with more than 512 characters that are not letters or digits, in
+  any escaping but encoding/json's (its pattern would cost every body
+  too much); a value under 8 characters, a secret split across lines,
   a secret the app fetched at runtime and printed in a low-entropy
   form, an inline `env` value (not a secret by policy: the Caddyfile
   is in a repo), or a value the still-running instance was launched

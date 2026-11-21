@@ -379,11 +379,14 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		// signature), which a class without the backslash would send.
 		{"a query's parameters", "fetch https://s3.example/a.tgz?X-Amz-Credential=abc&X-Amz-Signature=def failed", "fetch https://s3.example/a.tgz?[redacted:query] failed"},
 		{"a query ending in a backslash", `https://x.example/a?key=abc\`, `https://x.example/a?[redacted:query]\`},
+		// A quote inside the query does not end it.
+		{"a quote inside a query", `GET https://s3.example/a?q="x"&X-Amz-Signature=abc123def`, `GET https://s3.example/a?[redacted:query]`},
 		// A secret holding a backslash is masked whole, in a body as in
 		// text, and one ending in a backslash before a quote leaves the
 		// quote's own.
 		{"a secret with a backslash", `password=Xy7#kq\Lm2pQ`, `password=[redacted:credential]`},
 		{"a secret ending in a backslash, quoted", `password=hunter2hunter\" next`, `password=[redacted:credential]\" next`},
+		{"seven characters and a backslash", `password=hunter2\`, `password=[redacted:credential]`},
 		// A quote inside the value, followed by more of it, does not end
 		// it: the value is masked whole.
 		{"a secret holding a quote", `password=hunter2hunter"tailOfSecret`, `password=[redacted:credential]`},
@@ -406,16 +409,18 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 			t.Errorf("%s:\n got %s\nwant %s", tc.name, got, want)
 		}
 	}
-	// And in text, where the same lines were masked before.
+	// And in text, where a backslash is the text's own and the rules
+	// read it as any character, as they did before.
 	for _, tc := range []struct{ in, want string }{
 		{`password=Xy7#kq\Lm2pQ next`, `password=[redacted:credential] next`},
-		{`see https://x.example/a?key=abc\" there`, `see https://x.example/a?[redacted:query]\" there`},
+		{`see https://x.example/a?key=abc\" there`, `see https://x.example/a?[redacted:query]" there`},
+		{`password=hunter2\ next`, `password=[redacted:credential] next`},
 		{`--api-key=C:\keys\app.key`, `--api-key=[redacted:credential]`},
 		// A backslash in text is the text's own: a token after it is
 		// masked whole.
 		{`C:\k3J9xQ2mZ8pL0vT7wR4nY6bH1`, `C:\[masked, 25 chars]`}, // gitleaks:allow — made up for this test
-		// A backslash at a line's end is no escape of the line's end.
-		{"see https://x.example/a?key=abc\\\nnext_line_word more", "see https://x.example/a?[redacted:query]\\\nnext_line_word more"},
+		// A line's end ends a query.
+		{"see https://x.example/a?key=abc\\\nnext_line_word more", "see https://x.example/a?[redacted:query]\nnext_line_word more"},
 	} {
 		if got, _ := (*Redactor)(nil).Redact(tc.in); got != tc.want {
 			t.Errorf("text %q:\n got %q\nwant %q", tc.in, got, tc.want)

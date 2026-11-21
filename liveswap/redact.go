@@ -372,7 +372,7 @@ func NewRedactor(envFile []string, safe []string) *Redactor {
 		}
 	}
 	for _, sf := range r.secrets {
-		if sf.outside == nil { // an outcome word holds no escapable character
+		if sf.outside == nil { // an outcome word is read as written: its _ is no escape
 			sf.pattern, sf.anchor = escapePattern(sf.text)
 		}
 	}
@@ -717,57 +717,66 @@ func (sf *secretForm) at(s string, from int, inBody bool) int {
 var shapeRules = []struct {
 	re   *regexp.Regexp
 	repl string
+	// body, when set, is re as it runs over a JSON body, whose strings
+	// hold the app's text escaped (inBody); re is then the text's.
+	body *regexp.Regexp
 }{
 	// PEM private keys, whole block.
-	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`), "[redacted:private-key]"},
+	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`), "[redacted:private-key]", nil},
 	// JWT: three base64url segments, the header starting {"…
-	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b`), "[redacted:jwt]"},
+	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b`), "[redacted:jwt]", nil},
 	// Authorization schemes with a token-shaped credential. The
 	// placeholder text in motel's own 401 body, "Bearer <jwt>", is
 	// not token-shaped and passes.
-	{regexp.MustCompile(`(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{20,}`), "$1 [redacted:token]"},
+	{regexp.MustCompile(`(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{20,}`), "$1 [redacted:token]", nil},
 	// URL userinfo: scheme://user:pass@host.
-	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://)[^/\s"'@:]+:[^/\s"'@]+@`), "$1[redacted:userinfo]@"},
+	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://)[^/\s"'@:]+:[^/\s"'@]+@`), "$1[redacted:userinfo]@", nil},
 	// URL query strings: where presigned-URL credentials live. The
-	// same rule the box applies to its own logs (redactURL). A
-	// backslash is read with the character after it, never before a
-	// quote: in a body the query ends on an escape's edge, at the \" of
-	// a URL quoted in the app's text, and runs on through \u0026, the &
-	// between its parameters as encoding/json writes it.
-	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?` + escapedRun + `+`), "$1?[redacted:query]"},
+	// same rule the box applies to its own logs (redactURL). In a body
+	// the query is read in escape units (bodyRun): it ends on an
+	// escape's edge, at the \" of a URL quoted in the app's text, and
+	// runs on through \u0026, the & between its parameters as
+	// encoding/json writes it, and through a quote inside the query.
+	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?[^\s"']+`), "$1?[redacted:query]",
+		regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?(?:` + bodyRun(`'`) + `)+`)},
 	// Provider prefixes.
-	{regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`), "[redacted:aws-key]"},
-	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`), "[redacted:github-token]"},
-	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}\b`), "[redacted:github-token]"},
-	{regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}\b`), "[redacted:slack-token]"},
-	{regexp.MustCompile(`\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b`), "[redacted:stripe-key]"},
+	{regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`), "[redacted:aws-key]", nil},
+	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`), "[redacted:github-token]", nil},
+	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}\b`), "[redacted:github-token]", nil},
+	{regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}\b`), "[redacted:slack-token]", nil},
+	{regexp.MustCompile(`\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b`), "[redacted:stripe-key]", nil},
 	// KEY=value, key: value and JSON "key":"value" assignments whose
 	// key contains a credential word, whatever surrounds it
-	// (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, STRIPE_API_KEY), and the same
-	// pair inside a body's string, its quotes escaped (an app's JSON
-	// line in a failed deploy's tail). The value must be 8+ characters
-	// that are not a delimiter, not a marker layer 1 left there, and
-	// not a path or placeholder (an argv flag such as
-	// --api-key=/etc/motel/app.key names a file, not a secret); a
-	// backslash is read with the character after it, as in the query
-	// rule (escapedRun), so the value ends on an escape's edge. A quote,
-	// escaped at any depth, ends the pair's quotes, and the value too
-	// unless a character of the value follows it: one that holds a
-	// quote is masked whole, as the body that held it was withheld
-	// before the value ended on an escape's edge.
-	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*(?:password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)(?:[^\s"',;\[/{\\]|\\+[^"/\s\\])(?:[^\s"',;\\]|\\+[^"\s\\]|\\*"[^\s"',;:\\})\]]){7,}`), "$1$2[redacted:credential]"},
+	// (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, STRIPE_API_KEY). The value
+	// must be 8+ characters that are not a delimiter, not a marker
+	// layer 1 left there, and not a path or placeholder (an argv flag
+	// such as --api-key=/etc/motel/app.key names a file, not a
+	// secret). In a body the same pair inside a string, its quotes
+	// escaped at any depth (an app's JSON line in a failed deploy's
+	// tail, a JSON line inside another), and the value read in escape
+	// units (bodyRun), so it ends on an escape's edge; an escaped
+	// backslash it ends with, before a quote or a space, is the value's
+	// (`hunter2\`), and the quote or space is put back ($3).
+	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)[^\s"',;\[/{][^\s"',;]{7,}`), "$1$2[redacted:credential]$3",
+		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)(?:[^\s"',;\[/{\\]|\\+[^"/\s\\])(?:(?:` + bodyRun(`',;`) + `){7,}|(?:` + bodyRun(`',;`) + `){6,}(?:\\\\)+(["\s]))`)},
 }
 
-// escapedRun is a character of a run the query rule takes up to a
-// space or a quote: one that is neither, or a run of backslashes with
-// the character after it, which is never a quote, a space or another
-// backslash. Over a body's JSON, at any depth, a match so ends on an
-// escape's edge: it takes a \\x or a \u0026 whole, and stops before a
-// run that ends in a quote (\", \\\" a level down: a quote inside the
-// app's text), where taking a backslash of it left the quote to end the
-// string, and the body unparsable. In text a backslash before a quote
-// or a space ends the run too, so it never runs on over a line's end.
-const escapedRun = `(?:[^\s"'\\]|\\+[^"\s\\])`
+// credentialWords are the words of a key the credential rule takes.
+const credentialWords = `(?:password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)`
+
+// bodyRun is a unit of a run a shape rule takes in a JSON body, up to
+// a space, a quote that ends it, or one of stops: a character that is
+// none of them; a run of backslashes and the character after it (\\x,
+// \u0026, a level down \\\\x), which is never a quote, a space or
+// another backslash; or a quote, escaped at any depth (an odd run of
+// backslashes before it: an even one escapes itself, and the quote
+// ends the string), that a character of the run follows (a quote inside a query or a password), or the u
+// of an escape (\"\u0026). So a match ends on an escape's edge: it
+// never takes the backslash of a \" and leaves the quote to end the
+// string, which left the body unparsable and withheld whole.
+func bodyRun(stops string) string {
+	return `[^\s"\\` + stops + `]|\\+[^"\s\\]|\\(?:\\\\)*"(?:[^\s"\\:})\]` + stops + `]|\\+u)`
+}
 
 // basicCredentialRe finds "Basic <base64>"; the decode check is in
 // redact, since a regexp cannot tell a credential from a word. Four
@@ -978,7 +987,11 @@ func (r *Redactor) protectSafe(s string) (string, func(string) string) {
 // heuristics is layers 3 and 4; inBody is whether s is a JSON body.
 func (r *Redactor) heuristics(s string, inBody bool) string {
 	for _, rule := range shapeRules {
-		s = rule.re.ReplaceAllString(s, rule.repl)
+		re := rule.re
+		if inBody && rule.body != nil {
+			re = rule.body
+		}
+		s = re.ReplaceAllString(s, rule.repl)
 	}
 	s = basicCredentialRe.ReplaceAllStringFunc(s, func(m string) string {
 		// Basic's credential is base64 of user:password, and is one at
