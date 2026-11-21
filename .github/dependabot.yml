@@ -55,7 +55,8 @@ updates:
     # copied into other people's repos, so their pins are kept fresh.
     # .github/actions/go-cache is the one local action that uses
     # another: its pin of actions/cache must move with the workflows'
-    # (restores there, saves here), and "/" does not reach its file.
+    # (restores in the action, saves in the workflows), and "/" does
+    # not reach its file.
     directories: ["/", "/.github/actions/go-cache", "/examples/box", "/examples/deno", "/examples/node"]
     schedule:
       interval: weekly

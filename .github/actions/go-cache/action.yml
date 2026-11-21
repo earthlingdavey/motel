@@ -26,14 +26,15 @@
 # - The job's build cache, without the modules:
 #   gobuild-<family>-<os>-<arch>-<go>-<go.sum>, where a family is one
 #   job's, or the four e2e lanes'. An architecture each, since compiled
-#   objects are. With the Go that fills it in every key, asked of the
-#   image that compiles (`go-from`: dev's for most, the linter's for
-#   lint, dev-systemd's for test-integration, three pins that move in
-#   pull requests of their own): after a new Go with go.sum unchanged,
-#   a key without it hit, nothing was saved, and the job compiled from
-#   nothing until go.sum next changed; and another Go's objects,
-#   restored, are only weight to save again (ci.yml's e2e job has the
-#   figures), so no key of another Go is a restore-key.
+#   objects are. With a Go in every key, asked of an image
+#   (`go-from`): dev's, which compiles for most jobs, and the linter's
+#   for lint. After a new Go with go.sum unchanged, a key without it
+#   hit, nothing was saved, and the job compiled from nothing until
+#   go.sum next changed; and another Go's objects, restored, are only
+#   weight to save again (ci.yml's e2e job has the figures), so no key
+#   of another Go is a restore-key. One key carries a Go that is not
+#   the one that compiles: test-integration's has dev's, and
+#   dev-systemd compiles there (ci.yml's job says what follows).
 #
 # Only a run on main saves, and only when the key missed. A cache
 # saved by a pull request can be read by that pull request alone, and
@@ -95,7 +96,11 @@ inputs:
     description: The job's build-cache family (test, lint, e2e, ...). Empty for the module cache alone.
     default: ""
   go-from:
-    description: The compose service whose Go fills the build cache; its version is in the key.
+    description: >-
+      The compose service whose Go is in the build cache's key. One
+      whose image is pulled, not built: asked of a service that has to
+      be built first, the build's progress lands in the answer, and
+      the key step fails on it.
     default: dev
   path:
     description: What the build cache holds, a path a line.
@@ -193,7 +198,7 @@ runs:
     # mod-download says what it fetches and what it leaves). On a cache
     # that holds everything it is seconds [measured locally, 2026-11-21,
     # with the container's start: 1 s in three runs here, 6 s in the
-    # review's one; from nothing, 8 to 15 s in seven jobs of run
+    # review's one; from nothing, 7 to 15 s over the 15 jobs of run
     # 44955689388].
     - shell: bash
       run: make mod-download COMPOSE="docker compose -f docker-compose.yml -f docker-compose.ci.yml"
