@@ -195,6 +195,14 @@ type Engine struct {
 	// wall clock set back (seen).
 	latest time.Time
 	wake   chan struct{}
+	// watch is the watch's reads (Session.follow): the box's alerts
+	// every WatchEvery whatever screen is open, each listed app's
+	// alerts in the background, or none. listed is the list's names.
+	watch  Watch
+	listed map[string]bool
+	// unasked: a status was never asked yet (next), so the apps screen
+	// fills before the watch reads each app's alerts.
+	unasked bool
 }
 
 type entry struct {
@@ -260,9 +268,22 @@ func (e *Engine) background() time.Duration {
 	if en, ok := e.jobs[e.series]; e.series.Kind == KSeries && ok && !en.held {
 		left -= 1 / SeriesEvery.Seconds()
 	}
+	if en, ok := e.jobs[Job{Kind: KBoxAlerts}]; e.watch == WatchBox && ok && !en.held {
+		left -= 1 / WatchEvery.Seconds()
+	}
 	n := len(e.apps)
 	if e.focus != "" && slices.Contains(e.apps, e.focus) {
 		n--
+	}
+	if e.watch == WatchApps {
+		// Each app's alerts are read at the statuses' interval (it is
+		// never under AppWatchEvery), beside them: the open app's at its
+		// own, counted above; one held (a 403, a 404) is not read.
+		for _, a := range e.apps {
+			if en, ok := e.jobs[Job{Kind: KAlerts, App: a}]; ok && !en.held && a != e.alertsApp {
+				n++
+			}
+		}
 	}
 	if n <= 0 || left <= 0 {
 		return BackgroundEvery
@@ -290,6 +311,10 @@ func (e *Engine) SetApps(names []string, now time.Time) {
 	defer e.mu.Unlock()
 	e.seen(now)
 	e.apps = slices.Clone(names)
+	e.listed = map[string]bool{}
+	for _, n := range names {
+		e.listed[n] = true
+	}
 	keep := map[Job]bool{}
 	every := e.background()
 	for i, n := range names {
@@ -307,6 +332,9 @@ func (e *Engine) SetApps(names []string, now time.Time) {
 			delete(e.jobs, j)
 			e.dropLocked(j)
 		}
+	}
+	if e.watch == WatchApps {
+		e.watchApps(now)
 	}
 	e.poke()
 }
@@ -346,7 +374,11 @@ func (e *Engine) Focus(app string, now time.Time) {
 // nextSlot is a background app's next read after now: its phase, plus
 // whole intervals from the start of time, so every app keeps its place.
 func (e *Engine) nextSlot(en *entry, now time.Time) time.Time {
-	every := e.background()
+	return slot(en, now, e.background())
+}
+
+// slot is the next time after now at en's phase in a cycle of every.
+func slot(en *entry, now time.Time, every time.Duration) time.Time {
 	base := now.Truncate(every).Add(en.phase)
 	for !base.After(now) {
 		base = base.Add(every)
@@ -393,7 +425,8 @@ func (e *Engine) AlertsOpen(app string, now time.Time) {
 	if _, ok := e.jobs[Job{Kind: KAlerts, App: app}]; app == e.alertsApp && (ok || app == "") {
 		return
 	}
-	if old := e.alertsApp; old != "" && old != app {
+	if old := e.alertsApp; old != "" && old != app && (e.watch != WatchApps || !e.listed[old]) {
+		// Under the watch of each app's alerts the read goes on.
 		e.dropLocked(Job{Kind: KAlerts, App: old})
 	}
 	e.alertsApp = app
@@ -457,7 +490,8 @@ func shownOnly(k Kind) bool { return k == KAlerts || k == KSeries }
 
 // BoxAlertsOpen says whether a screen that shows the box's alerts is open
 // (the alerts screen, the box screen): GET /_motel/alerts is read only
-// then, every BoxEvery, as the box's status is.
+// then, every BoxEvery, as the box's status is; for a viewer of the box
+// it is the watch's read too, made on every screen (SetWatch).
 func (e *Engine) BoxAlertsOpen(open bool, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -467,6 +501,83 @@ func (e *Engine) BoxAlertsOpen(open bool, now time.Time) {
 		e.jobs[Job{Kind: KBoxAlerts}] = &entry{due: now}
 	}
 	e.poke()
+}
+
+// SetWatch is the watch's reads, by whoami's roles (Session.follow):
+// WatchBox reads the box's alerts every WatchEvery whatever screen is
+// open, merged with the alerts and box screens' own read of them;
+// WatchApps each listed app's alerts in the background, at
+// appAlertsEvery, each half a cycle from its status. The reads of a
+// watch left are made again only while a screen shows them.
+func (e *Engine) SetWatch(w Watch, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.seen(now)
+	if w == e.watch {
+		return
+	}
+	e.watch = w
+	switch w {
+	case WatchBox:
+		j := Job{Kind: KBoxAlerts}
+		if en, ok := e.jobs[j]; !ok {
+			e.jobs[j] = &entry{due: now}
+		} else if !en.held && en.misses == 0 {
+			en.due = minTime(en.due, en.answered.Add(WatchEvery))
+		}
+	case WatchApps:
+		e.watchApps(now)
+	}
+	e.poke()
+}
+
+// watchApps gives every listed app an alerts read, due now when it has
+// none, at its place in the cycle half a cycle from its status's; and
+// forgets one of an app no longer listed whose screen is not open.
+func (e *Engine) watchApps(now time.Time) {
+	every := e.appAlertsEvery()
+	for i, n := range e.apps {
+		j := Job{Kind: KAlerts, App: n}
+		en, ok := e.jobs[j]
+		if !ok {
+			en = &entry{due: now}
+			e.jobs[j] = en
+		}
+		en.phase = (time.Duration(i)*every/time.Duration(len(e.apps)) + every/2) % every
+	}
+	for j := range e.jobs {
+		if j.Kind == KAlerts && !e.listed[j.App] && j.App != e.alertsApp {
+			delete(e.jobs, j)
+			e.dropLocked(j)
+		}
+	}
+}
+
+// appAlertsEvery is a background app's alerts' interval under
+// WatchApps: its status's, and never under AppWatchEvery.
+func (e *Engine) appAlertsEvery() time.Duration { return max(AppWatchEvery, e.background()) }
+
+// WatchInterval is how often the watch's read j is made now: the box's
+// alerts every WatchEvery, the open app's every AlertsEvery, another
+// app's at appAlertsEvery.
+func (e *Engine) WatchInterval(j Job) time.Duration {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	switch {
+	case j.Kind == KBoxAlerts:
+		return WatchEvery
+	case j.App == e.alertsApp:
+		return AlertsEvery
+	}
+	return e.appAlertsEvery()
+}
+
+// Paused says whether the reads are paused at now: no key for Idle.
+func (e *Engine) Paused(now time.Time) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.seen(now)
+	return now.Sub(e.touched) >= Idle
 }
 
 // BoxRulesOpen says whether the box's rules screen is open: GET
@@ -756,8 +867,15 @@ func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
 	var best Job
 	var bestDue, bestKey time.Time
 	bestRank, found := 99, false
+	e.unasked = false
 	for j, en := range e.jobs {
-		if en.held || j.Kind == KBox && !e.boxOpen || j.Kind == KBackups && !e.backupsOpen || j.Kind == KBoxAlerts && !e.boxAlertsOpen || j.Kind == KAlerts && j.App != e.alertsApp ||
+		if j.Kind == KStatus && en.asked.IsZero() {
+			e.unasked = true
+			break
+		}
+	}
+	for j, en := range e.jobs {
+		if en.held || j.Kind == KBox && !e.boxOpen || j.Kind == KBackups && !e.backupsOpen || j.Kind == KBoxAlerts && !e.boxAlertsOpen && e.watch != WatchBox || j.Kind == KAlerts && j.App != e.alertsApp && (e.watch != WatchApps || !e.listed[j.App]) ||
 			j.Kind == KBoxRules && !e.boxRulesOpen || j.Kind == KRules && j.App != e.rulesApp || j.Kind == KSeries && j != e.series || skip != nil && j == *skip {
 			continue
 		}
@@ -782,7 +900,7 @@ func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
 		if r < 100 && e.misses > 0 && en.misses > 0 {
 			r, key = 50, en.asked
 		}
-		if !found || r < bestRank || r == bestRank && key.Before(bestKey) || r == bestRank && key.Equal(bestKey) && j.App < best.App {
+		if !found || r < bestRank || r == bestRank && key.Before(bestKey) || r == bestRank && key.Equal(bestKey) && (j.App < best.App || j.App == best.App && j.Kind < best.Kind) {
 			best, bestDue, bestKey, bestRank, found = j, due, key, r, true
 		}
 	}
@@ -803,6 +921,15 @@ func (e *Engine) rank(j Job, en *entry) int {
 		return 2
 	case j.Kind == KApps:
 		return 3
+	case j.Kind == KAlerts && j.App != e.alertsApp:
+		// The watch's read of a background app's alerts: after every
+		// status while one was never asked, so the apps screen fills
+		// first; then beside the statuses, by when each is due, so slow
+		// reads that keep statuses due starve no app's alerts.
+		if e.unasked {
+			return 6
+		}
+		return 5
 	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KAlerts, j.Kind == KBoxAlerts, j.Kind == KRules, j.Kind == KBoxRules, j.Kind == KSeries:
 		return 4
 	}
@@ -1009,8 +1136,12 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		en.due, en.every = e.nextSlot(en, now), e.background()
 	case j.Kind == KApps:
 		en.due = now.Add(AppsEvery)
+	case j.Kind == KBoxAlerts && e.watch == WatchBox:
+		en.due = now.Add(WatchEvery)
 	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KBoxAlerts, j.Kind == KRules, j.Kind == KBoxRules:
 		en.due = now.Add(BoxEvery)
+	case j.Kind == KAlerts && j.App != e.alertsApp && e.watch == WatchApps:
+		en.due = slot(en, now, e.appAlertsEvery())
 	case j.Kind == KAlerts:
 		en.due = now.Add(AlertsEvery)
 	case j.Kind == KSeries:
@@ -1048,6 +1179,7 @@ func backoff(n int) time.Duration { return min(maxBackoff, time.Second<<min(n, 6
 // whoami first, then the list, as at the start.
 func (e *Engine) forgetBox(now time.Time) {
 	e.apps, e.lastFocus, e.lastList, e.alertsApp, e.rulesApp, e.series = nil, time.Time{}, time.Time{}, "", "", Job{}
+	e.watch, e.listed = WatchNone, nil
 	for j := range e.jobs {
 		if j.Kind != KWhoAmI {
 			delete(e.jobs, j)
@@ -1180,6 +1312,11 @@ func (e *Engine) seen(now time.Time) bool {
 func (e *Engine) wakeLocked(now time.Time) {
 	every := e.background()
 	for j, en := range e.jobs {
+		if j.Kind == KAlerts && j.App != e.alertsApp && e.watch == WatchApps {
+			// Spread over the cycle again, as the statuses are.
+			en.due = now.Add(en.phase % e.appAlertsEvery())
+			continue
+		}
 		if j.Kind != KStatus {
 			continue
 		}

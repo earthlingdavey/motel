@@ -297,42 +297,61 @@ for people's tokens.
 
 ## Getting it
 
-Each release after v0.8.0 carries the client for an M-series Mac,
-`motel_<version>_darwin_arm64.tar.gz`, on the same
+Each release after v0.8.0 carries the client for an M-series Mac and
+for Linux on amd64 and arm64, `motel_<version>_darwin_arm64.tar.gz`,
+`motel_<version>_linux_amd64.tar.gz` and
+`motel_<version>_linux_arm64.tar.gz`, on the same
 [releases](https://github.com/smallhoursorg/motel/releases) page as
 the server and in the same `checksums.txt`, with the release's own
 number: `motel version` prints `motel v<version>`. Releases up to
-v0.8.0 carry no client. In Terminal, this fetches the latest
-release's, checks it, and puts `motel` in `~/.local/bin`:
+v0.8.0 carry no client. In a terminal, this picks the archive for the
+machine it runs on, fetches the latest release's, checks it, and puts
+`motel` in `~/.local/bin`:
 
 ```sh
+case $(uname -s)/$(uname -m) in
+  Darwin/arm64) p=darwin_arm64 ;;
+  Linux/x86_64) p=linux_amd64 ;;
+  Linux/aarch64) p=linux_arm64 ;;
+  *) p=; echo "no release carries motel for $(uname -s) $(uname -m): build it from a clone" >&2 ;;
+esac
 v=$(curl -fsSL -o /dev/null -w '%{url_effective}' \
   https://github.com/smallhoursorg/motel/releases/latest)
 v=${v##*/v}
-f=motel_${v}_darwin_arm64.tar.gz
+f=motel_${v}_$p.tar.gz
 base=https://github.com/smallhoursorg/motel/releases/download/v$v
-cd "$(mktemp -d)" &&
+[ -n "$p" ] && cd "$(mktemp -d)" &&
   curl -fsSLO "$base/$f" && curl -fsSLO "$base/checksums.txt" &&
-  grep " $f\$" checksums.txt | shasum -a 256 -c - &&
+  grep " $f\$" checksums.txt |
+  if [ "$p" = darwin_arm64 ]; then shasum -a 256 -c -; else sha256sum -c -; fi &&
   tar -xzf "$f" motel && mkdir -p ~/.local/bin && mv motel ~/.local/bin/ &&
   ~/.local/bin/motel version
 ```
 
-The first two lines take the latest release's tag without its `v`;
-for a release candidate, or any other release, write the tag in their
-place instead, without its `v` and with its hyphen: `v=0.8.1-rc1`.
-The `&&`s stop the block at the first step that fails, and `shasum`
-checks the one line of `checksums.txt` that names the archive: with
-no such line it fails, rather than passing with nothing checked. When
-`motel` alone is then not found, `~/.local/bin` is not on your PATH:
-`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile`, and open
-a new Terminal window. Unpack the archive with `tar`, as above: a
-browser's download unpacked by a double-click in Finder gives `motel`
-macOS's quarantine mark, and macOS refuses to run it until `xattr -d
-com.apple.quarantine ~/.local/bin/motel` clears the mark.
+The `case` names the archive from `uname`; on any other machine (an
+Intel Mac, Linux on another architecture, Windows) it says so, and the
+block stops before it downloads an archive. The two lines after it take
+the latest release's tag without its `v`; for a release candidate, or
+any other release after v0.8.0, write the tag in their place instead,
+without its `v` and with its hyphen: `v=0.8.1-rc1`. Not an earlier
+one: v0.6.0 to v0.7.0 have a `motel_<version>_linux_<arch>.tar.gz`
+too, which is the old server, and on Linux the block would install
+that as `motel`. The `&&`s stop the block at
+the first step that fails, and the checksum step checks the one line
+of `checksums.txt` that names the archive, with macOS's `shasum -a
+256` or Linux's `sha256sum` (GNU's, or BusyBox's on Alpine): with no
+such line either one fails, rather than passing with nothing checked.
+When `motel` alone is then not found, `~/.local/bin` is not on your
+PATH: `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile` on
+a Mac, or `~/.profile` on Linux, and open a new terminal. On a Mac,
+unpack the archive with `tar`, as above: a browser's download unpacked
+by a double-click in Finder gives `motel` macOS's quarantine mark, and
+macOS refuses to run it until `xattr -d com.apple.quarantine
+~/.local/bin/motel` clears the mark.
 
-On Linux and on an Intel Mac, where no release carries a client, build
-it from a clone of this repository, with Go 1.27.1 or later. `go
+On an Intel Mac, or any other machine no release carries a client
+for, build it from a clone of this repository, with Go 1.27.1 or
+later. `go
 install …/client/cmd/motel@<version>` does not work: the module names
 its sibling `liveswap` by a local `replace`, which `go install`
 refuses.
@@ -351,8 +370,11 @@ Accepted, for the release's archive and the block above:
 | Residual | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
 | Until the first release after v0.8.0 is out, the block reads v0.8.0 as the latest, whose release has no client, and `curl` stops it at a 404 that names only the address; the paragraph above it says releases up to v0.8.0 carry none | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: it lasts until the next release |
-| The archive's line in `checksums.txt` is picked by `grep`, where each `.` of the name matches any character: an asset whose name differed from the archive's only there would be picked too, and `shasum` would fail on the file not downloaded | 2 | 2 | 1 | 4 | 1 (`awk`'s exact match), risk 2 | accepted: no release has such an asset; it fails red, naming the file |
+| The archive's line in `checksums.txt` is picked by `grep`, where each `.` of the name matches any character: an asset whose name differed from the archive's only there would be picked too, and `shasum` or `sha256sum` would fail on the file not downloaded | 2 | 2 | 1 | 4 | 1 (`awk`'s exact match), risk 2 | accepted: no release has such an asset; it fails red, naming the file |
 | That `tar` in Terminal leaves the unpacked `motel` without the quarantine mark of a browser's download rests on Apple's forum answer (the 2026-11-16 research), not a run on a Mac: were it wrong, macOS refuses `motel` and the `xattr` line above clears it | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: the block's own path, `curl` then `tar`, is not concerned; to be tried on a Mac with the first release that has the archive |
+| The `case` knows each archive by one `uname -m` spelling: a Linux that prints `arm64` or `amd64`, or a shell under Rosetta on an M-series Mac (`x86_64`), is told no release carries `motel` and to build it from a clone, though an archive would run there | 2 | 5 | 1 | 10 | 1 (text: more patterns), risk 2 | accepted: refused before any archive is downloaded, naming the system and machine it saw, and the build from a clone works there |
+| On Linux, the PATH line added to `~/.profile` reaches a new login, not a new terminal window, whose shell does not read `~/.profile` (and bash skips it where `~/.bash_profile` exists, and zsh never reads it): `motel` alone is still not found until the next login, or until `. ~/.profile`; with zsh, not at all, until the line is in `~/.zprofile` | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: `command not found`, after the block has run `~/.local/bin/motel version` by its full path; Debian's and Ubuntu's own `~/.profile` add `~/.local/bin` at login once it exists |
+| The block needs `curl`, which some minimal systems lack (Alpine's base image, named above for its BusyBox `sha256sum`): there the first `curl` is not found, `v` is empty, and the download fails | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: red at the first `curl`, `not found` |
 
 ## How box text is kept out of the client's voice
 
@@ -483,6 +505,17 @@ made by hand. Accepted:
 | After the box refuses an app's status and then answers it again, a window of the app's series shown again within 30 s of its last answer says "asking…" until that answer is 30 s old, when it is read: the refusal dropped the answer held, and the engine waits out the answer's age | 3 | 2 | 3 | 18 | 2 (the engine told the answer was dropped) | accepted: it takes a refusal and a window shown again within 30 s; the read comes within 30 s. Found in the series read's second self-review |
 | A deploy mark on the metrics screen is a column of the window (28 minutes at 60 columns over a day, almost 5 hours over 14 days): two deploys in one column are one mark, and a mark says the deploy was within that column, not at its start. The legend line says how long a column is | 2 | 5 | 1 | 10 | 2 | accepted: the record's own time is on the app's screen (enter on its row) |
 | The metrics screen marks the latest deploy of each version the box keeps a record of, from the app's status: a version deployed twice is marked at its last deploy alone, a deploy older than the oldest record the box keeps is not marked, and a failed deploy never is. The legend says "a version's latest deploy that succeeded", and "records from <time>" when the oldest is inside the window | 2 | 5 | 1 | 10 | 3 (a read of every deploy, which the owner's M2 decision rules out) | accepted, by the owner's decision of 2026-11-20 that marks need no new read |
+| The terminal's bell is the client's own BEL, written by tcell's `Beep`: the first byte the client itself sends that draws nothing (tcell's own mode sequences aside). A box's text cannot ring it, as `termtext` makes every control visible; `hostile.Scan`'s bare-BEL signature holds that in `TestSafeBytes`, and `TestSafeBytesAlertArrives` finds the one BEL of an alert made of the hostile fixture's attacks | 2 | 5 | 1 | 10 | 1 | accepted: the bell is the decision (#576) |
+| The bell is not heard where the terminal is silent (Ghostty's, Alacritty's and VS Code's defaults, a terminal whose bell was turned off), and is not forwarded by a tmux with `visual-bell on` or a screen with `vbell on` (Debian's `/etc/screenrc` sets it), so a person away from the screen is not called there | 2 | 5 | 3 | 30 | 3 (a desktop notification, OSC 9 or 777, per terminal and wrapped for tmux) | accepted over the bar, by the owner's decisions of 2026-11-20 (#576): the bell alone, no OSC 9/777/99; the mark is the channel, the bell its call, and the mark stays reversed until a key |
+| A bell rung into a detached tmux session is not replayed when it is attached (tested on tmux 3.5a) | 2 | 5 | 1 | 10 | 3 | accepted: the mark is held reversed, with how many are new, until a key |
+| The mark's glyph is the worst alert's: a critical one beside warnings shows `✖` before the count of them all, which does not say how many are critical | 2 | 5 | 1 | 10 | 2 | accepted: `:alerts` lists each, marked by its severity |
+| After ten idle minutes the TUI pauses (the row on the pause above), the alerts it counts with it: an alert that fires while it is paused is neither drawn nor rung until a key, and the mark meanwhile shows its count as old (`✖ 3?`, `as of 10m ago`) | 2 | 5 | 1 | 10 | 2 (the alerts read alone through the pause, for a key that needs no touch) | accepted: the pause is the owner's rule for an unattended TUI; reading the alerts through it is #576's next change |
+| An alert that fires and ends within a gap of the reads (the pause, STALE, a sleep) is never counted nor rung: no read gives what fired before it | 2 | 5 | 5 | 50 | 3 (a read of what fired since, on the box) | accepted over the bar, by the owner's decision of 2026-11-20 (#576: no history of a gap); notify's channels still told it, and the mark says its count was old |
+| Against a moteld older than the alerts read (a 404), the title bar says `alerts not known` (`alerts ?`) in the warning colour on every screen until ctrl-r, though the box refused nothing | 2 | 5 | 1 | 10 | 2 (a dim word of its own for a box that cannot say) | accepted: the decision of 2026-11-20 (#576, READS.md section 3): the box cannot say, and the mark never reads as none firing; `:alerts` says the 404 and why |
+| While the box says it holds more alerts than it sends (`more_alerts`, past 500), every alert the watch has counted and the box no longer sends is kept as maybe firing until an answer without it, so the keys kept grow for as long as that lasts, and one not yet seen stays counted as new until a key | 2 | 2 | 3 | 12 | 2 | accepted: it takes an Alertmanager holding over 500 alerts, far past what motel posts; the count says `+` |
+| For a person with app grants only, two alerts of one app that differ only by instance and begin at one evaluation (an app's rule over two paths) are one in the title bar's count and ring once: an app's alerts carry no instance, so their keys are the same. A viewer of the box, whose read carries it, counts two | 2 | 3 | 3 | 18 | 3 (the instance on an app's alerts: a wire field) | accepted: it takes two instances crossing at one evaluation; the app's screen lists both |
+| For a person with app grants only, one app whose alerts read is refused, unanswered by its Alertmanager or not yet read (an app added or removed on the box, until the list is read again, at most a minute) turns the whole mark to `alerts not known` (or `alerts…`), hiding the other apps' known count, critical ones too | 2 | 3 | 3 | 18 | 2 (the known sum shown as old beside an app not known) | accepted: the mark never reads as a count it does not know; the apps' own screens show theirs |
+| `ChannelFailed` told to several channels is one alert in the title bar's count, but several identical rows on `:alerts` and in the box screen's count of what fires: the wire does not carry which channel each is | 2 | 3 | 3 | 18 | 2 (the channel on the wire, a notify change) | accepted: the owner's decision of 2026-11-20 (#576) leaves the box side for a PR of its own, if wanted |
 | The box screen's alerts line counts an alert in a state the client does not know (none Alertmanager 0.28 has: `active`, `suppressed`, `unprocessed`) as firing, and marks the line as one that needs a look | 2 | 1 | 3 | 6 | 2 | accepted: `:alerts` says the state as not known, the box's word quoted; counting such a state apart is a fourth count on the line for a state no Alertmanager sends |
 | A silence's matcher's label name is the box's text, unquoted, so a name that holds `" = "x", `, which Alertmanager 0.28 takes in a UTF-8 label name, reads on the `matches` row as one more matcher | 2 | 1 | 3 | 6 | 2 | accepted: only root (or the motel user) writes a silence past motel's own route, which takes no label name; the row is labelled and cut, and `y` shows the answer |
 | When the box sends its alerts or silences cut at the cap (500, 200), the box screen's line counts those sent and does not say the box holds more; `:alerts` and `motel monitor alerts` do | 2 | 3 | 3 | 18 | 2 | accepted: the line points at `:alerts`, which says so; a box holding 500 alerts at once is far past what motel posts |
@@ -705,7 +738,16 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
 - **The rate.** A box allows a person 2 requests a second with a burst
   of 60. The TUI keeps to 1.5 a second and 30 at once. The box's status,
   its backups and its alerts are read every 30 s, each only while a
-  screen that shows it is open (the box screen shows all three), and
+  screen that shows it is open (the box screen shows all three); but
+  a viewer of the box reads its alerts every 15 s whatever screen is
+  open, for the title bar's count (below: the same read the alerts
+  screen and the box screen make, then every 15 s too), and a person
+  with app grants only reads each app's alerts beside its status, at
+  the status's interval and never under 30 s. Both are counted in the
+  budget the other apps share: they keep 30 s to about 12 apps, and at
+  40 a status comes every 33 s for a viewer of the box and every 63.5 s
+  for a person with app grants only, whose alerts then come as often
+  (measured on the fake clock, `TestWatchRates`); and
   the rules, the box's or one app's, every 30 s while their screen is
   open (the box evaluates the store's numbers at most every 30 s). The
   metrics screen's window is read every 30 s while it is shown
@@ -743,7 +785,61 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   if it is still open); a read of it that fails, a 5xx too, is not asked again by
   itself, and the record read before stays on screen beside a failure
   that is not a refusal: a 403 or a 404 is said alone, as on an app's
-  screen and the box screen, and drops the status, record or box's status held (not who am I's: the title bar and who am I say its age and that it failed; nor the apps list: the apps screen shows it as of its time, says the last read failed, and `y` there still gives it, which is bearable since it is said to be old and failed and each name's status is still asked, and dropped on its own refusal), so `y` and `P` have no answer of it to give (`y` says the box refused the read, or answered it 404). Ten idle minutes pause it.
+  screen and the box screen, and drops the status, record or box's status held (not who am I's: the title bar and who am I say its age and that it failed; nor the apps list: the apps screen shows it as of its time, says the last read failed, and `y` there still gives it, which is bearable since it is said to be old and failed and each name's status is still asked, and dropped on its own refusal), so `y` and `P` have no answer of it to give (`y` says the box refused the read, or answered it 404). Ten idle minutes pause it, the alerts the title bar counts too, whose count then says it is old.
+- **What fires.** The title bar's first cells, on every screen, count
+  the alerts that fire that this person may see, after the glyph of the
+  worst (`✖ 3 firing`; `▲ 1 firing` when none is critical; `✖ 3` and
+  `✖3` where the window is narrower, and the glyph alone where nothing
+  else fits beside the freshness word, which is never cut for it). A
+  viewer of the box counts the box's alerts (`GET /_motel/alerts`), a
+  person with app grants only each app's (`GET
+  /_motel/apps/<app>/alerts`), summed; which follows whoami's roles as
+  they change. Counted is what `:alerts` marks (critical, warning, a
+  severity or a state the client does not know), each once however
+  many identical rows the box sends (`ChannelFailed`, one a channel
+  told), and not what a silence or the deploy mute holds, nor an alert
+  of severity `info`; `✖ 500+` when the box held more than it sent.
+  With none firing nothing is drawn; with a box that has no monitor, a
+  dim `no monitor` where the long form fits (once that answer is old,
+  as an old count of none: a monitor may have been added since); before the first answer
+  `alerts…`. Where the count is not known (its read refused: a 403 is
+  asked again when whoami next lists the role, a 404 by ctrl-r on a
+  screen that shows the read (`:alerts`, the box screen, an app's
+  screen for its alerts); the
+  box's Alertmanager did not answer the box; a monitor word the client
+  does not know; a read that failed before any answer; an answer about
+  another key or box) it says `alerts not known` (`alerts ?`, `?`),
+  never a zero, and the title bar's word is not turned to `refused` by
+  it. Where the count held is old (the reads paused or stopped, its
+  read's last try failed, a 429, or its answer older than its interval
+  and 5 s: a read or a signature that waits, a sleep) it is shown with
+  `?` (`✖ 3?`, `✖ 3 firing as of 10m ago`, `0?` for none). An alert is
+  new when it is counted and was not at the last answer that said what
+  fires, told apart by its name, app, instance, severity and start, so
+  a refire, a silence ending, the deploy mute ending and a change of
+  severity are each new; nothing is new at the first answer, and after
+  a gap (the pause, STALE, a sleep, an Alertmanager that did not answer
+  the box) what is new against the last answer known is new once.
+  While something is new and not seen the long form says how many
+  (`✖ 3 firing, 1 new`) and the mark is drawn reversed, which reads
+  without colour: on alternate seconds of the clock for 5 s, then still
+  until a key is pressed a second or more after it arrived (any key,
+  the one that resumes from PAUSED among them); the count stays while
+  they fire. A read that brings something new rings the terminal's
+  bell, a lone BEL (tcell's `Beep`), once however many it brings; never
+  at the first answer, on a resolve, or while the count is not known;
+  and at most once a minute: a bell due sooner is held, and rung once
+  when the minute ends, unless by then what it was for has been seen,
+  has resolved, or is no longer watched (an app no longer listed), and
+  held on while the count is not known. `MOTEL_BELL=off` in the
+  environment (or `no`, `false`, `0`, in any case) turns the bell off,
+  and the mark is the same. What the terminal does with a
+  bell is its own setting (a sound, a flash, a badge on its tab or its
+  Dock icon). No desktop notification and no window title is written.
+  The mark and the bell carry only the client's own words and numbers:
+  no text of an alert's reaches them. `motel --demo` fires a critical
+  alert 20 s after it starts and a warning one at 70 s, and resolves
+  the first at 130 s, each shown at the next read.
 - **The token** lasts 600 s, the longest a box takes, and is signed
   again a minute before it ends: a hardware key is touched about every
   nine minutes, and the title bar says when. The TUI never asks for a

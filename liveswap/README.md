@@ -112,7 +112,7 @@ most container hosts will not give you.
 			# authorized if any deploy_trust source verifies it. No
 			# shared secret is ever stored on the box.
 			deploy_trust github {                 # preset: GitHub Actions OIDC
-				audience motel
+				audience deploy.example.com        # this box: its deploy host
 				claim repository   your-org/blog   # pin who may deploy
 				claim ref          refs/heads/main
 				claim workflow_ref your-org/blog/.github/workflows/deploy.yml@refs/heads/main
@@ -140,7 +140,7 @@ most container hosts will not give you.
 			command ./server --config config.yaml
 			env DATABASE_URL sqlite:{shared_dir}/api.db
 			deploy_trust github {                 # its own repo, its own block
-				audience motel
+				audience deploy.example.com
 				claim repository   your-org/api
 				claim ref          refs/heads/main
 				claim workflow_ref your-org/api/.github/workflows/deploy.yml@refs/heads/main
@@ -940,7 +940,9 @@ Presets:
 a job on another CI, and the token's format for minting it elsewhere.
 
 Sub-directives: `audience` (required for OIDC — never trust an
-unaudienced token; for `local`, the name of this box, see below),
+unaudienced token; in a `liveswap` block, global or an app's, the
+name of this box, see below; a `box` block's is one name for all the
+boxes `bin/apply` pushes to),
 `claim <name> <value>` (exact-match, repeatable — pin `repository`,
 `ref`, `environment`, etc.; a claim named `@id` is refused, because
 Caddy deletes that key from the config before motel reads it),
@@ -987,8 +989,11 @@ about as that. The generic `oidc` preset is not read: it requires
 overrides is not read either: it then backs only the unknown-app
 path, through which nothing deploys. A `local` block without an
 `audience` accepts a token minted for any box that trusts the same
-key, so give each box its own audience and mint with `--audience` to
-match.
+key, and an OIDC block whose `audience` another box's block shares
+accepts a token sent to that box, for as long as the token lives. So
+give each box its own audience, its deploy host, and mint with
+`--audience` to match; the templates' `scripts/deploy.sh` asks for
+its `MOTEL_URL`'s host.
 
 `Authorization: Bearer` is the only accepted transport — Caddy redacts
 it from access logs automatically.
@@ -1006,7 +1011,7 @@ liveswap {
 
 	# Everyday path: CI deploys on merge, no secret anywhere.
 	deploy_trust github {
-		audience blog
+		audience deploy.example.com
 		claim repository   your-org/blog
 		claim ref          refs/heads/main
 		claim workflow_ref your-org/blog/.github/workflows/deploy.yml@refs/heads/main
@@ -1016,15 +1021,15 @@ liveswap {
 	# block; no shared secret, no effect on the others. The audience
 	# names this box (its deploy hostname), so a token minted for
 	# another box that trusts the same key is refused here; mint with
-	# `--audience blog.example.com --subject alice`.
+	# `--audience deploy.example.com --subject alice`.
 	deploy_trust local {
 		public_key /etc/motel/alice.pub
-		audience blog.example.com
+		audience deploy.example.com
 		subject alice
 	}
 	deploy_trust local {
 		public_key /etc/motel/bob.pub
-		audience blog.example.com
+		audience deploy.example.com
 		subject bob
 	}
 
@@ -1035,8 +1040,11 @@ liveswap {
 ```
 
 A `github` block's `audience` is what the job must ask GitHub for. The
-templates' `scripts/deploy.sh` asks for `motel`, so `audience blog`
-above needs `MOTEL_AUDIENCE: blog` in the job's `env:`, beside
+templates' `scripts/deploy.sh` asks for the host of `MOTEL_URL`,
+lowercase, without a port or a trailing dot, so `audience
+deploy.example.com` above matches a job whose `MOTEL_URL` is
+`https://deploy.example.com/blog`.
+Another audience needs `MOTEL_AUDIENCE` in the job's `env:`, beside
 `MOTEL_URL`, so the rollback step gets it too, or the box answers
 401.
 
@@ -1068,7 +1076,7 @@ key it was; `sub` is whatever the key's holder minted the token with
 
 A refused token is recorded too — in the journal only. The response
 is the same flat 401 whatever the reason: anyone with a GitHub
-repository can mint a token for audience `motel`, so an answer that
+repository can mint a token for any audience, so an answer that
 named the failed check would tell them which apps exist and what each
 block pins. The `webhook auth failed` line carries `refused`: one
 entry per source, in config order, each the source's label and what
@@ -1582,10 +1590,11 @@ What's yours to handle:
 ### GitHub Actions
 
 No deploy secret to store — the deploy job mints an OIDC token per run
-(matching a `deploy_trust github { audience motel; claim repository
-your-org/blog; claim ref refs/heads/main; claim workflow_ref
-your-org/blog/.github/workflows/deploy.yml@refs/heads/main }` block on
-the box, for a workflow in `deploy.yml`). Three
+(matching a `deploy_trust github { audience deploy.example.com; claim
+repository your-org/blog; claim ref refs/heads/main; claim
+workflow_ref your-org/blog/.github/workflows/deploy.yml@refs/heads/main }`
+block on the box, for a workflow in `deploy.yml`; the audience is the
+box's deploy host, so no other box takes the token). Three
 jobs, so that the box only ever holds a token that reads the
 repository: the build runs the repository's code and its tools with a
 read token, the release job alone may write (it runs none of that
@@ -1649,7 +1658,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: |
         JWT=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=motel" | jq -er .value)
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=deploy.example.com" | jq -er .value)
         echo "::add-mask::$JWT"
         curl --fail-with-body --max-time 900 -X POST \
           -H "Authorization: Bearer $JWT" \
@@ -1720,8 +1729,8 @@ a new version.
 deploy:
   stage: deploy
   id_tokens:
-    MOTEL_JWT:               # verified by `deploy_trust gitlab { audience motel; claim project_path your-org/blog; claim ref_path refs/heads/main }`
-      aud: motel
+    MOTEL_JWT:               # verified by `deploy_trust gitlab { audience deploy.example.com; claim project_path your-org/blog; claim ref_path refs/heads/main }`
+      aud: deploy.example.com
   script:
     - tar -czf blog.tar.gz -C dist .
     - |

@@ -47,7 +47,7 @@ func written(scr tcell.Screen, y int) (n int) {
 }
 
 // classes are every Class a segment can have.
-var classes = []model.Class{model.Plain, model.Label, model.Dim, model.Strong, model.Bad, model.Warn, model.Good}
+var classes = []model.Class{model.Plain, model.Label, model.Dim, model.Strong, model.Bad, model.Warn, model.Good, model.LoudBad, model.LoudWarn}
 
 // classStyle is the style a segment of class c is drawn in, with
 // colour or without: drawn on "x" alone, once.
@@ -179,7 +179,7 @@ func lineName(l model.Line) string {
 	return strings.Join(out, " ")
 }
 
-var className = map[model.Class]string{model.Plain: "plain", model.Label: "label", model.Dim: "dim", model.Strong: "strong", model.Bad: "bad", model.Warn: "warn", model.Good: "good"}
+var className = map[model.Class]string{model.Plain: "plain", model.Label: "label", model.Dim: "dim", model.Strong: "strong", model.Bad: "bad", model.Warn: "warn", model.Good: "good", model.LoudBad: "loud bad", model.LoudWarn: "loud warn"}
 
 // FuzzLine: a whole Line, its segments the box's text (text cut at each
 // NUL, which termtext would write as \x00 anyway, at most eight) in any

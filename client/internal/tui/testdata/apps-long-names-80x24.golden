@@ -1,4 +1,4 @@
-motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer… live · 10s ago
+✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.… live · 0s ago
 apps                             4 apps · 2 need a look · 1 stale · by attention
 ✖ aaaaaaaaaaaa…staging stopped: 9f02bb1c4e7a is not running · +1 more (/!ok)
 ────────────────────────────────────────────────────────────────────────────────

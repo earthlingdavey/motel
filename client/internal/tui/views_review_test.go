@@ -47,14 +47,17 @@ func TestDeepJSONOnScreen(t *testing.T) {
 // failAll makes every read the session makes fail with err, or answer
 // again with nil.
 func failAll(h *harness, err error) {
-	for _, k := range append([]string{"whoami", "apps", "box"}, h.s.Names()...) {
+	for _, k := range append([]string{"whoami", "apps", "box", "box-alerts"}, h.s.Names()...) {
 		h.fake.Set(k, err)
 	}
 }
 
 // TestTitleWordsAt60: every word the title bar's right side carries is
 // drawn whole at the smallest window, 60 columns, ending at its edge,
-// with the left side cut before it: read from the screen's cells.
+// with the left side cut before it: read from the screen's cells. The
+// mark of what fires (the fixture's two alerts, or that the count is
+// not known) is drawn first beside each, in one of its forms, and its
+// tiny form fits beside the longest.
 func TestTitleWordsAt60(t *testing.T) {
 	refuse := func(k model.Fail) func(*harness) {
 		return func(h *harness) {
@@ -136,7 +139,21 @@ func TestTitleWordsAt60(t *testing.T) {
 		if !strings.HasPrefix(right.Text(), c.word) {
 			t.Errorf("%q: the title's word is %q", c.word, right.Text())
 		}
-		t.Logf("%2d cells: %s", len([]rune(right.Text())), right.Text())
+		m := h.s.Mark(h.now)
+		drawn := ""
+		for _, f := range []model.Line{m.Long, m.Short, m.Tiny, m.Glyph} {
+			if f != nil && strings.HasPrefix(r.text, f.Text()+" ") {
+				drawn = f.Text()
+				break
+			}
+		}
+		if drawn == "" {
+			t.Errorf("%q: the mark (%q) is not drawn first: %q", c.word, m.Long.Text(), r.text)
+		}
+		if n, tiny := len([]rune(right.Text())), len([]rune(m.Tiny.Text())); tiny+1+n > 60 {
+			t.Errorf("%q: the tiny mark %q does not fit beside it", c.word, m.Tiny.Text())
+		}
+		t.Logf("%2d cells: %s · mark %s", len([]rune(right.Text())), right.Text(), drawn)
 	}
 }
 

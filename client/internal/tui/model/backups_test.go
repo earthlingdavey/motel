@@ -28,7 +28,7 @@ func TestBackupsSays(t *testing.T) {
 	s.Engine.BackupsOpen(true, *now)
 	why := "backups are not set up: /etc/motel-backup/repository.env is not there (/etc/motel/backup.env is from before this version and is not read: run `motel-backup setup` as root)"
 	f.Body("backups.json", `{"at":"@-2s","healthy":false,"could_not_tell":"`+why+`","apps":[],"running":[],"unrecognised_units":[],"lines":[{"level":"warning","text":"warning: the run said so"}]}`)
-	for range 3 {
+	for range 4 { // whoami, the list, the watch's alerts, the backups
 		step(t, s, f, now)
 	}
 	if s.BackupsSt == nil {

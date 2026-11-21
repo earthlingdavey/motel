@@ -202,7 +202,7 @@ deploy:
     - if: $CI_COMMIT_BRANCH == "main"
   id_tokens:
     MOTEL_TOKEN:
-      aud: motel
+      aud: deploy.example.com
   variables:
     MOTEL_URL: https://deploy.example.com/example
   script:
@@ -210,11 +210,12 @@ deploy:
     - scripts/deploy.sh app.tar.gz
 ```
 
-and the app's block on the box:
+and the app's block on the box, whose `audience` names this box as
+the `local` block's does in [section 2](#2-a-key-end-to-end):
 
 ```caddyfile
 deploy_trust gitlab {
-	audience motel
+	audience deploy.example.com
 	claim project_path your-group/example
 	claim ref_path refs/heads/main
 }
@@ -237,7 +238,7 @@ only an audience, every workload on the issuer could deploy.
 ```caddyfile
 deploy_trust oidc {
 	issuer https://oidc.circleci.com/org/<org-id>
-	audience motel
+	audience deploy.example.com
 	subject <the provider's sub for this project>
 }
 ```

@@ -334,9 +334,18 @@ func TestDeployCursorAmongAlike(t *testing.T) {
 // freshness word, at 60 and at 80 columns, as the simulation screen
 // shows them; it names whoami, so the failure is not read as the
 // release's beside it (the trial: "5m old, failed: v0.8.0-tui1 · …").
+// With alerts firing, their mark goes first: at 80 columns the whoami
+// mark is still whole after it; at 60 it is cut, as the host is (the
+// mark's place, the owner's decision of 2026-11-20).
 func TestTitleHeldWhoAmIFailedFits(t *testing.T) {
-	for _, w := range []int{60, 80} {
-		h := start(t, w, 25, nil)
+	quiet := func(f *demo.Fake) { f.Body("box-alerts.json", `{"monitor":"on","alerts":[],"silences":[]}`) }
+	for _, c := range []struct {
+		w    int
+		set  func(*demo.Fake)
+		mark string
+	}{{60, quiet, ""}, {80, quiet, ""}, {80, nil, "✖ 2 firing · "}} {
+		w := c.w
+		h := start(t, w, 25, c.set)
 		h.fake.Set("whoami", &model.Failure{Kind: model.FailUnusable, Message: "not moteld's answer"})
 		h.now = h.now.Add(21 * time.Minute)
 		h.s.Engine.Touch(h.now)
@@ -344,11 +353,11 @@ func TestTitleHeldWhoAmIFailedFits(t *testing.T) {
 		h.pump()
 		h.sync()
 		top := strings.SplitN(h.screen(), "\n", 2)[0]
-		if !strings.HasPrefix(top, "motel · deploy.example.com │ whoami failed") || !strings.HasSuffix(top, " live · 0s ago") {
+		if !strings.HasPrefix(top, c.mark+"motel · deploy.example.com │ whoami failed") || !strings.HasSuffix(top, " live · 0s ago") {
 			t.Errorf("at %d columns the title bar is %q", w, top)
 		}
 		// Whose age it is, after whose failure, where there is room.
-		if w == 80 && !strings.HasPrefix(top, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · ") {
+		if w == 80 && c.mark == "" && !strings.HasPrefix(top, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · ") {
 			t.Errorf("at %d columns the title bar is %q", w, top)
 		}
 	}

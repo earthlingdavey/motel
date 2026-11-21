@@ -124,7 +124,12 @@ what it runs.
    account) three times more: the `artifact_allowlist` entry pins the
    organization or account alone, and the app's `deploy_trust` its
    repo and its deploy workflow, in its `claim repository` and `claim
-   workflow_ref`. This lists the lines left to change, comments aside,
+   workflow_ref`. `deploy.example.com` is also the app's `audience`:
+   it names this box, the host of the app repo's `MOTEL_URL`, which
+   its `scripts/deploy.sh` asks for, so no other box takes the token.
+   The `box` block's `audience motel` stays: `bin/apply` asks for
+   that one name for every box.
+   This lists the lines left to change, comments aside,
    and prints nothing once all are changed:
 
    ```sh
@@ -356,7 +361,9 @@ One directory per box, each named for its deploy host. Every push goes
 to every box: each one's history must keep up, even when its own file
 did not change, and then the box answers that it already runs that
 Caddyfile. Each box is set up with `moteld init` from its own
-directory.
+directory. An app block's `audience` is its box's deploy host, so one
+copied from another box's file takes the directory's name there; the
+`box` block's `audience motel` is the same in every file.
 
 ### A box on another release
 

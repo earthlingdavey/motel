@@ -320,11 +320,15 @@ build-client: ## the laptop client into build/; GOOS= GOARCH= cross-build
 # each with build-client and packs it as
 # dist/motel_$(VERSION)_<os>_<arch>.tar.gz, with `motel` (0755) and
 # LICENSE (0644) at the archive's root; the release checksums and
-# attaches everything in dist/. A target is one more word here. A
-# linux one would take the name the server's own archive had up to
-# v0.7.0, which a box repository made from that release's template
-# still asks the latest release for (docs/upgrading.md).
-CLIENT_TARGETS = darwin/arm64
+# attaches everything in dist/. A target is one more word here. The
+# linux archives have the name the server's own archive had up to
+# v0.7.0: a box repository made from that release's template, unless
+# its repository variable pins an earlier release, installs this client
+# as its checker from the latest release, and its workflow fails at the
+# client's refusal of a server command (docs/upgrading.md). So does a
+# raw-binary host's own script that still fetches that name (README.md,
+# "Without the package").
+CLIENT_TARGETS = darwin/arm64 linux/amd64 linux/arm64
 
 # Builds .deb for both arches into dist/, then the client's archives
 # (CLIENT_TARGETS above). .deb only, and no .apk

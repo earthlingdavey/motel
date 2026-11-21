@@ -1,4 +1,4 @@
-motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
+✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.… live · 0s ago
 apps › hostile                                       as of 14:12:40 UTC · 0s ago
 state       running v6 · pid 41233 · unit motel-hostile.v6.3f9a0c21d4e8b7a6.ser…
 alerts      2 held · as of 0s ago

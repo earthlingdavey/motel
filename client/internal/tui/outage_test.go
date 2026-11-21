@@ -17,7 +17,7 @@ import (
 func TestOneAppOutageSeen(t *testing.T) {
 	h := start(t, 100, 30, func(f *demo.Fake) { f.Body("apps.json", `{"apps": [{"name": "blog"}]}`) })
 	h.walk(61*time.Second, model.Job{})
-	keys := []string{"blog", "alerts:blog", "apps", "whoami"}
+	keys := []string{"blog", "alerts:blog", "apps", "whoami", "box-alerts"}
 	for _, k := range keys {
 		h.fake.Set(k, fiveHundred())
 	}
