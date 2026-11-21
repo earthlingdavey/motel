@@ -27,7 +27,7 @@ BOXDIR=/var/lib/motel-box
 FILE=$HOST/Caddyfile
 ART=http://e2e-artifacts:8080/artifacts
 CA=/var/lib/motel/caddy/pki/authorities/local/root.crt
-RELEASE=v0.0.0-e2e # e2e/Dockerfile links it
+RELEASE=v0.0.0-e2e # e2e/bin.sh links it
 
 work=$(mktemp -d)
 repo=$work/repo

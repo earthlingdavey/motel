@@ -18,9 +18,10 @@ judged by the base branch's copy of this file, never its own, so an
 edit to this rule cannot skip the checks of the PR that makes it; an
 edit to ci.yml can (see the residuals).
 
-No image build reads markdown (e2e/Dockerfile's build steps bind-mount
-the context, so the nested files are visible to them, .dockerignore's
-`*.md` matching the root's alone, and nothing in the build opens them),
+No build reads markdown (the e2e images' binaries are built in the dev
+container, e2e/bin.sh, with the whole checkout mounted, and compile and
+embed none; the image builds copy named files, .dockerignore's `*.md`
+keeping the root's out of their context),
 but tests and install-test do: READ lists those files, and examples/ is heavy whole,
 since examples/templates_test.go checks the links of every .md under
 it. A test or a lane that starts reading another markdown file adds it
