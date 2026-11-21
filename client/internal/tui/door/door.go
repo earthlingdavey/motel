@@ -158,6 +158,17 @@ func tags(c model.Class, colour bool) (string, string) {
 		if colour {
 			return "[green]", "[-]"
 		}
+	case model.LoudBad:
+		// Reversed, so it reads without colour too.
+		if colour {
+			return "[red::rb]", "[-::-]"
+		}
+		return "[::rb]", "[::-]"
+	case model.LoudWarn:
+		if colour {
+			return "[yellow::r]", "[-::-]"
+		}
+		return "[::r]", "[::-]"
 	}
 	return "", ""
 }

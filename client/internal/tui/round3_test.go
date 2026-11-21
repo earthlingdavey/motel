@@ -17,7 +17,9 @@ import (
 // help nothing, on the box the box, its backups and its alerts (the
 // screen has a line of each), on the backups those alone, on the alerts
 // those alone, each pressed AgainAfter
-// and more after the last read of it.
+// and more after the last read of it; the box's alerts, which the watch
+// reads on every screen, may have been read just before, and are then
+// asked AgainAfter on.
 func TestCtrlROnlyWhatIsShown(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	h.press(":", "me", tcell.KeyEnter)
@@ -30,9 +32,19 @@ func TestCtrlROnlyWhatIsShown(t *testing.T) {
 		}
 		h.now = h.now.Add(model.AgainAfter + time.Second)
 		h.pump()
+		var watched time.Time
+		for _, call := range h.fake.Calls {
+			if call.Job.Kind == model.KBoxAlerts {
+				watched = call.At
+			}
+		}
 		before := len(h.fake.Calls)
 		h.press(tcell.KeyCtrlR)
 		read := map[model.Kind]bool{}
+		if h.now.Sub(watched) < model.AgainAfter {
+			// The watch read it just now: ctrl-r asks it AgainAfter on.
+			read[model.KBoxAlerts] = true
+		}
 		for _, call := range h.fake.Calls[before:] {
 			if !slices.Contains(c.want, call.Job.Kind) {
 				t.Errorf("ctrl-r on %s read %v", c.where, call.Job)

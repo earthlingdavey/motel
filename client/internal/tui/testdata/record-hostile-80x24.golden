@@ -1,4 +1,4 @@
-motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
+✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.… live · 0s ago
 apps › hostile › deploy v7                           as of 14:12:40 UTC · 0s ago
 ✖ FAILED in starting after 20 s · 13:02:20 → 13:02:40 UTC
 by          ci:\x1b]8;;https://evil.example/login\x1b\motel login\x1b]8;;\x1b\ …

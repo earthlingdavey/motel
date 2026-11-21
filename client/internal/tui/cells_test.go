@@ -161,7 +161,7 @@ func TestTitleAndCrumbInCells(t *testing.T) {
 				what, left, right string
 				y                 int
 			}{
-				{"the title", "motel · deploy.example.com · v0.7.0 │ " + c.drawn + " · viewer of the box", "live · 0s ago", 0},
+				{"the title", "✖ 2 firing · motel · deploy.example.com · v0.7.0 │ " + c.drawn + " · viewer of the box", "live · 0s ago", 0},
 				{"the crumb", "apps › " + c.drawn, "as of 14:12:40 UTC · 0s ago", 1},
 			} {
 				r := screenRows(h)[row.y]

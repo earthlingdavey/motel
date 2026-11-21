@@ -22,6 +22,11 @@ const (
 	Bad
 	Warn
 	Good
+	// LoudBad and LoudWarn are Bad and Warn reversed: the title bar's
+	// mark while what fires is new (Session.Mark), reversed with colour
+	// or without.
+	LoudBad
+	LoudWarn
 )
 
 // Seg is a run of text. Every one is termtext.Text, the client's own

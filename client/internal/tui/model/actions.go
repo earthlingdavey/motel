@@ -26,8 +26,8 @@ var Actions = []Action{
 	{KDeploy, "deploys <app> <version>", "a deploy's record", readDeploy},
 	{KBox, "box status", "the box screen", readBox},
 	{KBackups, "backup status", "the backups screen, and its line on the box screen", readBackups},
-	{KAlerts, "monitor alerts --app <app>", "the alerts on an app's screen", readAlerts},
-	{KBoxAlerts, "monitor alerts", "the alerts screen, and its line on the box screen", readBoxAlerts},
+	{KAlerts, "monitor alerts --app <app>", "the alerts on an app's screen, and the title bar's mark for a person with app grants only", readAlerts},
+	{KBoxAlerts, "monitor alerts", "the alerts screen, its line on the box screen, and the title bar's mark", readBoxAlerts},
 	{KRules, "monitor rules --app <app>", "an app's rules screen", readRules},
 	{KBoxRules, "monitor rules", "the rules screen", readBoxRules},
 	{KSeries, "metrics <app> --range <range>", "the metrics screen", readSeries},
@@ -62,6 +62,7 @@ func readWhoAmI(ctx context.Context, s *Session, c Client, _ Job) (func(*Session
 		}
 		g.At = at
 		s.Me, s.MeErr = &g, nil
+		s.follow(at)
 	}, err
 }
 
@@ -75,6 +76,7 @@ func readApps(ctx context.Context, _ *Session, c Client, _ Job) (func(*Session, 
 		g.At = at
 		s.List, s.ListErr = &g, nil
 		s.Engine.SetApps(g.V, at)
+		s.watchList()
 	}, err
 }
 

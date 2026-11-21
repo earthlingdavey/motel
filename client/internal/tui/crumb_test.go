@@ -27,7 +27,7 @@ func TestWideSummaryCut(t *testing.T) {
 	})
 	// Every row read once, then a wake: every row still being read is
 	// stale until read again.
-	h.walk(4*time.Minute, model.Job{})
+	h.walk(6*time.Minute, model.Job{})
 	h.now = h.now.Add(10 * time.Minute)
 	h.on(func() { h.u.S.Engine.Tick(h.now) })
 	h.press("/", "app", tcell.KeyEnter)

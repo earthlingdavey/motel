@@ -75,6 +75,9 @@ type UI struct {
 	// metricsRange is the window the metrics screen last showed: g
 	// opens it again.
 	metricsRange string
+	// Bell rings the terminal's bell for a read that brings a new alert
+	// (Session.Ring): on unless MOTEL_BELL=off.
+	Bell bool
 }
 
 func textView() *tview.TextView {
@@ -138,13 +141,23 @@ func New(s *model.Session, colour bool, start model.View) *UI {
 	u.App.SetRoot(u.root, true).SetInputCapture(u.key)
 	u.App.SetBeforeDrawFunc(func(scr tcell.Screen) bool {
 		u.w, u.h = scr.Size()
+		now := u.now()
+		// The bell owed, at the frame that shows its mark, or says the
+		// window is too small for it: taken whether or not it rings, so
+		// its floor counts the same with it off. A lone BEL written by
+		// tcell, outside the frame's own bytes.
+		defer func() {
+			if u.S.Ring(now) && u.Bell {
+				_ = scr.Beep()
+			}
+		}()
 		if u.w < minW || u.h < minH {
 			// Below this nothing lays out; say what is needed instead.
 			door.PrintAt(scr, 0, 0, u.w, "window too small: the screen needs "+itoa(minW)+"x"+itoa(minH)+
 				", this one is "+itoa(u.w)+"x"+itoa(u.h)+". q quits.")
 			return true
 		}
-		u.render()
+		u.render(now)
 		return false
 	})
 	u.show()
@@ -267,7 +280,11 @@ func (u *UI) show() {
 // key is every key pressed, before any widget: what it means is the
 // same on every screen, but for the screen's own keys.
 func (u *UI) key(ev *tcell.EventKey) *tcell.EventKey {
-	u.S.Engine.Touch(u.now())
+	now := u.now()
+	u.S.Engine.Touch(now)
+	// Any key sees what arrived a second or more before it, the one that
+	// resumes from PAUSED among them.
+	u.S.Seen(now)
 	u.notice = nil
 	if ev.Key() == tcell.KeyCtrlC {
 		return ev // tview's own: it quits from inside its event loop

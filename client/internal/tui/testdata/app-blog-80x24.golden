@@ -1,4 +1,4 @@
-motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
+✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.… live · 0s ago
 apps › blog                                          as of 14:12:40 UTC · 0s ago
 state       running 7c1e55d0a913 · pid 41233 · unit motel-blog.7c1e55d0a913.3f9…
 alerts      2 held · as of 0s ago

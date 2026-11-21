@@ -236,7 +236,7 @@ func TestBoxErrorClears(t *testing.T) {
 	s, f, now := session(t)
 	s.Engine.BoxOpen(true, *now)
 	f.Set("box", &model.Failure{Kind: model.FailThis, Message: "deploy.example.com answered 409"})
-	for range 3 {
+	for range 4 { // whoami, the list, the watch's alerts, the box
 		step(t, s, f, now)
 	}
 	if v := s.BoxView(*now); !strings.Contains(v[0].Text(), "answered 409") {

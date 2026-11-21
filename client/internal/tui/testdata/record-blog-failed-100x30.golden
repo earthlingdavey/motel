@@ -1,4 +1,4 @@
-motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
+✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the … live · 0s ago
 apps › blog › deploy e9a0b3f2c118                                        as of 14:12:40 UTC · 0s ago
 ✖ FAILED in soaking after 62 s · 11:51:38 → 11:52:40 UTC
 by          github:example/blog@refs/heads/main

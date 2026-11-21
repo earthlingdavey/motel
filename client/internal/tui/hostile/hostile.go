@@ -48,6 +48,9 @@ var signatures = map[string]*regexp.Regexp{
 	"invalid utf-8": regexp.MustCompile(`\xff\xfe`),
 }
 
+// Scan names every signature found in out, "bare BEL" among them: a
+// BEL that ends no OSC, the terminal's bell. The client rings it for a
+// new alert (BareBELs counts them); no text of a box's may.
 func Scan(out []byte) []string {
 	var found []string
 	for name, re := range signatures {
@@ -55,8 +58,28 @@ func Scan(out []byte) []string {
 			found = append(found, name)
 		}
 	}
+	if BareBELs(out) > 0 {
+		found = append(found, "bare BEL")
+	}
 	sort.Strings(found)
 	return found
+}
+
+// BareBELs counts the BELs in out that end no OSC (ESC ] … BEL), each a
+// ring of the terminal's bell.
+func BareBELs(out []byte) int {
+	n, osc := 0, false
+	for i, c := range out {
+		switch {
+		case c == 0x1b:
+			osc = i+1 < len(out) && out[i+1] == ']'
+		case c == 0x07 && osc:
+			osc = false
+		case c == 0x07:
+			n++
+		}
+	}
+	return n
 }
 
 // TTY is a terminal for tcell's real terminfo screen: it records
