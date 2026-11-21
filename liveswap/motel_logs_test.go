@@ -451,6 +451,26 @@ func TestLogsRefusedLine(t *testing.T) {
 	}
 }
 
+// TestLogsFinalPassLengthensNoText: a value that is a word of the
+// outcome vocabulary stands in a text's own "status" pair through the
+// line's filter (rule 3) and is replaced by the body's final pass, which
+// lengthens the text; a text over 4 KiB is not sent, but cut.
+func TestLogsFinalPassLengthensNoText(t *testing.T) {
+	text := strings.Repeat("{", logsLineMax-len(`"status":"succeeded"`)) + `"status":"succeeded"`
+	h, people, _, _ := logsRig(t, demoJournal(2, func(i int) string { return []string{text, "short"}[i] }))
+	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K=succeeded\n"), 0o600))
+	w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
+	got := decodeLogs(t, w)
+	if len(got.Lines) != 2 || strings.Contains(w.Body.String(), "succeeded") || got.Cursor != cursorOf(1) {
+		t.Fatalf("%d %.300s", w.Code, w.Body)
+	}
+	for i, l := range got.Lines {
+		if len(l.Text) > logsLineMax || !utf8.ValidString(l.Text) {
+			t.Errorf("line %d: %d bytes", i, len(l.Text))
+		}
+	}
+}
+
 // TestLogsClientGone: a reader that goes away mid-read ends it, and that
 // is no failure of the journal's for moteld to log.
 func TestLogsClientGone(t *testing.T) {

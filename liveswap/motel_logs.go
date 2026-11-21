@@ -205,7 +205,10 @@ func filterLogs(f *Redactor, body wire.Logs) (string, []string, bool) {
 		return "", nil, false
 	}
 	for i := range got.Lines {
-		if !got.Lines[i].At.Equal(lines[i].At) {
+		// A text the pass made longer than a line (a value that is a word
+		// of the outcome vocabulary, which a text's own pair kept, rule 3,
+		// replaced once escaped) is the fallback's to cut.
+		if !got.Lines[i].At.Equal(lines[i].At) || len(got.Lines[i].Text) > logsLineMax {
 			return "", nil, false
 		}
 	}
@@ -256,6 +259,25 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 	var top map[string]json.RawMessage
 	if json.Unmarshal([]byte(out), &top) != nil || top["lines"] == nil {
 		return out, nil, false
+	}
+	// A text the filter made longer than a line is cut: a piece of text
+	// that passed every layer, which holds no form the whole did not.
+	var cut []wire.LogLine
+	if json.Unmarshal(top["lines"], &cut) == nil {
+		over := false
+		for i := range cut {
+			if len(cut[i].Text) > logsLineMax {
+				cut[i].Text, over = cutText(cut[i].Text, logsLineMax-len("…"))+"…", true
+			}
+		}
+		if over {
+			if b, err := json.Marshal(cut); err == nil {
+				top["lines"] = b
+				if b, err = json.Marshal(top); err == nil {
+					out = string(b)
+				}
+			}
+		}
 	}
 	names := reportedKeys(seen)
 	for i, k := range names {
