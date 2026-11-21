@@ -733,7 +733,7 @@ the store did not answer. The kill is said three ways:
   missed and how to give it more;
 - to the operator's channels, `metrics_store_killed` (warning; a
   one-shot), at most once an hour, with how many kills since the last
-  (a kill while moteld is down is told at its start);
+  (a kill while moteld is down is told a push or two after its start);
 - in moteld's journal, `monitor metrics: the metrics store was killed
   by the kernel; systemd restarted it`, with the alert's summary.
 
@@ -745,8 +745,9 @@ victoria-metrics`, then under `[Service]` a line `MemoryMax=512M` (your
 drop-in, `override.conf`, wins over motel's `10-motel.conf`, and motel's
 setup leaves it alone), then `systemctl restart victoria-metrics`. To
 see how close it runs: `systemctl show victoria-metrics -p MemoryPeak
--p MemoryCurrent`, and the store's own `vm_cache_size_bytes` against
-`vm_cache_size_max_bytes` (PromQL over the socket, below).
+-p MemoryCurrent`, and the store's own caches against their maxima,
+which it does not keep as series: `curl -s --unix-socket
+/run/motel-metrics/vm.sock http://vm/metrics | grep vm_cache_size`.
 
 ### PromQL over the socket, as root
 
@@ -1064,7 +1065,7 @@ alert firing then resolves. That is moteld down, or the store refusing
 the pushes: `metrics_store_read_only` says so for a read-only store,
 `metrics_store_down` once they have failed for five minutes, and
 `metrics_store_killed` when the kernel killed the store at its memory
-limit, which it is back from within seconds ([An app's numbers over
+limit, which it is back from within a minute ([An app's numbers over
 time](#an-apps-numbers-over-time-from-a-laptop)).
 `request_rate` is over the time the store's samples cover, so a moteld
 restart in the window barely moves it. It has no value until the

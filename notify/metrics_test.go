@@ -1593,15 +1593,11 @@ func TestStoreKillTold(t *testing.T) {
 	if got := tick(tp2); len(got) != 0 {
 		t.Fatalf("a restart told within the hour: %+v", got)
 	}
-	// A taken file a read failed on is read with the next.
 	tp.at = tp.at.Add(21 * time.Minute)
-	if err := os.WriteFile(file+".taken.1", []byte("1794000000 369098752\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	got = tick(tp)
-	if len(got) != 1 || got[0].Details["kills"] != "3" ||
-		!strings.Contains(got[0].Summary, "killed 3 times since 2026-11-0") {
-		t.Fatalf("two held kills and a left one told %+v", got)
+	if len(got) != 1 || got[0].Details["kills"] != "2" ||
+		!strings.Contains(got[0].Summary, "killed 2 times since 2026-11-10 12:2") {
+		t.Fatalf("two held kills told %+v", got)
 	}
 	if left, _ := filepath.Glob(file + "*"); len(left) != 1 || left[0] != file+".told" {
 		t.Fatalf("left in the directory: %v", left)
@@ -1610,6 +1606,32 @@ func TestStoreKillTold(t *testing.T) {
 		return e.Level == zap.WarnLevel && strings.Contains(e.Message, "the metrics store was killed by the kernel; systemd restarted it")
 	}) {
 		t.Error("no journal line for the kill")
+	}
+	// A store killed before every tick (at each start) is still told:
+	// what was taken before is read, the new file waits for the next.
+	tp.at = tp.at.Add(2 * time.Hour)
+	kill(tp.at)
+	tp.checkKilled()
+	tp.at = tp.at.Add(pushEvery)
+	kill(tp.at)
+	tp.checkKilled()
+	if got := tp.take(); len(got) != 1 || got[0].Details["kills"] != "1" {
+		t.Fatalf("a kill at every tick: %+v", got)
+	}
+	if left, _ := filepath.Glob(file + ".taken.*"); len(left) != 1 {
+		t.Fatalf("taken files left: %v", left)
+	}
+	// A taken file a read failed on (left) is read with the next tell.
+	if err := os.Remove(file + ".told"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file+".taken.1", []byte("1794000000 369098752\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tp.at = tp.at.Add(pushEvery)
+	tp.checkKilled()
+	if got := tp.take(); len(got) != 1 || got[0].Details["kills"] != "2" || !strings.Contains(got[0].Summary, "killed 2 times since 2026-11-0") {
+		t.Fatalf("the kill after it, with the left one: %+v", got)
 	}
 	// A hold written ahead of the clock (a clock stepped back) holds
 	// nothing.
@@ -1638,6 +1660,10 @@ func TestStoreKilledEvent(t *testing.T) {
 	ev, _ = killedEvent([]byte("1795180000 box\n1795180100 402653184\n"))
 	if !strings.Contains(ev.Summary, "killed 2 times, at its memory limit (384 MiB), 1 of them when the box ran out of memory; it restarted by itself") {
 		t.Fatalf("a box's kill and the limit's: %+v", ev)
+	}
+	ev, _ = killedEvent([]byte("1795180000 402653184\n1795180100 536870912\n"))
+	if !strings.Contains(ev.Summary, "at its memory limit (the last 512 MiB);") {
+		t.Fatalf("kills under two limits: %+v", ev)
 	}
 	if _, n := killedEvent(nil); n != 0 {
 		t.Fatal("an empty file is a kill")

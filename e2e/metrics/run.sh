@@ -905,8 +905,17 @@ kill_store() {
 	i=0
 	until vm http://vm/health | grep -q OK; do i=$((i + 1)); [ "$i" -ge 120 ] && return 1; sleep 0.5; done
 }
+# kill_cleanup: nothing of this part for the parts after it: the
+# runtime limits (not `systemctl revert`, which would take motel's
+# drop-in too), the held line and the hold.
+kill_cleanup() {
+	rm -f /run/systemd/system.control/victoria-metrics.service.d/50-MemoryMax.conf /run/systemd/system.control/victoria-metrics.service.d/50-MemorySwapMax.conf
+	systemctl daemon-reload
+	rm -f "$STATE"/store-killed "$STATE"/store-killed.*
+}
 since=$(date '+%Y-%m-%d %H:%M:%S')
 if ! kill_store; then
+	kill_cleanup
 	fail "the store was not killed at MemoryMax=20M, or did not answer again, in 90 s (memory.current $(cat /sys/fs/cgroup/system.slice/victoria-metrics.service/memory.current 2>/dev/null), controllers $(cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null), $(systemctl show -p Result -p SubState victoria-metrics | tr '\n' ' '))"
 	return
 fi
@@ -933,12 +942,7 @@ if kill_store; then
 else
 	fail "the second kill did not come, or the store did not answer after it"
 fi
-# Nothing of this part for the parts after it: the runtime limits
-# (not `systemctl revert`, which would take motel's drop-in too), the
-# held line and the hold.
-rm -f /run/systemd/system.control/victoria-metrics.service.d/50-MemoryMax.conf /run/systemd/system.control/victoria-metrics.service.d/50-MemorySwapMax.conf
-systemctl daemon-reload
-rm -f "$STATE"/store-killed "$STATE"/store-killed.*
+kill_cleanup
 [ "$(systemctl show -p MemoryMax --value victoria-metrics)" = "$cap" ] && pass "the store's limit is the drop-in's again" \
 	|| fail "the store's limit is $(systemctl show -p MemoryMax --value victoria-metrics), not $cap"
 }

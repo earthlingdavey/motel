@@ -398,9 +398,9 @@ const killSettle = 5 * time.Second
 // one-shot says is every kill since the last. Taken by a rename to a
 // name of its own, so a kill that adds its line later starts a new
 // file, and read a tick later (killSettle), so one that opened it just
-// before is in it: in a tick that took one, nothing is read, so the next
-// one-shot holds every kill. A taken file a read failed on is read with
-// the next.
+// before is in it: a file taken this tick waits for the next tell, and
+// those taken before are told now, so a store killed at every start is
+// still told. A taken file a read failed on is read with the next.
 func (p *pusher) checkKilled() {
 	p.mu.Lock()
 	a, log, now, tell := p.active, p.logger, p.now(), p.tellKill
@@ -421,15 +421,13 @@ func (p *pusher) checkKilled() {
 		log.Warn("monitor metrics: could not read the store's kills", zap.String("file", path), zap.Error(err))
 	}
 	taken, _ := filepath.Glob(path + ".taken.*")
-	for _, f := range taken {
-		at, err := strconv.ParseInt(strings.TrimPrefix(f, path+".taken."), 10, 64)
-		if d := now.Sub(time.Unix(0, at)); err == nil && d >= 0 && d < killSettle {
-			return // taken this tick: all of them at the next, as one
-		}
-	}
 	var lines []byte
 	var read []string
 	for _, f := range taken {
+		at, err := strconv.ParseInt(strings.TrimPrefix(f, path+".taken."), 10, 64)
+		if d := now.Sub(time.Unix(0, at)); err == nil && d >= 0 && d < killSettle {
+			continue // taken this tick: read with the next tell
+		}
 		b, err := os.ReadFile(f) //nolint:gosec // the state directory's own file
 		if err != nil {
 			log.Warn("monitor metrics: could not read the store's kills", zap.String("file", f), zap.Error(err))
@@ -460,7 +458,7 @@ func (p *pusher) checkKilled() {
 // that does not read so is still a kill.
 func killedEvent(b []byte) (Event, int) {
 	var first time.Time
-	limit, n, box := "", 0, 0
+	limit, n, box, changed := "", 0, 0, false
 	for line := range strings.Lines(string(b)) {
 		f := strings.Fields(line)
 		if len(f) == 0 {
@@ -475,10 +473,14 @@ func killedEvent(b []byte) (Event, int) {
 		case f[1] == "box":
 			box++
 		default:
-			limit = f[1]
+			l := f[1]
 			if v, err := strconv.ParseUint(f[1], 10, 64); err == nil {
-				limit = strconv.FormatUint(v>>20, 10) + " MiB"
+				l = strconv.FormatUint(v>>20, 10) + " MiB"
 			}
+			if limit != "" && l != limit {
+				changed = true
+			}
+			limit = l
 		}
 	}
 	times := "once"
@@ -493,7 +495,10 @@ func killedEvent(b []byte) (Event, int) {
 		}
 	}
 	how := "at its memory limit"
-	if limit != "" {
+	switch {
+	case changed:
+		how += " (the last " + limit + ")"
+	case limit != "":
 		how += " (" + limit + ")"
 	}
 	remedy := "systemctl edit victoria-metrics, MemoryMax= under [Service], then systemctl restart victoria-metrics; what fills it is how many apps and windows are read at once"
