@@ -1,0 +1,1247 @@
+diff --git a/client/README.md b/client/README.md
+index f4e6e154..ffc14129 100644
+--- a/client/README.md
++++ b/client/README.md
+@@ -495,7 +495,7 @@ made by hand. Accepted:
+ | `status --follow` ends at the first read that fails (no answer, a 5xx, a 429 that stood after its wait, a moteld restarting), with that read's exit and its sentence saying the deploy may still run, though it may end well a moment later; it is not asked again | 2 | 3 | 1 | 6 | 2 (a retry at its turn, and a count) | accepted: it ends red and named, and run again it follows the same deploy if it still runs |
+ | `status --follow` signs its tokens as every command does, each lasting 300 s, so a follow of more than about 3.5 minutes with a hardware key asks for a touch on the terminal mid-follow, the reads waiting until it is given; the TUI's tokens last 600 s (`TestForTUI` holds the longer life to the TUI's client) | 2 | 3 | 1 | 6 | 1, risk 2 (a captured token then lasts twice as long) | accepted: a deploy's usual length is under a minute |
+ | A phase a newer box names that this client does not know, in the deploy in flight's phases, makes the whole status "not moteld's answer", exit 3 (on the screens the app is `unknown`), for the rest of that deploy, as one in `last_deploy` already did until the next deploy and one in the status's phase while it lasts: since #580 the phases are printed, and so held to the outcome vocabulary | 2 | 5 | 1 | 10 | 2 (an unknown phase shown in the client's words) | accepted: it is said, and a client of the box's release knows its phases |
+-| A TUI left without a key for 10 minutes pauses every read but the alerts the title bar counts (the title bar says PAUSED), so a person waiting on an app's screen for CI to reach its deploy sees nothing of a deploy that begins after that until a key; `status --follow` follows only a deploy already in flight when it starts | 2 | 5 | 1 | 10 | 2 (no pause while an app's screen is open: a new rule for the rate and a hardware key's touches) | accepted: the pause is the owner's rule for an unattended TUI, and says itself |
++| A TUI left without a key for 10 minutes pauses (the title bar says PAUSED), so a person waiting on an app's screen for CI to reach its deploy sees nothing of a deploy that begins after that until a key; `status --follow` follows only a deploy already in flight when it starts | 2 | 5 | 1 | 10 | 2 (no pause while an app's screen is open: a new rule for the rate and a hardware key's touches) | accepted: the pause is the owner's rule for an unattended TUI, and says itself |
+ | An app's `ended` line puts its key hint last (`· d opens its record`), and its `phases` line the failed phase's `✖`: at 80 columns the line of a failure in soaking with 12-character versions is 85 cells, so the hint is cut (`…`), and a failed phase of 100 s or more cuts its `✖`; the line still says `failed in <phase>`, and help lists `d` | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: what is cut is a hint and a repeated mark |
+ | `motel backup status` whose stdout takes none of its human output (a full disk, a closed pipe) exits 2 with the write's error, not the box's verdict (1, 3): every command's human output fails so | 2 | 3 | 1 | 6 | 2 | accepted: red and named; `--json` and the verdict's exit are what a script reads |
+ | On the backups screen in a window 14 columns wide or less, far below the smallest the screens are laid for (60), a could not tell's quoted why is laid one character a row, each past its 14 columns of indent, so the rows show blank | 2 | 5 | 1 | 10 | 2 | accepted: no screen is laid for such a width; `y` shows the answer |
+@@ -509,10 +509,7 @@ made by hand. Accepted:
+ | The bell is not heard where the terminal is silent (Ghostty's, Alacritty's and VS Code's defaults, a terminal whose bell was turned off), and is not forwarded by a tmux with `visual-bell on` or a screen with `vbell on` (Debian's `/etc/screenrc` sets it), so a person away from the screen is not called there | 2 | 5 | 3 | 30 | 3 (a desktop notification, OSC 9 or 777, per terminal and wrapped for tmux) | accepted over the bar, by the owner's decisions of 2026-11-20 (#576): the bell alone, no OSC 9/777/99; the mark is the channel, the bell its call, and the mark stays reversed until a key |
+ | A bell rung into a detached tmux session is not replayed when it is attached (tested on tmux 3.5a) | 2 | 5 | 1 | 10 | 3 | accepted: the mark is held reversed, with how many are new, until a key |
+ | The mark's glyph is the worst alert's: a critical one beside warnings shows `✖` before the count of them all, which does not say how many are critical | 2 | 5 | 1 | 10 | 2 | accepted: `:alerts` lists each, marked by its severity |
+-| After ten idle minutes the alerts the title bar counts are read every minute, not every 15 s: an alert that fires while the TUI is paused is counted and rung up to a minute after the box holds it (and the box's own 5 s hold); for a person with app grants only each app's at its own interval, longer with many apps (63.5 s at 40) | 2 | 5 | 1 | 10 | 1 (a shorter interval: more reads all night) | accepted: the owner's decision of 2026-11-20 (#576: 60 s while paused); the bar says the alerts are still read |
+-| A key that cannot sign with nobody there is asked about every nine minutes while the TUI reads through the pause (the alerts, and whoami even with no grant to watch): a hardware key (an `sk-` type, whose touch the box requires: the title bar says `TOUCH YOUR KEY to sign` and the key blinks), and a key in an agent that asks before each signature (`ssh-add -c`; a password manager's agent, such as 1Password's with Touch ID, once it has locked itself; the common setup on a Mac. A Secure Enclave key, Secretive's, is ECDSA, which the client does not take yet: the title bar says `waiting 12s for the key to sign` from 5 s on). No one answers, the signature fails (the authenticator's own timeout, or the TUI's minute), and every read stops, so the person comes back to `NOT SIGNED: r signs again`, the stop line saying why, not to PAUSED, and the alerts were watched only until then, at most about nine minutes into the pause; the mark says its count is old. What such an agent does with a prompt nobody answers (waits for ever, times out, stacks the prompts), and how long an authenticator waits for a touch, are unverified; the client cannot tell an agent that asks from one that signs at once (`ssh-add -L` shows no constraint) | 2 | 5 | 1 | 10 | 2 (a signature that fails while paused stops the watch until a key, rather than every read until `r`) or 3 (a case of its own for a hardware key) | accepted: the stop is said and named, and `r` signs again; the owner's decision of 2026-11-21 is that hardware keys get no case of their own now (`TestPausedHardwareKeyAsAnyKey`) |
+-| At the pause's first moment an answer applied just after it is judged by the paused minute, though its next read was scheduled 15 s on: if that read then hangs, the mark says its count is old 65 s after it, not 20 s | 2 | 2 | 3 | 12 | 1, risk 2 (the interval each read was scheduled at kept on its entry) | accepted: it takes a read that hangs in the second the pause begins |
+-| A signature that takes longer than 60 s at the keys (a person slow to answer an agent's prompt, or to touch a hardware key) fails, and every read stops until `r`, where before the reads waited for it | 2 | 3 | 1 | 6 | 1 (a longer deadline) | accepted: a person at the keys answers within a minute, and the stop says why |
++| After ten idle minutes the TUI pauses (the row on the pause above), the alerts it counts with it: an alert that fires while it is paused is neither drawn nor rung until a key, and the mark meanwhile shows its count as old (`✖ 3?`, `as of 10m ago`) | 2 | 5 | 1 | 10 | 2 (the alerts read alone through the pause, for a key that needs no touch) | accepted: the pause is the owner's rule for an unattended TUI; reading the alerts through it is #576's next change |
+ | An alert that fires and ends within a gap of the reads (the pause, STALE, a sleep) is never counted nor rung: no read gives what fired before it | 2 | 5 | 5 | 50 | 3 (a read of what fired since, on the box) | accepted over the bar, by the owner's decision of 2026-11-20 (#576: no history of a gap); notify's channels still told it, and the mark says its count was old |
+ | Against a moteld older than the alerts read (a 404), the title bar says `alerts not known` (`alerts ?`) in the warning colour on every screen until ctrl-r, though the box refused nothing | 2 | 5 | 1 | 10 | 2 (a dim word of its own for a box that cannot say) | accepted: the decision of 2026-11-20 (#576, READS.md section 3): the box cannot say, and the mark never reads as none firing; `:alerts` says the 404 and why |
+ | While the box says it holds more alerts than it sends (`more_alerts`, past 500), every alert the watch has counted and the box no longer sends is kept as maybe firing until an answer without it, so the keys kept grow for as long as that lasts, and one not yet seen stays counted as new until a key | 2 | 2 | 3 | 12 | 2 | accepted: it takes an Alertmanager holding over 500 alerts, far past what motel posts; the count says `+` |
+@@ -788,7 +785,7 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the
+   if it is still open); a read of it that fails, a 5xx too, is not asked again by
+   itself, and the record read before stays on screen beside a failure
+   that is not a refusal: a 403 or a 404 is said alone, as on an app's
+-  screen and the box screen, and drops the status, record or box's status held (not who am I's: the title bar and who am I say its age and that it failed; nor the apps list: the apps screen shows it as of its time, says the last read failed, and `y` there still gives it, which is bearable since it is said to be old and failed and each name's status is still asked, and dropped on its own refusal), so `y` and `P` have no answer of it to give (`y` says the box refused the read, or answered it 404). Ten idle minutes pause it: every read stops but the alerts the title bar counts, which go on at a minute or more (a viewer of the box's every minute, 470 reads in the 7 h 50 min after the pause of 8 hours away and about 54 signatures, as at 15 s; a person with app grants only, each app's at the interval it had at the keys and never under a minute: 0.017 a second with 1 app, 0.083 with 5, 0.2 with 12, 0.63 with 40, measured on the fake clock, `TestAppWatchThroughThePause`; with the apps list every minute and whoami every five, which say which apps are watched, so one added or granted meanwhile is; whoami is read through the pause, whatever is watched, so a grant removed by a push and given back while away is seen, and a read a 403 held is asked again; a grant limited by `from` that drops out on another network is seen too while another grant still lets the key in, but with none left the box refuses the key (401), every read stops, and only `r` asks again), and the title bar says `PAUSED (idle 10m), alerts still read: any key resumes` (while their newest reads answered: one that failed has it say `PAUSED (idle 10m): any key resumes`, and the mark its count old; one waited for, `waiting`); an alert new meanwhile moves the mark and rings the bell as at the keys, and the mark stays reversed until the key that resumes. Every key is read for so, a hardware key too: one that cannot sign with nobody there stops the reads at its next signature (the accepted row on a key that cannot sign with nobody there).
++  screen and the box screen, and drops the status, record or box's status held (not who am I's: the title bar and who am I say its age and that it failed; nor the apps list: the apps screen shows it as of its time, says the last read failed, and `y` there still gives it, which is bearable since it is said to be old and failed and each name's status is still asked, and dropped on its own refusal), so `y` and `P` have no answer of it to give (`y` says the box refused the read, or answered it 404). Ten idle minutes pause it, the alerts the title bar counts too, whose count then says it is old.
+ - **What fires.** The title bar's first cells, on every screen, count
+   the alerts that fire that this person may see, after the glyph of the
+   worst (`✖ 3 firing`; `▲ 1 firing` when none is critical; `✖ 3` and
+@@ -813,8 +810,8 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the
+   does not know; a read that failed before any answer; an answer about
+   another key or box) it says `alerts not known` (`alerts ?`, `?`),
+   never a zero, and the title bar's word is not turned to `refused` by
+-  it. Where the count held is old (the reads stopped; its read's last
+-  try failed, a 429, or its answer older than its interval
++  it. Where the count held is old (the reads paused or stopped, its
++  read's last try failed, a 429, or its answer older than its interval
+   and 5 s: a read or a signature that waits, a sleep) it is shown with
+   `?` (`✖ 3?`, `✖ 3 firing as of 10m ago`, `0?` for none). An alert is
+   new when it is counted and was not at the last answer that said what
+@@ -845,14 +842,7 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the
+   the first at 130 s, each shown at the next read.
+ - **The token** lasts 600 s, the longest a box takes, and is signed
+   again a minute before it ends: a hardware key is touched about every
+-  nine minutes, and the title bar says when. It is signed for the
+-  alerts read through the pause too, about as often, with nobody there
+-  to touch a hardware key (the row on a key that cannot sign with nobody
+-  there). A signature
+-  waited for 5 s or more has the title bar say so (`waiting 12s for the
+-  key to sign`, an agent that asks first, say), and one that takes over
+-  a minute fails: every read stops, the screen says why, and `r` signs
+-  again. The TUI never asks for a
++  nine minutes, and the title bar says when. The TUI never asks for a
+   passphrase or a PIN: every signature runs ssh-keygen in a session of
+   its own, with no controlling terminal, and with
+   `SSH_ASKPASS_REQUIRE=force` and an `SSH_ASKPASS` that fails, so a key
+diff --git a/client/internal/cli/tui.go b/client/internal/cli/tui.go
+index efec34ad..31892c1a 100644
+--- a/client/internal/cli/tui.go
++++ b/client/internal/cli/tui.go
+@@ -41,20 +41,15 @@ const screenLong = "motel alone shows them on screens in the terminal, over the
+ 	"On every screen the title bar counts what fires that you may see, and the\n" +
+ 	"terminal's bell rings when a new alert arrives (MOTEL_BELL=off turns it off).\n" +
+ 	"It only reads, well inside the box's limit of 2 requests a second and 60 at\n" +
+-	"once: up to 30 at once to start, then at most 1.5 a second. After ten minutes\n" +
+-	"with no key pressed it reads only the alerts the title bar counts, each at most\n" +
+-	"once a minute, and what says which are counted (who you are, the apps list).\n" +
+-	"It signs one token for ten minutes at a time, then too, so a hardware key is\n" +
+-	"touched about every nine minutes; with nobody there to touch it, or to answer\n" +
+-	"an agent that asks first, the signature fails after a minute and every read\n" +
+-	"stops until r asks again. It never asks for\n" +
+-	"a passphrase or a PIN: a key with a passphrase must be in the agent (ssh-add),\n" +
+-	"and a hardware key that requires its PIN cannot be used there yet. ? lists the\n" +
+-	"keys; c shows the command for a screen that reads the box, y the box's answer\n" +
+-	"as JSON. It is asked with your own key only, and takes no --json.\n" +
+-	"With no arguments at all it prints this help instead when stdout is not a\n" +
+-	"terminal, and, with a line under it saying why, when it finds\n" +
+-	"no box or key to read with, or no screen to draw on."
++	"once: up to 30 at once to start, then at most 1.5 a second. It signs one token\n" +
++	"for ten minutes at a time, so a hardware key is touched about every nine, and\n" +
++	"never asks for a passphrase or a PIN: a key with a passphrase must be in the\n" +
++	"agent (ssh-add), and a hardware key that requires its PIN cannot be used there\n" +
++	"yet. ? lists the keys; c shows the command for a screen that reads the box, y\n" +
++	"the box's answer as JSON. It is asked with your own key only, and takes no\n" +
++	"--json. With no arguments at all it prints this help instead when stdout is not\n" +
++	"a terminal, and, with a line under it saying\n" +
++	"why, when it finds no box or key to read with, or no screen to draw on."
+ 
+ // screen makes motel alone, the root, open the screens: with its own
+ // --box and --key, as every command that asks the box has, and the
+@@ -349,7 +344,7 @@ func forTUI(c *client.Client, now func() time.Time) *signer {
+ 		k.NoTerminal = true
+ 		pt.Signer = k
+ 	}
+-	sig := &signer{inner: pt.Signer, now: now, within: signWithin}
++	sig := &signer{inner: pt.Signer, now: now}
+ 	pt.Signer = sig
+ 	c.NoWait = true
+ 	return sig
+@@ -495,25 +490,14 @@ func failure(err error) error {
+ 	return m
+ }
+ 
+-// signWithin is the longest the TUI waits for a token to be signed. A
+-// key in the agent signs in well under a second, and a hardware key's
+-// touch is given by a person at the keys; an agent that asks before each
+-// signature, with nobody there to answer while the alerts are read
+-// through the pause, would hold every read for ever, the title bar
+-// saying it waits. Past it the signature fails, every read stops, and
+-// the screen says why: r asks again.
+-const signWithin = 60 * time.Second
+-
+ // signer tells the screen while a token is being signed, and says when
+ // the token last signed ends.
+ type signer struct {
+ 	inner sshkey.Signer
+ 	now   func() time.Time
+-	// within is how long a signature may take (signWithin).
+-	within time.Duration
+-	mu     sync.Mutex
+-	note   func(bool)
+-	at     time.Time
++	mu    sync.Mutex
++	note  func(bool)
++	at    time.Time
+ }
+ 
+ // Expires is when the token last signed stops being taken: sshkey's
+@@ -545,12 +529,7 @@ func (s *signer) Sign(ctx context.Context, key sshkey.Key, namespace string, mes
+ 		note(true)
+ 		defer note(false)
+ 	}
+-	sctx, cancel := context.WithTimeout(ctx, s.within)
+-	defer cancel()
+-	out, err := s.inner.Sign(sctx, key, namespace, message)
+-	if err != nil && ctx.Err() == nil && errors.Is(sctx.Err(), context.DeadlineExceeded) {
+-		return nil, fmt.Errorf("%s did not sign within %d s: an agent that asks before each signature (ssh-add -c, a password manager's) may be waiting for an answer, or a hardware key for its touch. r asks again", key.Shown, int(s.within/time.Second))
+-	}
++	out, err := s.inner.Sign(ctx, key, namespace, message)
+ 	if err == nil {
+ 		s.mu.Lock()
+ 		s.at = now
+diff --git a/client/internal/cli/tui_test.go b/client/internal/cli/tui_test.go
+index 106595cf..5445525a 100644
+--- a/client/internal/cli/tui_test.go
++++ b/client/internal/cli/tui_test.go
+@@ -955,32 +955,3 @@ func TestBellOn(t *testing.T) {
+ 		}
+ 	}
+ }
+-
+-// blocks is a signer that never signs: an agent asking with nobody to
+-// answer.
+-type blocks struct{}
+-
+-func (blocks) Sign(ctx context.Context, _ sshkey.Key, _ string, _ []byte) ([]byte, error) {
+-	<-ctx.Done()
+-	return nil, ctx.Err()
+-}
+-
+-// TestSignWithin: a signature that takes longer than the TUI's signer
+-// allows fails, saying why (a read's failure, not its context's end, so
+-// the engine stops every read with it); one the read's own context
+-// ends is that context's end.
+-func TestSignWithin(t *testing.T) {
+-	s := &signer{inner: blocks{}, now: time.Now, within: 20 * time.Millisecond}
+-	_, err := s.Sign(context.Background(), sshkey.Key{Shown: "~/.ssh/id_ed25519.pub"}, "ns", nil)
+-	if err == nil || errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "did not sign within") || !strings.Contains(err.Error(), "r asks again") {
+-		t.Errorf("past the deadline: %v", err)
+-	}
+-	ctx, cancel := context.WithCancel(context.Background())
+-	cancel()
+-	if _, err := s.Sign(ctx, sshkey.Key{Shown: "k"}, "ns", nil); !errors.Is(err, context.Canceled) {
+-		t.Errorf("the read left: %v", err)
+-	}
+-	if signWithin != time.Minute {
+-		t.Errorf("signWithin is %s", signWithin)
+-	}
+-}
+diff --git a/client/internal/tui/model/engine.go b/client/internal/tui/model/engine.go
+index b0a0883e..edb9b301 100644
+--- a/client/internal/tui/model/engine.go
++++ b/client/internal/tui/model/engine.go
+@@ -73,11 +73,7 @@ const (
+ 	// in MeEvery.
+ 	MeAlways = 5 * time.Minute
+ 	// Idle pauses polling when no key was pressed for this long, so an
+-	// unattended TUI does not spend the rate: every read stops but the
+-	// watch's (watch.go), which go on every PausedWatchEvery, and
+-	// whoami's. Their token is signed again as at the keys: a key that
+-	// cannot sign with nobody there (a hardware key's touch, an agent
+-	// that asks) stops every read at its next signature.
++	// unattended TUI neither asks for touches nor spends the rate.
+ 	Idle = 10 * time.Minute
+ 	// StaleAfter missed reads make a value stale.
+ 	StaleAfter = 3
+@@ -381,10 +377,9 @@ func (e *Engine) nextSlot(en *entry, now time.Time) time.Time {
+ 	return slot(en, now, e.background())
+ }
+ 
+-// slot is the next time after now at en's phase in a cycle of every:
+-// a phase laid for a longer cycle (the pause's) is taken within this one.
++// slot is the next time after now at en's phase in a cycle of every.
+ func slot(en *entry, now time.Time, every time.Duration) time.Time {
+-	base := now.Truncate(every).Add(en.phase % every)
++	base := now.Truncate(every).Add(en.phase)
+ 	for !base.After(now) {
+ 		base = base.Add(every)
+ 	}
+@@ -559,80 +554,30 @@ func (e *Engine) watchApps(now time.Time) {
+ }
+ 
+ // appAlertsEvery is a background app's alerts' interval under
+-// WatchApps: its status's, and never under AppWatchEvery; while
+-// paused, never under PausedWatchEvery.
+-func (e *Engine) appAlertsEvery() time.Duration {
+-	if e.idleAt(e.latest) {
+-		return max(PausedWatchEvery, e.background())
+-	}
+-	return max(AppWatchEvery, e.background())
+-}
+-
+-// boxWatchEvery is a viewer of the box's watch's interval at now:
+-// WatchEvery, PausedWatchEvery while paused.
+-func (e *Engine) boxWatchEvery(now time.Time) time.Duration {
+-	if e.idleAt(now) {
+-		return PausedWatchEvery
+-	}
+-	return WatchEvery
+-}
++// WatchApps: its status's, and never under AppWatchEvery.
++func (e *Engine) appAlertsEvery() time.Duration { return max(AppWatchEvery, e.background()) }
+ 
+-// WatchInterval is how often the watch's read j is made at now: the
+-// box's alerts every WatchEvery, the open app's every AlertsEvery,
+-// another app's at appAlertsEvery; each PausedWatchEvery or more while
+-// paused.
+-// It notes no time: it is asked from the UI's goroutine with an
+-// answer's time, which may be before one the reads' goroutine gave, and
+-// would be taken for the clock set back.
+-func (e *Engine) WatchInterval(j Job, now time.Time) time.Duration {
++// WatchInterval is how often the watch's read j is made now: the box's
++// alerts every WatchEvery, the open app's every AlertsEvery, another
++// app's at appAlertsEvery.
++func (e *Engine) WatchInterval(j Job) time.Duration {
+ 	e.mu.Lock()
+ 	defer e.mu.Unlock()
+ 	switch {
+ 	case j.Kind == KBoxAlerts:
+-		return e.boxWatchEvery(now)
+-	case j.App == e.alertsApp && !e.idleAt(now):
++		return WatchEvery
++	case j.App == e.alertsApp:
+ 		return AlertsEvery
+ 	}
+ 	return e.appAlertsEvery()
+ }
+ 
+-// idleAt says whether no key was pressed for Idle at t.
+-func (e *Engine) idleAt(t time.Time) bool { return t.Sub(e.touched) >= Idle }
+-
+-// watchAnswers says whether the watch's alerts reads are made and
+-// answer: one at least has answered and is not held (a refusal), and
+-// the newest read of none failed.
+-func (e *Engine) watchAnswers() bool {
+-	n := 0
+-	for j, en := range e.jobs {
+-		switch {
+-		case !e.watchJob(j) || en.held || j.Kind == KApps || j.Kind == KWhoAmI:
+-		case en.misses > 0:
+-			return false
+-		case !en.answered.IsZero():
+-			n++
+-		}
+-	}
+-	return n > 0
+-}
+-
+-// watchJob says whether j is the watch's read now, which goes on while
+-// paused: a person with app grants only also reads the list and whoami
+-// at their own pace, which say which apps are watched (an app added or
+-// granted while paused).
+-func (e *Engine) watchJob(j Job) bool {
+-	switch {
+-	case j.Kind == KWhoAmI:
+-		// At its own pace, whatever the watch: it says which grants hold
+-		// (one back while away, Session.follow), and releases a read a
+-		// 403 held once it lists the role again.
+-		return true
+-	case e.watch == WatchBox:
+-		return j.Kind == KBoxAlerts
+-	case e.watch == WatchApps:
+-		return j.Kind == KAlerts && e.listed[j.App] || j.Kind == KApps
+-	}
+-	return false
++// Paused says whether the reads are paused at now: no key for Idle.
++func (e *Engine) Paused(now time.Time) bool {
++	e.mu.Lock()
++	defer e.mu.Unlock()
++	e.seen(now)
++	return now.Sub(e.touched) >= Idle
+ }
+ 
+ // BoxRulesOpen says whether the box's rules screen is open: GET
+@@ -840,15 +785,6 @@ func (e *Engine) Touch(now time.Time) {
+ 	e.mu.Lock()
+ 	defer e.mu.Unlock()
+ 	e.seen(now)
+-	if e.idleAt(now) {
+-		// Back from the pause: the box's alerts, and the open app's, at
+-		// their own pace again.
+-		for j, every := range map[Job]time.Duration{{Kind: KBoxAlerts}: WatchEvery, {Kind: KAlerts, App: e.alertsApp}: AlertsEvery} {
+-			if en, ok := e.jobs[j]; ok && !en.held && en.misses == 0 && !en.answered.IsZero() {
+-				en.due = minTime(en.due, en.answered.Add(every))
+-			}
+-		}
+-	}
+ 	e.touched = now
+ 	e.poke()
+ }
+@@ -872,7 +808,7 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
+ 	e.mu.Lock()
+ 	defer e.mu.Unlock()
+ 	e.seen(now)
+-	if e.inflight != nil || e.stopped != Running {
++	if e.inflight != nil || e.stopped != Running || now.Sub(e.touched) >= Idle {
+ 		return Job{}, false, 0
+ 	}
+ 	e.refill(now)
+@@ -938,12 +874,7 @@ func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
+ 			break
+ 		}
+ 	}
+-	idle := e.idleAt(at)
+ 	for j, en := range e.jobs {
+-		if idle && !e.watchJob(j) {
+-			// Paused: the watch's reads alone go on.
+-			continue
+-		}
+ 		if en.held || j.Kind == KBox && !e.boxOpen || j.Kind == KBackups && !e.backupsOpen || j.Kind == KBoxAlerts && !e.boxAlertsOpen && e.watch != WatchBox || j.Kind == KAlerts && j.App != e.alertsApp && (e.watch != WatchApps || !e.listed[j.App]) ||
+ 			j.Kind == KBoxRules && !e.boxRulesOpen || j.Kind == KRules && j.App != e.rulesApp || j.Kind == KSeries && j != e.series || skip != nil && j == *skip {
+ 			continue
+@@ -1206,11 +1137,10 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
+ 	case j.Kind == KApps:
+ 		en.due = now.Add(AppsEvery)
+ 	case j.Kind == KBoxAlerts && e.watch == WatchBox:
+-		en.due = now.Add(e.boxWatchEvery(now))
++		en.due = now.Add(WatchEvery)
+ 	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KBoxAlerts, j.Kind == KRules, j.Kind == KBoxRules:
+ 		en.due = now.Add(BoxEvery)
+-	case j.Kind == KAlerts && (j.App != e.alertsApp || e.idleAt(now)) && e.watch == WatchApps:
+-		// A background app's, and while paused the open one's too.
++	case j.Kind == KAlerts && j.App != e.alertsApp && e.watch == WatchApps:
+ 		en.due = slot(en, now, e.appAlertsEvery())
+ 	case j.Kind == KAlerts:
+ 		en.due = now.Add(AlertsEvery)
+@@ -1267,11 +1197,6 @@ type Health struct {
+ 	SlowIn  time.Duration
+ 	// Back is set once, on the first answer after a run of none.
+ 	Back bool
+-	// WatchRead: paused, and the watch's reads answer, the newest of
+-	// each answered (one refused aside; one at least is read). While
+-	// paused they are the only reads, so one that fails alone begins no
+-	// run of no answer: this is what says it.
+-	WatchRead bool
+ 	// Waiting is how long the box has been waited for: since the read in
+ 	// flight began to wait for it (not one cancelled); or, when a read
+ 	// waited WaitingAfter or longer and got no answer, none answered
+@@ -1284,8 +1209,7 @@ func (e *Engine) Health(now time.Time) Health {
+ 	e.mu.Lock()
+ 	defer e.mu.Unlock()
+ 	e.seen(now)
+-	h := Health{Stop: e.stopped, Paused: e.idleAt(now), Misses: e.misses, Back: e.recovering}
+-	h.WatchRead = h.Paused && e.watchAnswers()
++	h := Health{Stop: e.stopped, Paused: now.Sub(e.touched) >= Idle, Misses: e.misses, Back: e.recovering}
+ 	e.recovering = false
+ 	if e.misses > 0 {
+ 		// The next read, as Take would make it: the retry, or the first
+diff --git a/client/internal/tui/model/engine_test.go b/client/internal/tui/model/engine_test.go
+index e6191ad1..01f6614b 100644
+--- a/client/internal/tui/model/engine_test.go
++++ b/client/internal/tui/model/engine_test.go
+@@ -172,19 +172,14 @@ func TestOneInFlight(t *testing.T) {
+ 	}
+ }
+ 
+-// TestIdlePause: ten minutes with no key pressed and only whoami is
+-// read (no watch is set here); a key resumes.
++// TestIdlePause: ten minutes with no key pressed and nothing is read;
++// a key resumes.
+ func TestIdlePause(t *testing.T) {
+ 	e := model.NewEngine(t0)
+ 	e.SetApps(names(3), t0)
+ 	later := t0.Add(model.Idle)
+-	if j, ok, _ := e.Take(later); !ok || j.Kind != model.KWhoAmI {
+-		t.Fatalf("after ten idle minutes: %v %v", j, ok)
+-	} else {
+-		e.Done(j, later, nil)
+-	}
+-	if j, ok, _ := e.Take(later); ok {
+-		t.Fatalf("read %v after ten idle minutes", j)
++	if _, ok, _ := e.Take(later); ok {
++		t.Fatal("read after ten idle minutes")
+ 	}
+ 	if h := e.Health(later); !h.Paused {
+ 		t.Fatal("not said to be paused")
+diff --git a/client/internal/tui/model/frame.go b/client/internal/tui/model/frame.go
+index 97ca3394..6c6f0b63 100644
+--- a/client/internal/tui/model/frame.go
++++ b/client/internal/tui/model/frame.go
+@@ -617,12 +617,6 @@ func (s *Session) freshness(now time.Time) Line {
+ 	switch {
+ 	case s.Signing && s.Key.Hardware:
+ 		return Line{ownC("TOUCH YOUR KEY to sign", Warn)}
+-	case s.Signing && !s.SigningAt.IsZero() && now.Sub(s.SigningAt) >= WaitingAfter:
+-		// A key that needs no touch signs in well under a second; one
+-		// that takes longer has an agent that asks first, or a stuck
+-		// one: not live while it waits, and the TUI's signer's deadline
+-		// (cli's signWithin) ends it.
+-		return Line{ownC("waiting "+Ago(now.Sub(s.SigningAt))+" for the key to sign · "+ago, Warn)}
+ 	case h.Stop == SignedOut:
+ 		return Line{ownC("SIGNED OUT: the box refused the key (401) · r asks again", Bad)}
+ 	case h.Stop == NotSigned:
+@@ -633,6 +627,8 @@ func (s *Session) freshness(now time.Time) Line {
+ 		// 57 cells: every word here fits the smallest window, 60, the
+ 		// left side cut before it (TestTitleWordsAt60).
+ 		return Line{ownC("STOPPED: answered about another key or box · r asks again", Bad)}
++	case h.Paused:
++		return Line{ownC("PAUSED (idle 10m): any key resumes", Warn)}
+ 	case h.SlowIn > 0:
+ 		// The box's word, an hour if it says so: until when, counting
+ 		// down.
+@@ -648,14 +644,6 @@ func (s *Session) freshness(now time.Time) Line {
+ 	case h.Waiting >= WaitingAfter:
+ 		// A read not answered yet: not live while the box is waited for.
+ 		return Line{ownC("waiting "+Ago(h.Waiting)+" for an answer · "+ago, Warn)}
+-	case h.Paused && h.WatchRead:
+-		// The watch's reads go on, and answer: a 429, slow, STALE and
+-		// waiting above say when they do not. 53 cells: the tiny mark
+-		// beside it fits 60.
+-		return Line{ownC("PAUSED (idle 10m), alerts still read: any key resumes", Warn)}
+-	case h.Paused:
+-		// They go on, and the newest failed or none has answered yet.
+-		return Line{ownC("PAUSED (idle 10m): any key resumes", Warn)}
+ 	case !s.backAt.IsZero() && now.Sub(s.backAt) < 5*time.Second:
+ 		return Line{ownC("back · "+hms(s.backAt), Good)}
+ 	case s.refused && s.last.IsZero():
+@@ -710,13 +698,8 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
+ 	if s.TokenExpires != nil {
+ 		if exp := s.TokenExpires(); !exp.IsZero() {
+ 			if left := exp.Sub(now); left > 0 {
+-				again := "             signed again a minute before it ends; after ten idle minutes only the alerts are read, each at most once a minute, and it is signed for them"
+-				if s.watch.mode == WatchNone {
+-					// whoami goes on through the pause, for a grant back.
+-					again = "             signed again a minute before it ends; after ten idle minutes only who you are is read, and it is signed for it"
+-				}
+ 				out = append(out, laid(width, cells, field("token", own("good until "+hms(exp)+" UTC ("+Ago(left)+" left)")),
+-					Line{own(again)})...)
++					Line{own("             signed again a minute before it ends, and only while you use the screen")})...)
+ 			} else {
+ 				out = append(out, Sentence(field("token", own("expired at "+hms(exp)+" UTC; signed again on the next read")), width, cells)...)
+ 			}
+diff --git a/client/internal/tui/model/pause_test.go b/client/internal/tui/model/pause_test.go
+deleted file mode 100644
+index 88a17fad..00000000
+--- a/client/internal/tui/model/pause_test.go
++++ /dev/null
+@@ -1,372 +0,0 @@
+-package model_test
+-
+-import (
+-	"strconv"
+-	"strings"
+-	"testing"
+-	"time"
+-
+-	"github.com/smallhoursorg/motel/client/internal/tui/demo"
+-	"github.com/smallhoursorg/motel/client/internal/tui/model"
+-)
+-
+-// unattended runs e for d from t0 with a key pressed at t0 alone, each
+-// read taking 50 ms and answered, the list answering apps. It returns
+-// every read, and the signatures the client's token rule would make: a
+-// token of 600 s with its iat 30 s back, to the second, signed again
+-// when less than a minute of it is left (sshkey.TimesLasting,
+-// PersonToken's minLeft).
+-func unattended(e *model.Engine, apps []string, d time.Duration) (calls []call, signs int) {
+-	now := t0
+-	e.Touch(now)
+-	var exp time.Time
+-	for now.Before(t0.Add(d)) {
+-		j, ok, wait := e.Take(now)
+-		if !ok {
+-			if wait <= 0 || wait > time.Second {
+-				wait = time.Second
+-			}
+-			now = now.Add(wait)
+-			continue
+-		}
+-		if exp.IsZero() || exp.Sub(now) < time.Minute {
+-			signs++
+-			exp = time.Unix(now.Add(-30*time.Second).Unix(), 0).Add(600 * time.Second)
+-		}
+-		calls = append(calls, call{j, now})
+-		now = now.Add(50 * time.Millisecond)
+-		if j.Kind == model.KApps {
+-			e.SetApps(apps, now)
+-		}
+-		e.Done(j, now, nil)
+-	}
+-	return calls, signs
+-}
+-
+-// TestWatchThroughThePause: a viewer of the box who leaves the TUI for
+-// 8 hours: after the ten idle minutes only the box's alerts are read,
+-// every minute, 470 reads in the 7 h 50 min after (#576's spike
+-// measured 480 at 60 s from the start), and whoami at its own pace; the
+-// key signs about every 510 s of it, 54 or so in all.
+-func TestWatchThroughThePause(t *testing.T) {
+-	e := model.NewEngine(t0)
+-	e.SetWatch(model.WatchBox, t0)
+-	calls, signs := unattended(e, names(5), 8*time.Hour)
+-	boxBucket(t, calls)
+-	after, other := 0, 0
+-	for _, c := range calls {
+-		if c.at.Sub(t0) < model.Idle {
+-			continue
+-		}
+-		switch c.j.Kind {
+-		case model.KBoxAlerts:
+-			after++
+-		case model.KWhoAmI: // which grants hold, at its own pace
+-		default:
+-			other++
+-		}
+-	}
+-	if after < 465 || after > 475 || other != 0 {
+-		t.Errorf("after the pause: %d alerts reads (want about 470), %d others", after, other)
+-	}
+-	if signs < 52 || signs > 58 {
+-		t.Errorf("%d signatures in 8 hours, want about 54", signs)
+-	}
+-	t.Logf("%d reads in 8 h, %d of the alerts after the pause, %d signatures", len(calls), after, signs)
+-}
+-
+-// TestAppWatchThroughThePause: a person with app grants only, left for
+-// 8 hours: after the pause each app's alerts alone are read, each at
+-// its interval at the keys and never under a minute, inside the
+-// engine's budget and the box's limit. The counts are logged for the
+-// owner's decision (READS.md's B” read every app at 30 s or more:
+-// 18,142 alerts reads at 40 apps).
+-func TestAppWatchThroughThePause(t *testing.T) {
+-	for _, n := range []int{1, 5, 12, 40} {
+-		e := model.NewEngine(t0)
+-		e.SetWatch(model.WatchApps, t0)
+-		calls, signs := unattended(e, names(n), 8*time.Hour)
+-		boxBucket(t, calls)
+-		last := map[string]time.Time{}
+-		after, other := 0, 0
+-		for _, c := range calls {
+-			if c.at.Sub(t0) < model.Idle+2*time.Minute {
+-				continue // the pause's first reads still at the keys' pace
+-			}
+-			if c.j.Kind == model.KApps || c.j.Kind == model.KWhoAmI {
+-				continue // which apps are watched, at their own pace
+-			}
+-			if c.j.Kind != model.KAlerts {
+-				other++
+-				continue
+-			}
+-			after++
+-			if l, ok := last[c.j.App]; ok && c.at.Sub(l) < model.PausedWatchEvery-time.Second {
+-				t.Errorf("%d apps: %s's alerts read %s apart while paused", n, c.j.App, c.at.Sub(l))
+-			}
+-			last[c.j.App] = c.at
+-		}
+-		if other != 0 || len(last) != n {
+-			t.Errorf("%d apps: %d other reads while paused, %d apps' alerts read", n, other, len(last))
+-		}
+-		t.Logf("%s apps: %d alerts reads while paused (%.3f a second), %d signatures", strconv.Itoa(n), after, float64(after)/(8*time.Hour-model.Idle-2*time.Minute).Seconds(), signs)
+-	}
+-}
+-
+-// TestWatchBackFromThePause: a key after the pause brings the box's
+-// alerts read back to every WatchEvery from its last answer, not at the
+-// paused minute's end.
+-func TestWatchBackFromThePause(t *testing.T) {
+-	e := model.NewEngine(t0)
+-	e.SetWatch(model.WatchBox, t0)
+-	end := t0.Add(model.Idle + 5*time.Minute)
+-	calls, _ := unattended(e, names(1), end.Sub(t0))
+-	var last time.Time
+-	for _, c := range calls {
+-		if c.j.Kind == model.KBoxAlerts {
+-			last = c.at
+-		}
+-	}
+-	now := end
+-	e.Touch(now)
+-	for range 200 {
+-		j, ok, wait := e.Take(now)
+-		if !ok {
+-			now = now.Add(max(wait, 100*time.Millisecond))
+-			continue
+-		}
+-		if j.Kind == model.KBoxAlerts {
+-			if due := maxT(end, last.Add(model.WatchEvery+time.Second)); now.After(due) {
+-				t.Errorf("read at +%s after the key, its last answer %s before the key", now.Sub(end), end.Sub(last))
+-			}
+-			return
+-		}
+-		e.Done(j, now, nil)
+-	}
+-	t.Error("the box's alerts were not read after the key")
+-}
+-
+-// TestAppWatchBackFromThePause: a person with app grants only, paused on
+-// an app's screen: a key brings that app's alerts read back to every
+-// AlertsEvery from its last answer, not the paused minute's end.
+-func TestAppWatchBackFromThePause(t *testing.T) {
+-	e := model.NewEngine(t0)
+-	e.SetWatch(model.WatchApps, t0)
+-	e.Focus("app-0", t0)
+-	e.AlertsOpen("app-0", t0)
+-	open := model.Job{Kind: model.KAlerts, App: "app-0"}
+-	end := t0.Add(model.Idle + 5*time.Minute)
+-	calls, _ := unattended(e, names(3), end.Sub(t0))
+-	var last time.Time
+-	for _, c := range calls {
+-		if c.j == open {
+-			last = c.at
+-		}
+-	}
+-	now := end
+-	e.Touch(now)
+-	for range 200 {
+-		j, ok, wait := e.Take(now)
+-		if !ok {
+-			now = now.Add(max(wait, 100*time.Millisecond))
+-			continue
+-		}
+-		if j == open {
+-			if due := maxT(end, last.Add(model.AlertsEvery+time.Second)); now.After(due) {
+-				t.Errorf("read at +%s after the key, its last answer %s before the key", now.Sub(end), end.Sub(last))
+-			}
+-			return
+-		}
+-		e.Done(j, now, nil)
+-	}
+-	t.Error("the open app's alerts were not read after the key")
+-}
+-
+-// TestPausedWordReads: the paused word says the alerts are still read
+-// only while a watch's read is made and answers: none with no app
+-// listed; one app's alerts refused leaves the others read; a box's
+-// alerts refused, none.
+-func TestPausedWordReads(t *testing.T) {
+-	idle := t0.Add(model.Idle)
+-	e := model.NewEngine(t0)
+-	e.SetWatch(model.WatchApps, t0)
+-	if e.Health(idle).WatchRead {
+-		t.Error("no app listed: said read")
+-	}
+-	e = model.NewEngine(t0)
+-	e.SetWatch(model.WatchApps, t0)
+-	e.SetApps(names(3), t0)
+-	for _, a := range names(3) {
+-		j := model.Job{Kind: model.KAlerts, App: a}
+-		for range 50 {
+-			got, ok, _ := e.Take(t0)
+-			if !ok {
+-				break
+-			}
+-			var err error
+-			if got == j && a == "app-0" {
+-				err = &model.Failure{Kind: model.FailForbidden, Message: "no"}
+-			}
+-			e.Done(got, t0, err)
+-			if got == j {
+-				break
+-			}
+-		}
+-	}
+-	if !e.Health(idle).WatchRead {
+-		t.Error("one app's alerts refused, two read: not said read")
+-	}
+-	e = model.NewEngine(t0)
+-	e.SetWatch(model.WatchBox, t0)
+-	for range 10 {
+-		j, ok, _ := e.Take(t0)
+-		if !ok {
+-			break
+-		}
+-		var err error
+-		if j.Kind == model.KBoxAlerts {
+-			err = &model.Failure{Kind: model.FailForbidden, Message: "no"}
+-		}
+-		e.Done(j, t0, err)
+-	}
+-	if e.Health(idle).WatchRead {
+-		t.Error("the box's alerts refused: said read")
+-	}
+-}
+-
+-// TestAppPhasesAfterThePause: an apps list applied just after the pause
+-// began lays each app's alerts in the paused minute's cycle; back at
+-// the keys, each is read again within the 30 s cycle, not up to a
+-// minute on.
+-func TestAppPhasesAfterThePause(t *testing.T) {
+-	e := model.NewEngine(t0)
+-	e.SetWatch(model.WatchApps, t0)
+-	now := t0.Add(model.Idle + time.Second)
+-	e.SetApps(names(5), now)
+-	e.Touch(now)
+-	done := map[string]time.Time{}
+-	for end := now.Add(2 * time.Minute); now.Before(end); {
+-		e.Touch(now)
+-		j, ok, wait := e.Take(now)
+-		if !ok {
+-			now = now.Add(max(wait, 100*time.Millisecond))
+-			continue
+-		}
+-		e.Done(j, now, nil)
+-		if j.Kind != model.KAlerts {
+-			continue
+-		}
+-		if last, ok := done[j.App]; ok && now.Sub(last) > model.AppWatchEvery+time.Second {
+-			t.Errorf("%s's alerts read %s apart at the keys", j.App, now.Sub(last))
+-		}
+-		done[j.App] = now
+-	}
+-}
+-
+-// TestWatchIntervalNotesNoTime: asked with an answer's time from before
+-// a time the reads' goroutine gave, the watch's interval is not taken
+-// for the clock set back: the pause begins Idle after the key.
+-func TestWatchIntervalNotesNoTime(t *testing.T) {
+-	e := model.NewEngine(t0)
+-	e.SetWatch(model.WatchBox, t0)
+-	at := t0.Add(time.Minute)
+-	e.Touch(at)
+-	e.WatchInterval(model.Job{Kind: model.KBoxAlerts}, at.Add(-time.Second))
+-	if e.Health(at.Add(model.Idle - 500*time.Millisecond)).Paused {
+-		t.Error("paused before Idle after the key")
+-	}
+-}
+-
+-// TestAppAddedWhilePaused: for a person with app grants only, the list
+-// is read through the pause too, so an app added meanwhile has its
+-// alerts read before a key.
+-func TestAppAddedWhilePaused(t *testing.T) {
+-	e := model.NewEngine(t0)
+-	e.SetWatch(model.WatchApps, t0)
+-	e.Touch(t0)
+-	apps := names(2)
+-	now := t0
+-	read := false
+-	for end := t0.Add(model.Idle + 10*time.Minute); now.Before(end); {
+-		if now.After(t0.Add(model.Idle + time.Minute)) {
+-			apps = names(3)
+-		}
+-		j, ok, wait := e.Take(now)
+-		if !ok {
+-			now = now.Add(max(wait, time.Second))
+-			continue
+-		}
+-		if j.Kind == model.KApps {
+-			e.SetApps(apps, now)
+-		}
+-		e.Done(j, now, nil)
+-		read = read || j == model.Job{Kind: model.KAlerts, App: "app-2"}
+-	}
+-	if !read {
+-		t.Error("an app added while paused: its alerts never read")
+-	}
+-}
+-
+-// pausedRead moves the clock, with no key, to the next read of kind k
+-// and takes it, making the reads due before it.
+-func pausedRead(t *testing.T, s *model.Session, f *demo.Fake, now *time.Time, k model.Kind, _ error) model.Job {
+-	t.Helper()
+-	for range 5000 {
+-		j, ok, wait := s.Engine.Take(*now)
+-		switch {
+-		case !ok:
+-			*now = now.Add(max(wait, 100*time.Millisecond))
+-		case j.Kind == k:
+-			return j
+-		default:
+-			end(s, f, j, *now, nil)
+-		}
+-	}
+-	t.Fatalf("no read of kind %d", k)
+-	return model.Job{}
+-}
+-
+-// TestPausedRetrySaid: while paused, the retry of a watch read that got
+-// no answer, itself waited for 6 s, is said as waiting, not hidden
+-// under PAUSED.
+-func TestPausedRetrySaid(t *testing.T) {
+-	s, f, now := session(t)
+-	for range 100 {
+-		j, ok, _ := s.Engine.Take(*now)
+-		if !ok {
+-			break
+-		}
+-		end(s, f, j, *now, nil)
+-	}
+-	*now = t0.Add(model.Idle + time.Minute)
+-	j := pausedRead(t, s, f, now, model.KBoxAlerts, nil)
+-	end(s, f, j, *now, nil)
+-	j = pausedRead(t, s, f, now, model.KBoxAlerts, nil)
+-	end(s, f, j, *now, &model.Failure{Kind: model.FailNoAnswer, Message: "no answer"})
+-	pausedRead(t, s, f, now, model.KBoxAlerts, nil)
+-	if w := word(s, now.Add(6*time.Second)); !strings.HasPrefix(w, "waiting 6s for an answer") {
+-		t.Errorf("paused, the retry waited for 6 s: %q", w)
+-	}
+-}
+-
+-// TestPausedFirstAnswer: an app listed while paused is not said read
+-// until its alerts have answered once.
+-func TestPausedFirstAnswer(t *testing.T) {
+-	e := model.NewEngine(t0)
+-	e.SetWatch(model.WatchApps, t0)
+-	now := t0.Add(model.Idle + time.Minute)
+-	e.SetApps(names(1), now)
+-	if e.Health(now).WatchRead {
+-		t.Error("said read before any alerts answer")
+-	}
+-	for range 10 {
+-		j, ok, _ := e.Take(now)
+-		if !ok {
+-			break
+-		}
+-		e.Done(j, now, nil)
+-	}
+-	if !e.Health(now).WatchRead {
+-		t.Error("not said read once its alerts answered")
+-	}
+-}
+diff --git a/client/internal/tui/model/session.go b/client/internal/tui/model/session.go
+index f5696b0a..a6de6736 100644
+--- a/client/internal/tui/model/session.go
++++ b/client/internal/tui/model/session.go
+@@ -52,10 +52,8 @@ type Session struct {
+ 	BoxRulesSt  *Got[wire.Rules]
+ 	BoxRulesErr error
+ 	// Signing is set while a token is being signed: a hardware key
+-	// waits for its touch, and an agent may ask before it signs.
+-	// SigningAt is when it began.
+-	Signing   bool
+-	SigningAt time.Time
++	// waits for its touch.
++	Signing bool
+ 	// StopErr is the failure that stopped every read.
+ 	StopErr error
+ 
+@@ -194,7 +192,7 @@ func (s *Session) seen(now time.Time) {
+ 				}
+ 			}
+ 		}
+-		move(&s.last, &s.backAt, &s.alarm.newAt, &s.alarm.rungAt, &s.SigningAt)
++		move(&s.last, &s.backAt, &s.alarm.newAt, &s.alarm.rungAt)
+ 		for k, at := range s.alarm.unseen {
+ 			move(&at)
+ 			s.alarm.unseen[k] = at
+diff --git a/client/internal/tui/model/waiting_test.go b/client/internal/tui/model/waiting_test.go
+index 3964b105..34550739 100644
+--- a/client/internal/tui/model/waiting_test.go
++++ b/client/internal/tui/model/waiting_test.go
+@@ -147,9 +147,8 @@ func TestWaitingNotCancelled(t *testing.T) {
+ }
+ 
+ // TestWaitingStops: a read waited for that ends in a stop says the
+-// stop; while stopped nothing is waited for. With the watch's reads
+-// going on through the pause, a read in flight when the person has gone
+-// is waited for, and said so.
++// stop; while stopped nothing is waited for. PAUSED is said over a read
++// still in flight when the person has gone.
+ func TestWaitingStops(t *testing.T) {
+ 	s, f, now, j := settled(t)
+ 	*now = now.Add(8 * time.Second)
+@@ -167,7 +166,7 @@ func TestWaitingStops(t *testing.T) {
+ 	}
+ 
+ 	s, _, now, _ = settled(t)
+-	if w := word(s, now.Add(model.Idle)); !strings.HasPrefix(w, "waiting 10m") {
++	if w := word(s, now.Add(model.Idle)); !strings.HasPrefix(w, "PAUSED") {
+ 		t.Errorf("idle 10 minutes, a read in flight: %q", w)
+ 	}
+ }
+diff --git a/client/internal/tui/model/watch.go b/client/internal/tui/model/watch.go
+index 907c75b6..3660aea0 100644
+--- a/client/internal/tui/model/watch.go
++++ b/client/internal/tui/model/watch.go
+@@ -44,11 +44,6 @@ const (
+ 	// AppWatchEvery is the shortest interval of a background app's
+ 	// alerts read.
+ 	AppWatchEvery = 30 * time.Second
+-	// PausedWatchEvery is the shortest interval of the watch's reads
+-	// while the TUI is paused (Idle): the token's life, not the read's
+-	// pace, sets how often a key signs, so a minute costs a viewer of
+-	// the box 480 reads in 8 hours and no more signatures than 15 s.
+-	PausedWatchEvery = 60 * time.Second
+ )
+ 
+ // Unknown is why the watch's count is not known.
+@@ -322,10 +317,10 @@ func (s *Session) watchRead(j Job, at time.Time, err error) {
+ 	switch monitor {
+ 	case wire.MonitorOn:
+ 		fresh = src.take(rows, more, false, at)
+-		src.every = s.Engine.WatchInterval(j, at)
++		src.every = s.Engine.WatchInterval(j)
+ 	case wire.MonitorOff:
+ 		fresh = src.take(nil, false, true, at)
+-		src.every = s.Engine.WatchInterval(j, at)
++		src.every = s.Engine.WatchInterval(j)
+ 	case wire.MonitorUnanswered:
+ 		src.why, src.failed = Unanswered, false
+ 		return
+@@ -410,7 +405,7 @@ func (s *Session) Firing(now time.Time) Firing {
+ 			if w.mode == WatchApps {
+ 				job = Job{Kind: KAlerts, App: n}
+ 			}
+-			if src.failed || now.Sub(src.at) > max(src.every, s.Engine.WatchInterval(job, now))+WaitingAfter {
++			if src.failed || now.Sub(src.at) > max(src.every, s.Engine.WatchInterval(job))+WaitingAfter {
+ 				f.Old = true
+ 			}
+ 		}
+@@ -423,7 +418,7 @@ func (s *Session) Firing(now time.Time) Firing {
+ 	case pending:
+ 		return Firing{Why: NotAsked}
+ 	}
+-	if stopped && !f.At.IsZero() {
++	if (stopped || s.Engine.Paused(now)) && !f.At.IsZero() {
+ 		// With nothing to read (no app listed) nothing is old.
+ 		f.Old = true
+ 	}
+diff --git a/client/internal/tui/pause_test.go b/client/internal/tui/pause_test.go
+deleted file mode 100644
+index 6f53db16..00000000
+--- a/client/internal/tui/pause_test.go
++++ /dev/null
+@@ -1,211 +0,0 @@
+-package tui
+-
+-import (
+-	"strings"
+-	"testing"
+-	"time"
+-
+-	"github.com/smallhoursorg/motel/client/internal/termtext"
+-	"github.com/smallhoursorg/motel/client/internal/tui/demo"
+-	"github.com/smallhoursorg/motel/client/internal/tui/hostile"
+-	"github.com/smallhoursorg/motel/client/internal/tui/model"
+-)
+-
+-// away lets d pass with no key pressed, the clock's tick drawing a
+-// frame each second and the reads made as they come due.
+-func (h *harness) away(d time.Duration) {
+-	for end := h.now.Add(d); h.now.Before(end); {
+-		h.now = h.now.Add(time.Second)
+-		h.pump()
+-		h.sync()
+-	}
+-}
+-
+-// TestPausedStillWatches: a person away for twenty minutes: past the
+-// pause the title bar says the alerts are
+-// still read, an alert that fires then is counted, moves the mark and
+-// rings the bell, and the key that resumes sees it.
+-func TestPausedStillWatches(t *testing.T) {
+-	crit := alertRow("cert_failed", "critical", t0.Add(-time.Hour))
+-	h, tty := bellTTY(t, true, func(f *demo.Fake) { f.Body("box-alerts.json", boxAlerts(crit)) })
+-	h.away(model.Idle + 5*time.Minute)
+-	if _, r := h.s.Title(h.now); r.Text() != "PAUSED (idle 10m), alerts still read: any key resumes" {
+-		t.Fatalf("the title bar's word: %q", r.Text())
+-	}
+-	if m := h.s.Mark(h.now); m.Long.Text() != "✖ 1 firing" {
+-		t.Errorf("paused, the mark: %q (not old: the alerts are read)", m.Long.Text())
+-	}
+-	h.fake.Body("box-alerts.json", boxAlerts(alertRow("disk_low", "warning", h.now), crit))
+-	h.away(model.PausedWatchEvery + time.Second)
+-	if n := hostile.BareBELs(tty.Bytes()); n != 1 {
+-		t.Errorf("paused, an alert arrives: %d bells", n)
+-	}
+-	if m := h.s.Mark(h.now); m.Long.Text() != "✖ 2 firing, 1 new" {
+-		t.Errorf("paused, the mark: %q", m.Long.Text())
+-	}
+-	h.away(5 * time.Minute)
+-	if m := h.s.Mark(h.now); m.Long[0].C != model.LoudBad {
+-		t.Errorf("five minutes on, still away: the mark is not held reversed: %v", m.Long[0].C)
+-	}
+-	h.press("x")
+-	if m := h.s.Mark(h.now); m.Long.Text() != "✖ 2 firing" || m.Long[0].C != model.Bad {
+-		t.Errorf("after the key that resumes: %q (%v)", m.Long.Text(), m.Long[0].C)
+-	}
+-	if _, r := h.s.Title(h.now); strings.HasPrefix(r.Text(), "PAUSED") {
+-		t.Errorf("after the key the title bar still says %q", r.Text())
+-	}
+-}
+-
+-// TestPausedWordEveryMark: beside the paused word that says the alerts
+-// are still read, 53 cells, every mark the title bar can draw is drawn
+-// first, in the form that fits, and the word whole at the edge of 60
+-// columns.
+-func TestPausedWordEveryMark(t *testing.T) {
+-	word := model.Line{{T: termtext.From("PAUSED (idle 10m), alerts still read: any key resumes")}}
+-	left := model.Line{{T: termtext.From("motel · deploy.example.com │ alice@example.com · viewer of the box")}}
+-	own := func(s string) model.Line { return model.Line{{T: termtext.From(s)}} }
+-	for _, m := range []model.MarkForms{
+-		{Long: own("✖ 2 firing"), Short: own("✖ 2"), Tiny: own("✖2"), Glyph: own("✖")},
+-		{Long: own("✖ 12 firing, 3 new"), Short: own("✖ 12"), Tiny: own("✖12"), Glyph: own("✖")},
+-		{Long: own("▲ 500+ firing"), Short: own("▲ 500+"), Tiny: own("▲500+"), Glyph: own("▲")},
+-		{Long: own("✖ 2 firing as of 3m ago"), Short: own("✖ 2?"), Tiny: own("✖2?"), Glyph: own("✖?")},
+-		{Long: own("0 firing as of 3m ago"), Short: own("0?"), Tiny: own("0?"), Glyph: own("?")},
+-		{Long: own("0+ firing"), Short: own("0+"), Tiny: own("0+"), Glyph: own("?")},
+-		{Long: own("alerts not known"), Short: own("alerts ?"), Tiny: own("?"), Glyph: own("?")},
+-		{Long: own("alerts…"), Short: own("alerts…"), Tiny: own("…"), Glyph: own("…")},
+-	} {
+-		got := bar(m, left, word, 60).Text()
+-		if !strings.HasSuffix(got, " "+word.Text()) || len([]rune(got)) != 60 {
+-			t.Errorf("%q: the word is not whole at the edge: %q", m.Long.Text(), got)
+-		}
+-		drawn := false
+-		for _, f := range []model.Line{m.Long, m.Short, m.Tiny, m.Glyph} {
+-			drawn = drawn || strings.HasPrefix(got, f.Text()+" ")
+-		}
+-		if !drawn {
+-			t.Errorf("%q: no form of the mark is drawn first: %q", m.Long.Text(), got)
+-		}
+-	}
+-}
+-
+-// TestPausedWatchFails: while paused, the watch's read getting no answer
+-// is not said as alerts still read: the title bar keeps the plain
+-// PAUSED word, and the mark says its count is old; once it answers
+-// again, the word says they are read.
+-func TestPausedWatchFails(t *testing.T) {
+-	h := start(t, 100, 30, nil)
+-	h.away(model.Idle + time.Minute)
+-	h.fake.Set("box-alerts", fiveHundred())
+-	h.away(10 * time.Minute)
+-	if _, r := h.s.Title(h.now); r.Text() != "PAUSED (idle 10m): any key resumes" {
+-		t.Errorf("paused, the alerts reads failing: the title bar says %q", r.Text())
+-	}
+-	if m := h.s.Mark(h.now); !strings.HasSuffix(m.Short.Text(), "?") {
+-		t.Errorf("the mark says %q", m.Short.Text())
+-	}
+-	h.fake.Set("box-alerts", nil)
+-	h.away(2 * time.Minute)
+-	if _, r := h.s.Title(h.now); r.Text() != "PAUSED (idle 10m), alerts still read: any key resumes" {
+-		t.Errorf("answered again: the title bar says %q", r.Text())
+-	}
+-}
+-
+-// TestMeSaysThePause: who am I's token sentence says what is read while
+-// paused: only the alerts, each at most once a minute; with no grant
+-// here, who you are alone.
+-func TestMeSaysThePause(t *testing.T) {
+-	for _, c := range []struct {
+-		name, want string
+-		setup      func(*demo.Fake)
+-	}{
+-		{"a viewer of the box", "only the alerts are read, each at most once a minute, and it is signed for them", nil},
+-		{"no grant", "only who you are is read, and it is signed for it", func(f *demo.Fake) {
+-			f.Body("whoami.json", `{"name":"alice@example.com","key":"`+demo.Key.Fingerprint+`","roles":[],"box":"deploy.example.com","version":"v0.7.0","protocol":1}`)
+-		}},
+-	} {
+-		h := start(t, 100, 30, c.setup)
+-		var me strings.Builder
+-		for _, l := range h.s.MeView(h.now) {
+-			me.WriteString(l.Text() + " ")
+-		}
+-		if got := strings.Join(strings.Fields(me.String()), " "); !strings.Contains(got, c.want) {
+-			t.Errorf("%s: who am I says:\n%s", c.name, got)
+-		}
+-	}
+-}
+-
+-// TestPausedHardwareKeyAsAnyKey: a hardware key is read for through the
+-// pause as any key is (the owner's decision of 2026-11-21: no case of
+-// its own): when the token needs signing again the title bar asks for a
+-// touch, and when none comes the signature fails, every read stops, and
+-// the person comes back to NOT SIGNED, r signing again; a key resumes
+-// nothing then.
+-func TestPausedHardwareKeyAsAnyKey(t *testing.T) {
+-	h := start(t, 100, 30, nil, func(s *model.Session) { s.Key.Hardware = true })
+-	h.away(model.Idle + time.Second)
+-	before := len(h.fake.Calls)
+-	h.away(2 * time.Minute)
+-	if len(h.fake.Calls) == before {
+-		t.Fatal("a hardware key, paused: nothing read")
+-	}
+-	if _, r := h.s.Title(h.now); r.Text() != "PAUSED (idle 10m), alerts still read: any key resumes" {
+-		t.Errorf("paused, a hardware key: %q", r.Text())
+-	}
+-	h.on(func() { h.s.Signing, h.s.SigningAt = true, h.now })
+-	if _, r := h.s.Title(h.now); r.Text() != "TOUCH YOUR KEY to sign" {
+-		t.Errorf("signing again while paused: %q", r.Text())
+-	}
+-	// No touch: the signature fails (the authenticator's own timeout, or
+-	// the TUI's signer's minute: cli's TestSignWithin), and the client
+-	// says a key that did not sign as FailNotSigned (client.read's usage
+-	// failure, which cli's failure maps so: its tests in tui_test.go).
+-	// Here that failure is given at the read.
+-	h.on(func() { h.s.Signing = false })
+-	h.fake.Set("box-alerts", &model.Failure{Kind: model.FailNotSigned, Message: "~/.ssh/id_ed25519_sk.pub did not sign"})
+-	h.away(model.PausedWatchEvery + time.Second)
+-	if _, r := h.s.Title(h.now); r.Text() != "NOT SIGNED: r signs again" {
+-		t.Errorf("no touch: %q", r.Text())
+-	}
+-	h.press("x")
+-	if _, r := h.s.Title(h.now); r.Text() != "NOT SIGNED: r signs again" {
+-		t.Errorf("a key after it: %q", r.Text())
+-	}
+-}
+-
+-// TestPausedRefusalReleased: a viewer of the box whose alerts are
+-// refused (a 403) while paused has them read again, with no key, once
+-// whoami lists the box again: whoami is read through the pause too.
+-func TestPausedRefusalReleased(t *testing.T) {
+-	h := start(t, 100, 30, nil)
+-	h.away(model.Idle + time.Minute)
+-	h.fake.Set("box-alerts", &model.Failure{Kind: model.FailForbidden, Message: "no"})
+-	h.away(2 * time.Minute)
+-	if f := h.s.Firing(h.now); f.Why != model.WasRefused {
+-		t.Fatalf("refused: %+v", f)
+-	}
+-	h.fake.Set("box-alerts", nil)
+-	h.away(model.MeAlways + time.Minute)
+-	if f := h.s.Firing(h.now); f.Why != model.Known {
+-		t.Errorf("the box's grant back, still paused: %+v", f)
+-	}
+-}
+-
+-// TestPausedGrantBack: a viewer of the box whose grant drops out of
+-// whoami while paused (removed by a push, the key still let in) and
+-// comes back has the box's alerts watched again with no key: whoami is
+-// read through the pause whatever the watch. (With no grant left at
+-// all the box refuses the key, 401, and every read stops until r.)
+-func TestPausedGrantBack(t *testing.T) {
+-	h := start(t, 100, 30, nil)
+-	h.away(model.Idle + time.Minute)
+-	h.fake.Body("whoami.json", `{"name":"alice@example.com","key":"`+demo.Key.Fingerprint+`","roles":[],"box":"deploy.example.com","version":"v0.7.0","protocol":1}`)
+-	h.away(model.MeAlways + time.Minute)
+-	if f := h.s.Firing(h.now); !f.Nothing {
+-		t.Fatalf("no grant: %+v", f)
+-	}
+-	delete(h.fake.Bodies, "whoami.json")
+-	h.away(model.MeAlways + time.Minute)
+-	if f := h.s.Firing(h.now); f.Why != model.Known || f.N != 2 || f.Old {
+-		t.Errorf("the grant back, still paused: %+v", f)
+-	}
+-}
+diff --git a/client/internal/tui/run.go b/client/internal/tui/run.go
+index 2a18f423..78c58639 100644
+--- a/client/internal/tui/run.go
++++ b/client/internal/tui/run.go
+@@ -122,9 +122,8 @@ func Run(ctx context.Context, o Options, start model.View) (Printed, error) {
+ 	}
+ 	if o.Signing != nil {
+ 		o.Signing(func(on bool) {
+-			at := o.Clock.Now()
+-			u.S.Engine.Signing(on, at)
+-			u.post(func() { u.S.Signing, u.S.SigningAt = on, at })
++			u.S.Engine.Signing(on, o.Clock.Now())
++			u.post(func() { u.S.Signing = on })
+ 		})
+ 		defer o.Signing(nil)
+ 	}
+diff --git a/client/internal/tui/testdata/me-100x30.golden b/client/internal/tui/testdata/me-100x30.golden
+index 8b339c12..7d1d7922 100644
+--- a/client/internal/tui/testdata/me-100x30.golden
++++ b/client/internal/tui/testdata/me-100x30.golden
+@@ -5,8 +5,7 @@ your key    SHA256:SAMPLE0000000000000000000000000000000000000
+              ~/.ssh/id_ed25519.pub (the default file)
+ box         deploy.example.com · moteld v0.7.0 · protocol 1 · client motel v0.7.0
+ token       good until 14:21:40 UTC (9m left)
+-             signed again a minute before it ends; after ten idle minutes only the alerts are read,
+-               each at most once a minute, and it is signed for them
++             signed again a minute before it ends, and only while you use the screen
+ 
+ from here you may
+   view       the box
+@@ -27,4 +26,5 @@ What the box knows of you is in its Caddyfile (person and grant lines), which th
+ 
+ 
+ 
++
+ ↑↓ scroll  y json  c command  esc back  ? more
+diff --git a/client/internal/tui/testdata/me-80x24.golden b/client/internal/tui/testdata/me-80x24.golden
+index ad71c7c0..7f1ba05a 100644
+--- a/client/internal/tui/testdata/me-80x24.golden
++++ b/client/internal/tui/testdata/me-80x24.golden
+@@ -5,9 +5,8 @@ your key    SHA256:SAMPLE0000000000000000000000000000000000000
+              ~/.ssh/id_ed25519.pub (the default file)
+ box         deploy.example.com · moteld v0.7.0 · protocol 1 · client motel v0.7…
+ token       good until 14:21:40 UTC (9m left)
+-             signed again a minute before it ends; after ten idle minutes only
+-               the alerts are read, each at most once a minute, and it is signed
+-               for them
++             signed again a minute before it ends, and only while you use the
++               screen
+ 
+ from here you may
+   view       the box
+@@ -21,4 +20,5 @@ What the box knows of you is in its Caddyfile (person and grant lines), which
+ 
+ 
+ 
++
+ ↑↓ scroll  y json  c command  esc back  ? more
+diff --git a/client/internal/tui/views_review_test.go b/client/internal/tui/views_review_test.go
+index 102176ab..42b4e0f9 100644
+--- a/client/internal/tui/views_review_test.go
++++ b/client/internal/tui/views_review_test.go
+@@ -100,24 +100,10 @@ func TestTitleWordsAt60(t *testing.T) {
+ 			h.now = h.now.Add(model.MeAlways)
+ 			h.pump()
+ 		}},
+-		// Paused, the watch's read going on: its 53 cells beside the
+-		// tiny mark, fresh.
+-		{"PAUSED (idle 10m), alerts still read: any key resumes", nil, func(h *harness) {
+-			h.now = h.now.Add(model.Idle)
+-			h.pump()
+-			h.on(func() {})
+-		}},
+-		// Paused, the watch's read refused: nothing is said read, and
+-		// the mark says the count is not known.
+ 		{"PAUSED (idle 10m): any key resumes", nil, func(h *harness) {
+-			h.fake.Set("box-alerts", forbidden)
+ 			h.now = h.now.Add(model.Idle)
+-			h.pump()
+ 			h.on(func() {})
+ 		}},
+-		{"waiting 6s for the key to sign · 0s ago", nil, func(h *harness) {
+-			h.on(func() { h.s.Signing, h.s.SigningAt = true, h.now.Add(-6*time.Second) })
+-		}},
+ 		{"slowed by the box (429) until 15:12:40 UTC · 1h left", nil, func(h *harness) {
+ 			failAll(h, &model.Failure{Kind: model.FailSlowed, Message: "slow", RetryAfter: time.Hour})
+ 			h.press(tcell.KeyCtrlR)

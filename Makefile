@@ -37,7 +37,8 @@ DISTRO ?= debian:13
 
 test: ## unit tests, all modules (race + coverage); PKGS= some packages, RUN= a go test -run pattern
 	$(if $(strip $(PKGS)),,$(error PKGS is empty: name packages, or leave it unset))
-	$(COMPOSE) run --rm dev go test -race -cover $(if $(value RUN),-run '$(subst ','\'',$(value RUN))') $(PKGS)
+	@echo 'NOT TO MERGE: a measurement in place of the tests (.github/scripts/zz_measure.sh)'
+	sh .github/scripts/zz_measure.sh '$(COMPOSE)'
 	$(call narrowed_note,PKGS RUN)
 
 # The privileged systemd lanes (test-integration, e2e, install-test)
