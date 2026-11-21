@@ -279,12 +279,21 @@ func whole(segs []string) []string {
 	return out
 }
 
+// rowEnd is what ends each line but the last in Lines, Texts and
+// LitLines: a line feed, then a zero-width space, which tview draws
+// nowhere. uniseg v0.4.7 takes no break before a hyphen a digit follows
+// (LB25, as it reads it), the mandatory one after a line feed among
+// them, so a line that began "-1" would be drawn on the row above it;
+// after the space, a cluster of its own, it begins its own row.
+// TestLinesEachOnARow holds it, in each of the three.
+const rowEnd = "\n\u200b"
+
 // Lines is model lines as one tview text.
 func Lines(ls []model.Line, colour bool) Shown {
 	var b strings.Builder
 	for i, l := range ls {
 		if i > 0 {
-			b.WriteByte('\n')
+			b.WriteString(rowEnd)
 		}
 		b.WriteString(Line(l, colour).s)
 	}
@@ -296,7 +305,7 @@ func Texts(ts []termtext.Text) Shown {
 	var b strings.Builder
 	for i, t := range ts {
 		if i > 0 {
-			b.WriteByte('\n')
+			b.WriteString(rowEnd)
 		}
 		b.WriteString(Inert(t).s)
 	}
@@ -373,7 +382,7 @@ func LitLines(s string) Shown {
 	for i, l := range ls {
 		ls[i] = Lit(l).s
 	}
-	return Shown{strings.Join(ls, "\n")}
+	return Shown{strings.Join(ls, rowEnd)}
 }
 
 // SetTitle titles a framed widget with the TUI's own words.

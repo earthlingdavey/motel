@@ -81,27 +81,29 @@ func doorSegs(l model.Line) []string {
 }
 
 // checkLine holds l drawn as the screens draw a line, in a text view,
-// with a plain line under it: l is drawn on one row (the line under it
-// is on the next), as many cells wide as l.Width says, each cell in the
-// style of the segment its grapheme cluster begins in (no tag of the
-// box's read, not even to another class's style), and its styles
-// closed at its end (the line under it is drawn as it is alone); and
-// every [ in its text is a tag of the door's or inert (inertBrackets).
+// between two plain lines, "#" above and "-0" under (a hyphen and a
+// digit, which uniseg takes no break before, the one after a line feed
+// among them): each of the three is drawn on a row of its own, l as
+// many cells wide as l.Width says, each cell in the style of the
+// segment its grapheme cluster begins in (no tag of the box's read, not
+// even to another class's style), and its styles closed at its end
+// (the line under it is drawn as it is alone); and every [ in its text
+// is a tag of the door's or inert (inertBrackets).
 func checkLine(t *testing.T, l model.Line, colour bool) {
 	t.Helper()
 	w := l.Width(Width) + 4
-	scr := drawLines([]model.Line{l, {{T: termtext.From("#")}}}, colour, w, 3)
-	if row(scr, 1, w) != "#" || row(scr, 2, w) != "" {
-		t.Errorf("%s (colour %v) is not drawn on one row: %q, %q, %q", lineName(l), colour, row(scr, 0, w), row(scr, 1, w), row(scr, 2, w))
+	scr := drawLines([]model.Line{{{T: termtext.From("#")}}, l, {{T: termtext.From("-0")}}}, colour, w, 4)
+	if row(scr, 0, w) != "#" || row(scr, 2, w) != "-0" || row(scr, 3, w) != "" {
+		t.Errorf("%s (colour %v) is not drawn on a row of its own: %q, %q, %q, %q", lineName(l), colour, row(scr, 0, w), row(scr, 1, w), row(scr, 2, w), row(scr, 3, w))
 		return
 	}
 	if s := Line(l, colour).s; !inertBrackets(s, colour) {
 		t.Errorf("%s (colour %v): a [ in %q is neither a tag of the door's nor followed by a zero-width space", lineName(l), colour, s)
 	}
-	if _, st, _ := scr.Get(0, 1); st != lineStyle() {
+	if _, st, _ := scr.Get(0, 2); st != lineStyle() {
 		t.Errorf("%s (colour %v) leaves a style open: the line under it is drawn %v", lineName(l), colour, st)
 	}
-	if got, want := written(scr, 0), l.Width(Width); got != want {
+	if got, want := written(scr, 1), l.Width(Width); got != want {
 		t.Errorf("%s (colour %v) is drawn %d cells wide, and its Width says %d", lineName(l), colour, got, want)
 		return
 	}
@@ -123,7 +125,7 @@ func checkLine(t *testing.T, l model.Line, colour bool) {
 			continue
 		}
 		cls := l[seg].C
-		if _, st, _ := scr.Get(x, 0); st != classStyle(cls, colour) {
+		if _, st, _ := scr.Get(x, 1); st != classStyle(cls, colour) {
 			t.Errorf("%s (colour %v): cell %d (%q) is drawn %v, not as its segment, %s", lineName(l), colour, x, c, st, className[cls])
 			return
 		}
@@ -149,6 +151,21 @@ func inertBrackets(s string, colour bool) bool {
 		}
 	}
 	return true
+}
+
+// checkJoin holds s, three lines as Texts or LitLines joins them ("#",
+// one, "-0"), drawn in a text view w cells wide: each on a row of its
+// own.
+func checkJoin(t *testing.T, name string, s Shown, w int) {
+	t.Helper()
+	scr := sim(w, 4)
+	tv := tview.NewTextView().SetDynamicColors(true).SetWrap(false)
+	SetText(tv, s)
+	tv.SetRect(0, 0, w, 4)
+	tv.Draw(scr)
+	if row(scr, 0, w) != "#" || row(scr, 2, w) != "-0" || row(scr, 3, w) != "" {
+		t.Errorf("%s: %q is not drawn a line to a row: %q, %q, %q, %q", name, s.s, row(scr, 0, w), row(scr, 1, w), row(scr, 2, w), row(scr, 3, w))
+	}
 }
 
 // lineName names l's segments, their code points and classes.
@@ -225,5 +242,9 @@ func FuzzLine(f *testing.F) {
 			l[i] = model.Seg{T: termtext.From(p), C: c}
 		}
 		checkLine(t, l, colour)
+		lt := termtext.From(l.Text())
+		w := Width(lt) + 4
+		checkJoin(t, "Texts", Texts([]termtext.Text{termtext.From("#"), lt, termtext.From("-0")}), w)
+		checkJoin(t, "LitLines", LitLines("#\n"+lt.String()+"\n-0"), w)
 	})
 }

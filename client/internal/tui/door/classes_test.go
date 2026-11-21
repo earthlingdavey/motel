@@ -304,3 +304,80 @@ func TestPairsBesideATag(t *testing.T) {
 	}
 	t.Logf("%d lefts, each before %d pairs", len(lefts), len(reps)*len(reps))
 }
+
+// TestLinesEachOnARow: each rep after a q, as one line, and each pair of
+// reps as the line under it, in each way the door joins lines (Texts,
+// Lines with the line above plain and dressed, LitLines): each line on
+// a row of its own, by tview's own splitter, a few thousand lines at a
+// time. uniseg takes no break before a hyphen a digit follows, the
+// mandatory one after a line feed among them, so the pair under is what
+// matters; what ends the line above was not seen to. Seen to fail: with
+// the door's line feed written alone, on a hyphen and a digit under
+// each line, in every join.
+func TestLinesEachOnARow(t *testing.T) {
+	type pair struct{ above, under string }
+	var pairs []pair
+	for _, x := range reps {
+		for _, z := range reps {
+			for _, w := range reps {
+				pairs = append(pairs, pair{"q" + string(x.r), string(z.r) + string(w.r)})
+			}
+		}
+	}
+	plain := func(s string) model.Line { return model.Line{{T: termtext.From(s)}} }
+	joins := []struct {
+		name string
+		join func(ps []pair) Shown
+	}{
+		{"Texts", func(ps []pair) Shown {
+			var ts []termtext.Text
+			for _, p := range ps {
+				ts = append(ts, termtext.From(p.above), termtext.From(p.under))
+			}
+			return Texts(ts)
+		}},
+		{"Lines", func(ps []pair) Shown {
+			var ls []model.Line
+			for _, p := range ps {
+				ls = append(ls, plain(p.above), plain(p.under))
+			}
+			return Lines(ls, true)
+		}},
+		{"Lines, the line above dressed", func(ps []pair) Shown {
+			var ls []model.Line
+			for _, p := range ps {
+				ls = append(ls, model.Line{{T: termtext.From(p.above), C: model.Bad}}, plain(p.under))
+			}
+			return Lines(ls, true)
+		}},
+		{"LitLines", func(ps []pair) Shown {
+			var ss []string
+			for _, p := range ps {
+				ss = append(ss, p.above, p.under)
+			}
+			return LitLines(strings.Join(ss, "\n"))
+		}},
+	}
+	const batch = 2000
+	for _, j := range joins {
+		t.Run(j.name, func(t *testing.T) {
+			t.Parallel()
+			for i := 0; i < len(pairs); i += batch {
+				ps := pairs[i:min(i+batch, len(pairs))]
+				if len(tview.WordWrap(j.join(ps).s, 1<<30)) == 2*len(ps) {
+					continue
+				}
+				alone := false
+				for _, p := range ps {
+					if rows := len(tview.WordWrap(j.join([]pair{p}).s, 1<<30)); rows != 2 {
+						t.Errorf("%s then %s: %d rows", runes(p.above), runes(p.under), rows)
+						alone = true
+					}
+				}
+				if !alone {
+					t.Errorf("the lines from %s to %s are not a line to a row, and each pair alone is", runes(ps[0].above), runes(ps[len(ps)-1].under))
+				}
+			}
+		})
+	}
+}
