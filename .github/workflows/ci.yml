@@ -293,15 +293,25 @@ jobs:
       # other job's out. One left by an older commit costs little: Go's
       # build cache is keyed by content, so only what changed is
       # compiled again [measured: 0.9 s over all of PR 5's changes,
-      # against 34.5 s from nothing]. One left by another Go is no
-      # build cache at all, and the dev image's Go moves with each bump
-      # of its pin: so its Go is in the key, and no cache of another Go
-      # is restored — its build half (721 MiB of 1.7 GiB unpacked)
-      # would be saved again, unused, under the new Go's key. A new Go
-      # starts cold, once an arch. The Go is asked of plain `docker
-      # compose`, the base file alone, and never of $COMPOSE: the CI
-      # file's ./.cache bind sources, made now, would be root's, and
-      # the restore below could not unpack into them. In an assignment
+      # against 34.5 s from nothing]. For five days: at the end of a
+      # build Go trims the entries nothing has read for five days, the
+      # restore brings back the file times of the save, and a run
+      # whose key hit never saves again. So from the sixth day with no
+      # change to go.sum or the Go, every run compiles again what
+      # moteld's build did not read: the client, notify's test binary,
+      # the test app for the other architecture, the -tags e2e
+      # variants [read in the pinned Go's cmd/go/internal/cache and
+      # work/exec.go, not measured; go.sum stood longer than five days
+      # twice in seven weeks, 10-18 to 10-25 and 10-25 to 10-31]. One
+      # left by another Go is no build cache at all, and the dev
+      # image's Go moves with each bump of its pin: so its Go is in the
+      # key, and no cache of another Go is restored — its build half
+      # (721 MiB of 1.7 GiB unpacked) would be saved again, unused,
+      # under the new Go's key. A new Go starts cold, once an arch.
+      # The Go is asked of plain `docker compose`, the base file alone,
+      # and never of $COMPOSE: the CI file's ./.cache bind sources,
+      # made now, would be root's, and the restore below could not
+      # unpack into them. In an assignment
       # of its own, and refused when empty: this is the job's first
       # pull of the image, and inside the echo a compose run that
       # failed passed the step with no version, the key matched
@@ -326,8 +336,9 @@ jobs:
       # holding e2e-backup's builds alone, run 44935635314: a lane's Go
       # build 19 to 30 s, e2e-metrics' 28 to 43 s, against 3 to 10 s
       # with everything in it]. The three that lose then fail to
-      # reserve the key, which the action reports as a warning and
-      # nothing more.
+      # reserve the key: the action logs one line, "Failed to save:
+      # Unable to reserve cache with key …", no warning, and the job
+      # does not fail.
       - if: steps.cache.outputs.cache-hit != 'true'
         run: make e2e-warm COMPOSE="$COMPOSE"
       # make e2e dumps motel/upstream/artifact logs itself when
