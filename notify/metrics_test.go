@@ -1544,10 +1544,18 @@ func TestStoreKillTold(t *testing.T) {
 		}
 	}
 	kill(tp.at.Add(-2 * time.Minute))
+	// While no config runs notify the engine would drop it: the file
+	// waits.
+	tp.telling = func() bool { return false }
+	tp.checkKilled()
+	if _, err := os.Stat(file); len(tp.take()) != 0 || err != nil {
+		t.Fatalf("taken while nothing could tell it: %v", err)
+	}
+	tp.telling = func() bool { return true }
 	tp.checkKilled()
 	got := tp.take()
 	if len(got) != 1 || got[0].Name != eventStoreKilled || got[0].Kind != kindEvent || got[0].Severity != SeverityWarning || got[0].App != "" ||
-		got[0].Summary != "the metrics store was killed at its memory limit (352 MiB) once at 2026-11-10 11:58 UTC; it restarted by itself, and pushes, rule checks and reads missed its restarts" ||
+		got[0].Summary != "the metrics store was killed once at 2026-11-10 11:58 UTC, at its memory limit (352 MiB); it restarted by itself, and pushes, rule checks and reads missed its restarts" ||
 		got[0].Details["kills"] != "1" || got[0].Details["limit"] != "352 MiB" || !strings.Contains(got[0].Details["remedy"], "systemctl edit victoria-metrics") {
 		t.Fatalf("one kill told %+v", got)
 	}
@@ -1567,12 +1575,26 @@ func TestStoreKillTold(t *testing.T) {
 	if got := tp.take(); len(got) != 0 {
 		t.Fatalf("told within the hour: %+v", got)
 	}
+	// The hold is on disk: a moteld restart keeps it.
+	tp2 := newTestPusher(t)
+	tp2.m.stateDirOverride, tp2.at = dir, tp.at
+	tp2.checkKilled()
+	if got := tp2.take(); len(got) != 0 {
+		t.Fatalf("a restart told within the hour: %+v", got)
+	}
+	// A taken file a read failed on is read with the next.
 	tp.at = tp.at.Add(21 * time.Minute)
+	if err := os.WriteFile(file+".taken.1", []byte("1794000000 369098752\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	tp.checkKilled()
 	got = tp.take()
-	if len(got) != 1 || got[0].Details["kills"] != "2" ||
-		!strings.Contains(got[0].Summary, "(352 MiB) 2 times since 2026-11-10 12:20 UTC;") {
-		t.Fatalf("two held kills told %+v", got)
+	if len(got) != 1 || got[0].Details["kills"] != "3" ||
+		!strings.Contains(got[0].Summary, "killed 3 times since 2026-11-0") {
+		t.Fatalf("two held kills and a left one told %+v", got)
+	}
+	if left, _ := filepath.Glob(file + "*"); len(left) != 1 || left[0] != file+".told" {
+		t.Fatalf("left in the directory: %v", left)
 	}
 	if !slices.ContainsFunc(tp.logs.All(), func(e observer.LoggedEntry) bool {
 		return e.Level == zap.WarnLevel && strings.Contains(e.Message, "the metrics store was killed by the kernel at its memory limit")
@@ -1586,8 +1608,17 @@ func TestStoreKillTold(t *testing.T) {
 // the count.
 func TestStoreKilledEvent(t *testing.T) {
 	ev, n := killedEvent([]byte("junk\n\n1795180000 infinity\n"))
-	if n != 2 || ev.Details["limit"] != "infinity" || !strings.Contains(ev.Summary, "(infinity) 2 times since") {
+	if n != 2 || ev.Details["limit"] != "infinity" || !strings.Contains(ev.Summary, "2 times since") || !strings.Contains(ev.Summary, "(infinity);") {
 		t.Fatalf("%d %+v", n, ev)
+	}
+	ev, n = killedEvent([]byte("1795180000 box\n"))
+	if n != 1 || ev.Details["box_kills"] != "1" || !strings.Contains(ev.Summary, "killed once at 2026-11-20 13:06 UTC") || !strings.Contains(ev.Summary, ", when the box ran out of memory;") ||
+		!strings.Contains(ev.Details["remedy"], "would not help") {
+		t.Fatalf("a box's kill: %+v", ev)
+	}
+	ev, _ = killedEvent([]byte("1795180000 box\n1795180100 402653184\n"))
+	if !strings.Contains(ev.Summary, "2 times since 2026-11-20 13:06 UTC, at its memory limit (384 MiB), 1 of them when the box ran out of memory;") {
+		t.Fatalf("a box's kill and the limit's: %+v", ev)
 	}
 	if _, n := killedEvent(nil); n != 0 {
 		t.Fatal("an empty file is a kill")

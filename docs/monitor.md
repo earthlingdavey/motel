@@ -705,11 +705,19 @@ error (at most one per app and window every 30 seconds).
 
 The store's memory is capped at 384 MiB (`MemoryMax=384M` in motel's
 drop-in for its unit). What fills it is how many apps and windows
-people read, not how long the windows are: on a box of three apps, two
-people reading every window for an hour, with your rules running, it
-peaked at about 255 MiB; ten apps read by two people at once, or every
-app's four windows read at once, take it to the cap. There the kernel
-kills it, and systemd starts it again by itself, a second later the
+people read at once, not how long the windows are. Measured with six
+every-app rules running, each reading watched an hour after:
+
+| Box and reading | Peak | At 384 MiB |
+|---|---|---|
+| nobody reading | 186 to 194 MiB | holds |
+| 3 apps, two people reading every window for an hour | 251 to 257 MiB | holds, a third free |
+| 10 apps, one person reading every window for an hour | 342 MiB (at 352) | holds |
+| 10 apps, two people reading every window for an hour | — | **killed** |
+| 10 apps, every app's four windows at once | — | **killed** |
+
+So 384 MiB does not hold ten apps read by two people, or every app's
+windows read at once on a box of ten. There the kernel kills it, and systemd starts it again by itself, a second later the
 first time (longer after more kills, up to a minute), so the numbers
 are back at once. In its restart motel's push fails (its counts come
 with the next), the store's rules miss an evaluation, and a read says
@@ -720,11 +728,15 @@ the store did not answer. The kill is said three ways:
   limit (MemoryMax=384M)`, with a warning after it that says what was
   missed and how to give it more;
 - to the operator's channels, `metrics_store_killed` (warning; a
-  one-shot), at most once an hour, with how many kills since the last;
+  one-shot), at most once an hour, with how many kills since the last
+  (a kill while moteld is down is told at its start);
 - in moteld's journal, `monitor metrics: the metrics store was killed
   by the kernel at its memory limit`.
 
-If it keeps happening, give the store more on that box: `systemctl edit
+If the kernel killed it because the box as a whole ran out of memory,
+not at the store's own limit, both lines and the alert say so, and a
+higher limit would not help. If it keeps happening at its limit, give
+the store more on that box: `systemctl edit
 victoria-metrics`, then under `[Service]` a line `MemoryMax=512M` (your
 drop-in, `override.conf`, wins over motel's `10-motel.conf`, and motel's
 setup leaves it alone), then `systemctl restart victoria-metrics`. To

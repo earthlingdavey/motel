@@ -321,6 +321,14 @@ func cleanText(known []string, s string, safe ...string) string {
 }
 
 // report takes one event from a detector.
+// telling is whether a config runs notify: what report is told
+// meanwhile is dropped (an access event kept for a minute aside).
+func (e *engine) telling() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.active != nil
+}
+
 func (e *engine) report(ev Event) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

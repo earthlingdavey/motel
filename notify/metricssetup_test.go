@@ -407,7 +407,9 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		}
 	}
 	has("the drop-in", unitVMDropIn, "ExecStart=\n", "-httpListenAddr=127.0.0.1:8428 ", "NetworkNamespacePath=/run/netns/motel-metrics",
-		"MemoryMax=384M", "-memory.allowedBytes=96MiB", "-retentionPeriod=14d", "-promscrape.config="+DefaultMetricsStateDir+"/"+scrapeName,
+		"MemoryMax=384M", "-memory.allowedBytes=96MiB", "-retentionPeriod=14d",
+		// The sandbox: the store's process writes its directory alone.
+		"ProtectSystem=strict\n", "ProtectHome=yes\n", "PrivateTmp=yes\n", "NoNewPrivileges=yes\n", "ReadWritePaths=/var/lib/victoria-metrics\n", "-promscrape.config="+DefaultMetricsStateDir+"/"+scrapeName,
 		"Requires=motel-metrics-netns.service",
 		// Debian's 0755 would let every local uid read the series.
 		"ExecStartPre=+/usr/bin/chmod 0750 /var/lib/victoria-metrics\n")
@@ -719,9 +721,11 @@ func TestStoreKillIsNamed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MemoryMax=%s is not in M", limit)
 	}
+	events := filepath.Join(dir, "memory.events")
 	for from, to := range map[string]string{
 		"systemctl show -p MemoryMax --value victoria-metrics.service":                                    "echo " + strconv.Itoa(mib<<20),
 		"/usr/sbin/runuser -u motel -- /usr/bin/tee -a " + DefaultMetricsStateDir + "/" + storeKilledName: "tee -a " + killed,
+		`"/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.events"`:                                  events,
 	} {
 		if !strings.Contains(script, from) {
 			t.Fatalf("the script lacks %q: %s", from, script)
@@ -746,12 +750,16 @@ func TestStoreKillIsNamed(t *testing.T) {
 	if _, err := os.Stat(killed); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("a stop that was no kill left %s: %v", killed, err)
 	}
+	// The cgroup counted an oom: the kill was at its own limit.
+	if err := os.WriteFile(events, []byte("low 0\nhigh 0\nmax 12\noom 1\noom_kill 1\noom_group_kill 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	lines := strings.Split(strings.TrimSuffix(run("oom-kill"), "\n"), "\n")
 	if len(lines) != 2 || !strings.HasPrefix(lines[0], "<3>The metrics store was killed by the kernel at its memory limit (MemoryMax="+limit+")") ||
 		!strings.HasPrefix(lines[1], "<4>") {
 		t.Fatalf("after a kill it says %q", lines)
 	}
-	for _, want := range []string{"restarts it", "unanswered", eventStoreKilled, "every app", "systemctl edit victoria-metrics", "MemoryMax="} {
+	for _, want := range []string{"restarts it", "unanswered", eventStoreKilled, "how many apps and windows", "systemctl edit victoria-metrics", "MemoryMax="} {
 		if !strings.Contains(lines[0]+lines[1], want) {
 			t.Errorf("after a kill it does not say %q: %q", want, lines)
 		}
@@ -762,6 +770,25 @@ func TestStoreKillIsNamed(t *testing.T) {
 	}
 	if ev, n := killedEvent(b); n != 1 || ev.Details["limit"] != strconv.Itoa(mib)+" MiB" {
 		t.Errorf("the kill's line %q reads as %d kills, %+v", b, n, ev)
+	}
+	// No oom counted: the box's own out-of-memory killer took it under
+	// its limit, which a higher one would not help.
+	if err := os.WriteFile(events, []byte("low 0\nhigh 0\nmax 0\noom 0\noom_kill 1\noom_group_kill 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(killed); err != nil {
+		t.Fatal(err)
+	}
+	lines = strings.Split(strings.TrimSuffix(run("oom-kill"), "\n"), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "<3>The metrics store was killed by the kernel when the box ran out of memory, under its own limit (MemoryMax="+limit+")") ||
+		!strings.Contains(lines[1], "would not help") {
+		t.Fatalf("after the box's kill it says %q", lines)
+	}
+	if b, err = os.ReadFile(killed); err != nil {
+		t.Fatal(err)
+	}
+	if ev, n := killedEvent(b); n != 1 || ev.Details["box_kills"] != "1" {
+		t.Errorf("the box's kill's line %q reads as %d kills, %+v", b, n, ev)
 	}
 }
 
