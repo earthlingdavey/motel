@@ -2,7 +2,9 @@ package door
 
 import (
 	"bytes"
+	"math"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -183,14 +185,24 @@ func TestWholeAllocatesOnce(t *testing.T) {
 // fail: with each escape written in by a copy of its segment
 // (s[:i] + escape(r) + s[i+n:]): 35,516,600 bytes for 1,000 thumbs-up
 // and skin tones, 559,185,616 for 4,000.
+// The least of three runs, after one to warm up, is taken: another
+// goroutine's allocations only add to a run.
 func TestUnbreakWritesOnce(t *testing.T) {
 	alloc := func(n int) uint64 {
 		segs := []string{"level ", strings.Repeat("\U0001f44d\U0001f3fd", n)}
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		unbreak(segs)
-		runtime.ReadMemStats(&after)
-		return after.TotalAlloc - before.TotalAlloc
+		want := strings.Repeat("\U0001f44d\\U0001f3fd", n)
+		if got := unbreak(slices.Clone(segs)); got[0] != "level " || got[1] != want {
+			t.Fatalf("unbreak of %d thumbs-up and skin tones: %q", n, got)
+		}
+		least := uint64(math.MaxUint64)
+		for range 3 {
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			unbreak(slices.Clone(segs))
+			runtime.ReadMemStats(&after)
+			least = min(least, after.TotalAlloc-before.TotalAlloc)
+		}
+		return least
 	}
 	if few, many := alloc(1000), alloc(4000); many > 8*few {
 		t.Errorf("unbreak allocates %d bytes for 1,000 escapes, %d for 4,000", few, many)
