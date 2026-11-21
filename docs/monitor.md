@@ -740,10 +740,13 @@ the store did not answer. The kill is said three ways:
 If the kernel killed it because the box as a whole ran out of memory,
 not at the store's own limit, both lines and the alert say so, and a
 higher limit would not help. If it keeps happening at its limit, give
-the store more on that box: `systemctl edit
-victoria-metrics`, then under `[Service]` a line `MemoryMax=512M` (your
-drop-in, `override.conf`, wins over motel's `10-motel.conf`, and motel's
-setup leaves it alone), then `systemctl restart victoria-metrics`. To
+the store more on that box: read the limit it has (`systemctl show
+victoria-metrics -p MemoryMax`), then `systemctl edit
+victoria-metrics` and under `[Service]` a line with a higher one,
+`MemoryMax=512M` from motel's 384M (your drop-in, `override.conf`, wins
+over motel's `10-motel.conf`, and motel's setup leaves it alone), then
+`systemctl restart victoria-metrics`. The kill line names the limit it
+was killed at and a value 128 MiB above it. To
 see how close it runs: `systemctl show victoria-metrics -p MemoryPeak
 -p MemoryCurrent`, and the store's own caches against their maxima,
 which it does not keep as series: `curl -s --unix-socket

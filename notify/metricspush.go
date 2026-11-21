@@ -509,7 +509,7 @@ func killedEvent(b []byte) (Event, int) {
 	case limit != "":
 		how += " (" + limit + ")"
 	}
-	remedy := "systemctl edit victoria-metrics, MemoryMax= under [Service], then systemctl restart victoria-metrics; what fills it is how many apps and windows are read at once"
+	remedy := "systemctl edit victoria-metrics, a MemoryMax= above the limit under [Service], then systemctl restart victoria-metrics; what fills it is how many apps and windows are read at once"
 	switch {
 	case box > 0 && limited == 0:
 		how, remedy = "when the box ran out of memory", "the box as a whole is short of memory: a higher limit for the store would not help"

@@ -759,7 +759,8 @@ func TestStoreKillIsNamed(t *testing.T) {
 		!strings.HasPrefix(lines[1], "<4>") {
 		t.Fatalf("after a kill it says %q", lines)
 	}
-	for _, want := range []string{"restarts it", "unanswered", eventStoreKilled, "how many apps and windows", "systemctl edit victoria-metrics", "MemoryMax="} {
+	for _, want := range []string{"restarts it", "unanswered", eventStoreKilled, "how many apps and windows", "systemctl edit victoria-metrics",
+		"a MemoryMax= above " + limit + " (MemoryMax=" + strconv.Itoa(mib+128) + "M, say)"} {
 		if !strings.Contains(lines[0]+lines[1], want) {
 			t.Errorf("after a kill it does not say %q: %q", want, lines)
 		}
