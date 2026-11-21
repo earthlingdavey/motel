@@ -15,13 +15,14 @@ import (
 // made as they come due, each answer applied on the event loop, and
 // draws one frame at the end. The product draws a frame each second
 // (the clock's tick) and one with each answer; here none is drawn
-// before the end. What these tests read is the session's state and the
-// bells, and with the clock only going forward a frame changes nothing
-// but whether a bell owed has rung (Ring): the one bell these tests
-// count (TestPausedStillWatches's) has none before it, so no floor
-// holds it, and the frame at the end rings it as the answer's frame
-// would have. Under -race a frame a second for these hours was most of
-// the package's time.
+// before the end, so a state the walk passes and leaves is not drawn
+// (an accepted residual, client/README.md). What these tests read is
+// the session's state and the bells, and with the clock only going
+// forward a frame changes nothing but whether a bell owed has rung
+// (Ring): the one bell these tests count (TestPausedStillWatches's) has
+// none before it, so no floor holds it, and the frame at the end rings
+// it as the answer's frame would have. Under -race a frame a second
+// for these hours was most of the package's time.
 func (h *harness) away(d time.Duration) {
 	for end := h.now.Add(d); h.now.Before(end); {
 		h.now = h.now.Add(time.Second)
@@ -53,6 +54,9 @@ func TestPausedStillWatches(t *testing.T) {
 		t.Errorf("paused, the mark: %q", m.Long.Text())
 	}
 	h.away(5 * time.Minute)
+	if n := hostile.BareBELs(tty.Bytes()); n != 1 {
+		t.Errorf("five minutes on, past the floor: %d bells, want still the one", n)
+	}
 	if m := h.s.Mark(h.now); m.Long[0].C != model.LoudBad {
 		t.Errorf("five minutes on, still away: the mark is not held reversed: %v", m.Long[0].C)
 	}

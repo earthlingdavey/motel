@@ -98,9 +98,12 @@ func takeFirstResize(t *testing.T, scr tcell.Screen) {
 	select {
 	case ev := <-got:
 		if _, ok := ev.(*tcell.EventResize); !ok {
+			scr.Fini()
 			t.Fatalf("the screen's first event is %T, not its size", ev)
 		}
 	case <-time.After(10 * time.Second):
+		// Fini ends the screen's own loops, and the PollEvent waiting.
+		scr.Fini()
 		t.Fatal("the screen said no size in 10 s")
 	}
 }
