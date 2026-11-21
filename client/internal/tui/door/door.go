@@ -26,8 +26,9 @@ package door
 // tview's own splitter (WordWrap, with no width to wrap at) where it
 // would begin a row inside a text, and writes the last character
 // before each such break as an escape, as termtext writes a character
-// it will not pass: the thumbs-up, then \U0001f3fd. TestOneRow holds
-// it, in every widget kind used here. SetInput alone does not: it puts
+// it will not pass: the thumbs-up, then \U0001f3fd; and where tview
+// would begin one with a tag beside a cluster (tagBreaks). TestOneRow
+// holds it, in every widget kind used here. SetInput alone does not: it puts
 // back the person's own keys, as the field drew them when typed.
 //
 // TestOneDoor holds the rest: no file of the screens' package calls a
@@ -35,6 +36,7 @@ package door
 // reaches a widget only through here.
 
 import (
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -99,7 +101,8 @@ func unbreak(segs []string) []string {
 // row tview would begin inside it or at its end, but for one in ASCII,
 // which is left as it is. tview's own splitter says where: "x" stands
 // for what follows the row, and the width is no limit, so only a
-// mandatory break splits.
+// mandatory break splits. And tagBreaks says where tview would begin
+// one with a tag beside a cluster, where Line may write one.
 func breaks(row string) (at []int) {
 	lines := tview.WordWrap(row+"x", 1<<30)
 	end := 0
@@ -108,6 +111,40 @@ func breaks(row string) (at []int) {
 		if r := []rune(l); len(r) > 0 && r[len(r)-1] >= 0x80 {
 			at = append(at, end-len(string(r[len(r)-1])))
 		}
+	}
+	for _, i := range tagBreaks(row) {
+		if !slices.Contains(at, i) {
+			at = append(at, i)
+		}
+	}
+	slices.Sort(at)
+	return at
+}
+
+// tagBreaks is the byte offset in row of the last character, above
+// ASCII, of each cluster after which tview would begin a row were a
+// tag written after it. tview's step (strings.go, v0.42.0) judges the
+// break after a cluster a tag follows by that cluster and the one
+// character after the tag, as if the text ended there; tagBreaks asks
+// uniseg the same. It matters where uniseg judges a break by a
+// character beyond the next (LB25: no break before a hyphen a digit
+// follows), and a tag after the next character hides that one too, by
+// its [. So a thumbs-up and skin tone before "-0" is written as an
+// escape, as before any other character, in a Line and in Inert alike,
+// and Width agrees.
+func tagBreaks(row string) (at []int) {
+	state := -1
+	for i, rest := 0, row; rest != ""; {
+		pre := state
+		var c string
+		c, rest, _, state = uniseg.StepString(rest, state)
+		if r, n := utf8.DecodeLastRuneInString(c); rest != "" && r >= 0x80 {
+			_, m := utf8.DecodeRuneInString(rest)
+			if _, _, b, _ := uniseg.StepString(row[i:i+len(c)+m], pre); b&uniseg.MaskLine == uniseg.LineMustBreak {
+				at = append(at, i+len(c)-n)
+			}
+		}
+		i += len(c)
 	}
 	return at
 }

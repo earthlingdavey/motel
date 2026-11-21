@@ -66,7 +66,7 @@ var allows = map[string][]string{
 	"tui": {"context", "runtime/debug", "slices", "strconv", "strings", "sync", "sync/atomic", "time",
 		"github.com/rivo/tview", "github.com/gdamore/tcell/v2",
 		mod + "internal/termtext", mod + "internal/tui/model", mod + "internal/tui/door"},
-	"door": {"strings", "unicode/utf8", "github.com/rivo/tview", "github.com/rivo/uniseg", "github.com/gdamore/tcell/v2",
+	"door": {"slices", "strings", "unicode/utf8", "github.com/rivo/tview", "github.com/rivo/uniseg", "github.com/gdamore/tcell/v2",
 		mod + "internal/termtext", mod + "internal/tui/model"},
 	"model": {"bytes", "context", "encoding/json", "errors", "math", "regexp", "slices", "strconv", "strings", "sync", "time",
 		mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"},

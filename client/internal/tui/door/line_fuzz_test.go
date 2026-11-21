@@ -200,6 +200,13 @@ func FuzzLine(f *testing.F) {
 	// A Prepend character before the box's [ across a tag: the [ goes
 	// into the segment before, with its zero-width space.
 	f.Add([]byte{1, byte(model.Bad), byte(model.Plain)}, "x\u0600\x00[:::https://evil.example/x]link")
+	// A row tview begins at a tag that uniseg does not without it: a
+	// thumbs-up and skin tone, or an unassigned pictograph and one, then
+	// a tag, then a hyphen and a digit (the first, as the fuzzer found
+	// it), and with the tag after the hyphen.
+	f.Add([]byte("00"), "\U0001f44d\U0001f3fd\x00-0")
+	f.Add([]byte{1, byte(model.Plain), byte(model.Strong)}, "\U0001f44d\U0001f3fd-\x000")
+	f.Add([]byte{1, byte(model.Bad), byte(model.Plain)}, "a\U0001faff\U0001f3fd\x00-0")
 	f.Fuzz(func(t *testing.T, dress []byte, text string) {
 		if utf8.RuneCountInString(text) > 64 {
 			return
