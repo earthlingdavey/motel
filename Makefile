@@ -33,7 +33,7 @@ VERSION ?= $(shell (git describe --tags --exact-match 2>/dev/null || echo v0.0.0
 # Distro image for the package install smoke test (install-test).
 DISTRO ?= debian:13
 
-.PHONY: test help test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-dist install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
+.PHONY: test help test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-dist install-test e2e e2e-backup e2e-notify e2e-metrics e2e-warm soak e2e-logs clean
 
 # -timeout 20m: a stopgap, client/internal/tui reaches go test's default 10 m on CI's x86 (#642).
 test: ## unit tests, all modules (race + coverage); PKGS= some packages, RUN= a go test -run pattern
@@ -312,7 +312,10 @@ usage-check: pin-watch-check ci-changes-check ## usage.py's tests, then fails if
 # container's root.
 # The trailing chmod is for Linux CI runners: the container runs as
 # root, so without it the bind-mounted build/ is unwritable to the
-# host user and package's cp/rm staging fails (macOS masks this).
+# host user and package's cp/rm staging fails (macOS masks this). Of
+# build/ itself and the four binaries, not a walk: build/ also holds
+# the e2e lanes' directories, which a lane empties as it starts
+# (e2e/bin.sh).
 # The two arch builds run concurrently: cache-warm, wall time is
 # mostly the two large links, and those overlap cleanly.
 build: ## cross-compile moteld and motel-backup for linux amd64/arm64 into build/
@@ -326,7 +329,7 @@ build: ## cross-compile moteld and motel-backup for linux amd64/arm64 into build
 		if go version -m build/motel-backup-linux-amd64 build/motel-backup-linux-arm64 | grep -q -- "-tags=.*e2e"; then \
 			echo "build/motel-backup-linux-*: built with -tags e2e, which shortens the setup clock for the e2e box: not a binary to ship"; exit 1; \
 		fi; \
-		chmod -R a+rwX build'
+		chmod a+rwx build; chmod a+rwX build/moteld-linux-* build/motel-backup-linux-*'
 
 # Builds the laptop client as a release must: in client/, with the
 # workspace off (GOWORK=off), so the binary links exactly the versions
@@ -342,7 +345,7 @@ build-client: ## the laptop client into build/; GOOS= GOARCH= cross-build
 		git config --global --add safe.directory /src; \
 		os=$$(go env GOOS); arch=$$(go env GOARCH); \
 		cd client && go build -trimpath -ldflags "-s -w -X main.version=v$(VERSION)" -o ../build/motel-$$os-$$arch ./cmd/motel && \
-		chmod -R a+rwX ../build && echo build/motel-$$os-$$arch'
+		chmod a+rwx ../build && chmod a+rwX ../build/motel-$$os-$$arch && echo build/motel-$$os-$$arch'
 
 # The laptop client's release targets, each GOOS/GOARCH. package builds
 # each with build-client and packs it as
@@ -439,6 +442,18 @@ install-test: ## install dist/'s .deb under real systemd (DISTRO=debian:13); run
 	docker rm -f motel-smoke >/dev/null; \
 	exit $$status
 
+# The Go the e2e, e2e-notify and e2e-metrics images take (and soak's,
+# the e2e stack's), built in the dev container right before each builds
+# its images, as e2e-backup builds its box's: there Go's caches are the
+# volumes `make build` and `make test` fill (in CI, ./.cache), where a
+# build inside the image starts cold on any builder that kept no cache,
+# CI's always. e2e/bin.sh says what it builds; build/<lane> is the
+# images' `bin` context, which the target names to compose with
+# E2E_LANE. After the cgroup check, so a host that cannot run the lane
+# is told so before it compiles anything.
+# $(call e2e_bin,<lane>[ notify-tests])
+e2e_bin = $(COMPOSE) run --rm dev sh e2e/bin.sh $(1)
+
 # The main suites run via the e2e-runner entrypoint. Then the systemd
 # suite runs INSIDE the motel container (it needs systemctl,
 # journalctl and the process tree): restart survival, moteld's own
@@ -454,7 +469,8 @@ install-test: ## install dist/'s .deb under real systemd (DISTRO=debian:13); run
 # holds).
 e2e: ## the liveswap, penaltybox, systemd, recovery, box and people suites against the shipped binary
 	$(cgroup2_preflight)
-	$(COMPOSE) up --build -d e2e-motel e2e-upstream e2e-artifacts
+	$(call e2e_bin,e2e)
+	E2E_LANE=e2e $(COMPOSE) up --build -d e2e-motel e2e-upstream e2e-artifacts
 	status=0; \
 	$(COMPOSE) run --rm e2e-runner || status=1; \
 	echo "════ systemd suite: restart survival, reattach, cgroup teardown ════"; \
@@ -489,8 +505,9 @@ NOTIFY_LIMIT ?= 1800
 e2e-notify: ## the notify suite; NOTIFY_SPLITS= core reload (the default), heartbeat, or all
 	$(cgroup2_preflight)
 	$(if $(strip $(NOTIFY_SPLITS)),,$(error NOTIFY_SPLITS is empty: name a split, or all))
+	$(call e2e_bin,e2e-notify)
 	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null
-	$(COMPOSE) up --build -d --scale e2e-notify-box=$(words $(NOTIFY_SPLITS)) e2e-notify-box e2e-sink e2e-artifacts
+	E2E_LANE=e2e-notify $(COMPOSE) up --build -d --scale e2e-notify-box=$(words $(NOTIFY_SPLITS)) e2e-notify-box e2e-sink e2e-artifacts
 	logs=$$(mktemp -d); i=0; \
 	for s in $(NOTIFY_SPLITS); do \
 		i=$$((i + 1)); \
@@ -534,8 +551,9 @@ METRICS_LIMIT ?= 900
 e2e-metrics: ## the metrics suite; METRICS_SPLITS= view vmalert store rules (the default), or all
 	$(cgroup2_preflight)
 	$(if $(strip $(METRICS_SPLITS)),,$(error METRICS_SPLITS is empty: name a split, or all))
+	$(call e2e_bin,e2e-metrics notify-tests)
 	$(COMPOSE) rm -sf e2e-metrics-box e2e-sink >/dev/null
-	$(COMPOSE) up --build -d --scale e2e-metrics-box=$(words $(METRICS_SPLITS)) e2e-metrics-box e2e-sink e2e-artifacts
+	E2E_LANE=e2e-metrics $(COMPOSE) up --build -d --scale e2e-metrics-box=$(words $(METRICS_SPLITS)) e2e-metrics-box e2e-sink e2e-artifacts
 	logs=$$(mktemp -d); i=0; \
 	for s in $(METRICS_SPLITS); do \
 		i=$$((i + 1)); \
@@ -581,17 +599,21 @@ e2e-metrics: ## the metrics suite; METRICS_SPLITS= view vmalert store rules (the
 # image started cold every time. motel-backup is built with -tags
 # e2e, which shortens setup's clock alone (backups/engine/
 # setupclock_e2e.go): the package's binary is never built with it,
-# and `make build` refuses one that was.
+# and `make build` refuses one that was. build/ and the lane's
+# directory are made writable to the host's user (the container is
+# root), and nothing below them is touched: the binaries stay 0755,
+# as the package installs them, and no walk of build/ meets another
+# lane's directory as it is emptied (e2e/bin.sh).
 BACKUP_SUITES ?= setup backup units status restore check
 SUITE_LIMIT ?= 600
 e2e-backup: ## the backup suites, a box each; BACKUP_SUITES= setup backup units status restore check (the default)
 	$(cgroup2_preflight)
 	$(if $(strip $(BACKUP_SUITES)),,$(error BACKUP_SUITES is empty: name a suite, or leave it unset))
 	$(COMPOSE) run --rm -e CGO_ENABLED=0 dev sh -c '\
+		mkdir -p build/e2e-backup && chmod a+rwx build build/e2e-backup || exit 1; \
 		go build -trimpath -o build/e2e-backup/moteld ./cmd/moteld & p1=$$!; \
 		(cd backups && go build -trimpath -tags e2e -o ../build/e2e-backup/motel-backup ./cmd/motel-backup) & p2=$$!; \
-		wait $$p1 || exit 1; wait $$p2 || exit 1; \
-		chmod -R a+rwX build'
+		wait $$p1 || exit 1; wait $$p2 || exit 1'
 	$(COMPOSE) rm -sf e2e-backup-box e2e-s3 >/dev/null
 	$(COMPOSE) up --build -d --scale e2e-backup-box=$(words $(BACKUP_SUITES)) e2e-s3 e2e-backup-box
 	logs=$$(mktemp -d); i=0; \
@@ -619,6 +641,21 @@ e2e-backup: ## the backup suites, a box each; BACKUP_SUITES= setup backup units 
 	exit $$status
 	$(call narrowed_note,BACKUP_SUITES)
 
+# Every e2e lane's Go, built once and the binaries removed: it fills
+# Go's caches and nothing else. For CI, whose four e2e jobs share one cache an
+# architecture (ci.yml's e2e job says why one): a cache is saved by the
+# first job to finish a run whose key missed, with only what that job
+# compiled, so a job whose key missed builds every lane's first, and
+# whichever saves, saves what all four use. The three lanes' binaries
+# are the metrics lane's set (e2e/bin.sh, with notify's test binary);
+# e2e-backup's own are moteld, compiled the same, and motel-backup with
+# -tags e2e, built here with the flags its target above builds it with.
+# On a machine whose caches are volumes that stay, nothing needs this.
+e2e-warm: ## every e2e lane's Go, built to fill Go's caches (CI, when its cache key missed)
+	$(call e2e_bin,e2e-warm notify-tests)
+	$(COMPOSE) run --rm -e CGO_ENABLED=0 dev sh -c 'cd backups && go build -trimpath -tags e2e -o /dev/null ./cmd/motel-backup'
+	rm -rf build/e2e-warm
+
 # Leak-hunting soak against the product binary: deploy/reload/traffic
 # churn, then goroutine/fd return-to-baseline assertions over the admin
 # metrics endpoint. ~15-20 min at defaults; tune with SOAK_DEPLOYS,
@@ -630,7 +667,8 @@ e2e-backup: ## the backup suites, a box each; BACKUP_SUITES= setup backup units 
 # evidence — same as the e2e target above, tail-bounded here because a
 # soak pushes 15-20 minutes of churn through the stub servers.
 soak: ## ~20 min leak hunt: deploy/reload churn, goroutine/fd assertions
-	$(COMPOSE) up --build -d e2e-motel e2e-upstream e2e-artifacts
+	$(call e2e_bin,e2e)
+	E2E_LANE=e2e $(COMPOSE) up --build -d e2e-motel e2e-upstream e2e-artifacts
 	status=0; \
 	$(COMPOSE) run --rm -e SOAK_DEPLOYS -e SOAK_RELOADS -e SOAK_CLIENTS -e SOAK_REQS \
 		--entrypoint "/bin/sh /soak.sh" e2e-runner || status=1; \

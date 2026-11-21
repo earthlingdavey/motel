@@ -265,6 +265,11 @@ echo "=== box apply 0: the units are in place and the box answers ==="
 	&& pass "motel-box-apply.path is active" || fail "the path unit is $(systemctl is-active motel-box-apply.path)"
 [ "$(stat -c '%a %U %G' "$BOX" "$BOX/in" "$BOX/out" | tr '\n' ' ')" = "2750 root motel 770 root motel 2750 root motel " ] \
 	&& pass "the exchange tree has the Paths table's modes" || fail "exchange tree: $(stat -c '%n %a %U %G' "$BOX" "$BOX/in" "$BOX/out" | tr '\n' ' ')"
+# What root runs here is root's alone to write, as the package installs
+# it (packaging/nfpm.yaml, 0755): the image copies the binaries with
+# the mode e2e/bin.sh left them.
+[ "$(stat -c '%a %U %G' /usr/bin/moteld /usr/bin/motel-backup /usr/local/bin/motel | tr '\n' ' ')" = "755 root root 755 root root 755 root root " ] \
+	&& pass "moteld, motel-backup and motel are 0755 root:root" || fail "binaries: $(stat -c '%n %a %U %G' /usr/bin/moteld /usr/bin/motel-backup /usr/local/bin/motel | tr '\n' ' ')"
 if ! install_baseline "$C0"; then
 	fail "moteld init failed: $(cat "$work/init.out"); $(journalctl -u moteld --no-pager -n 5 | grep -o '"msg":"[^"]*"' | tail -1)"
 	restore

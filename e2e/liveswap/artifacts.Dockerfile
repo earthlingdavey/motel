@@ -1,4 +1,4 @@
-# Builds the demo app once, packs its release tarballs (v1, v2, a v3
+# Packs the demo app's release tarballs (v1, v2, a v3
 # whose health check always fails, a "workers" release whose ./server
 # is a shell leader that forks a worker before exec'ing the app — the
 # process-tree shape the systemd suite kills — a "probe" release whose
@@ -15,18 +15,19 @@
 # docker-compose.yml), which is why every COPY path is repo-relative:
 # the probe release carries liveswap/testdata/sandbox-view.sh, one view probe shared
 # with liveswap's integration test and packaging/test/smoke.sh (#52).
-# The Go is docker-compose.yml's dev image, by the same tag and digest:
-# the Go that builds what ships.
-FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS build
-# The box's architecture, from BuildKit; the wrongarch release is
-# built for the other one.
-ARG TARGETARCH
+#
+# The three Go binaries come built, from the `bin` context
+# (docker-compose.yml: ./build/<the lane>), which e2e/bin.sh fills in the
+# dev container right before a make target builds this image, as it does
+# for e2e/Dockerfile: the app (server), the app built for the other
+# machine (server-other; e2e/bin.sh takes this machine's architecture
+# from its Go, the box's own), and the server of the tarballs. Built by
+# hand, this image copies whatever the lane's last run left there.
+# This stage only packs: the box's base image, for its sh and tar.
+FROM debian:trixie-slim AS build
 WORKDIR /build
-COPY e2e/liveswap/testapp/main.go e2e/liveswap/workers.sh e2e/liveswap/probe-server.sh e2e/liveswap/crash.sh liveswap/testdata/sandbox-view.sh ./
-RUN CGO_ENABLED=0 go build -o server main.go
-COPY e2e/liveswap/artifacts/main.go ./artifacts/
-RUN CGO_ENABLED=0 go build -o artifacts-server ./artifacts/main.go
-RUN other=amd64; [ "$TARGETARCH" = amd64 ] && other=arm64; CGO_ENABLED=0 GOARCH=$other go build -o server-other main.go
+COPY --from=bin server server-other artifacts-server ./
+COPY e2e/liveswap/workers.sh e2e/liveswap/probe-server.sh e2e/liveswap/crash.sh liveswap/testdata/sandbox-view.sh ./
 RUN mkdir /out \
 	&& for v in v1 v2; do \
 		mkdir /tmp/stage-$v \

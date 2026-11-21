@@ -7,9 +7,10 @@ services:
   # release, so a new one is a version Dependabot moves to (after its
   # cooldown), not only a digest. Until it does, govulncheck fails on
   # a called standard-library fix the pinned Go lacks, naming it; a
-  # bump by hand moves this line and the e2e and test/systemd
-  # Dockerfiles' golang lines together (`docker buildx imagetools
-  # inspect golang:<tag>` prints the index digest).
+  # bump by hand moves this line and test/systemd/Dockerfile's golang
+  # line together (`docker buildx imagetools inspect golang:<tag>`
+  # prints the index digest). The e2e images have no Go of their own:
+  # this service builds what they take (e2e/bin.sh).
   # Integration tests spawn real child processes (the test app), which
   # is why this service has no read_only hardening: the tests exercise
   # process management.
@@ -104,8 +105,16 @@ services:
       # has to live inside that module.
       context: .
       dockerfile: e2e/liveswap/artifacts.Dockerfile
+      # The Go binaries e2e/bin.sh builds in the dev service right
+      # before a make target builds this image and the boxes below: a
+      # directory a lane, named by the target (E2E_LANE; the e2e
+      # stack's when unset), so two lanes started at once in one
+      # checkout read only their own. Build these images through their
+      # targets, or they get the lane's last run's binaries.
+      additional_contexts:
+        bin: ./build/${E2E_LANE:-e2e}
 
-  # The moteld binary under test (built from cmd/moteld).
+  # The moteld binary under test (built from cmd/moteld, by e2e/bin.sh).
   # This container plays the production VPS: systemd as PID 1 running
   # the packaged moteld.service as the motel user; it terminates
   # HTTP, receives deploy webhooks, runs the deployed demo app as a
@@ -121,6 +130,8 @@ services:
       context: .
       dockerfile: e2e/Dockerfile
       target: box
+      additional_contexts:
+        bin: ./build/${E2E_LANE:-e2e}
     privileged: true
     cgroup: host
     stop_signal: SIGRTMIN+3
@@ -155,6 +166,8 @@ services:
       context: .
       dockerfile: e2e/Dockerfile
       target: box
+      additional_contexts:
+        bin: ./build/${E2E_LANE:-e2e}
     command: ["/usr/bin/moteld", "run", "--config", "/etc/motel/Caddyfile"]
     # Plain `moteld run`, not systemd: the image's SIGRTMIN+3 stop
     # signal would be ignored and cost a 10s SIGKILL wait on teardown.
@@ -173,6 +186,8 @@ services:
       context: .
       dockerfile: e2e/Dockerfile
       target: notify-box
+      additional_contexts:
+        bin: ./build/${E2E_LANE:-e2e}
     privileged: true
     cgroup: host
     stop_signal: SIGRTMIN+3
@@ -197,6 +212,8 @@ services:
       context: .
       dockerfile: e2e/Dockerfile
       target: metrics-box
+      additional_contexts:
+        bin: ./build/${E2E_LANE:-e2e}
     privileged: true
     cgroup: host
     stop_signal: SIGRTMIN+3

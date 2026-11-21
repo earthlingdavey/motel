@@ -41,6 +41,10 @@ big() { as_app sh -c 'head -c 50000000 /dev/urandom >/var/lib/liveswap/blog/shar
 echo "=== units 0: the unit files, as the manager reads them ==="
 systemd-analyze verify /lib/systemd/system/motel-backup.service /lib/systemd/system/motel-backup.timer /lib/systemd/system/motel-backup-drill.service /lib/systemd/system/motel-backup-drill.timer >"$OUT" 2>&1
 [ $? = 0 ] && [ ! -s "$OUT" ] && pass "systemd-analyze verify has nothing to say of the four files" || fail "systemd-analyze verify: $(cat "$OUT")"
+# What the units run as root is root's alone to write, as the package
+# installs it (packaging/nfpm.yaml, 0755).
+[ "$(stat -c '%a %U %G' /usr/bin/moteld /usr/bin/motel-backup | tr '\n' ' ')" = "755 root root 755 root root " ] \
+	&& pass "moteld and motel-backup are 0755 root:root" || fail "binaries: $(stat -c '%n %a %U %G' /usr/bin/moteld /usr/bin/motel-backup | tr '\n' ' ')"
 for u in $S $D; do
 	for row in "Type=oneshot" "PrivateMounts=no" "ProtectSystem=no" "ProtectHome=no" "PrivateTmp=no" "PrivateNetwork=no" "ProtectKernelModules=no" "RestrictAddressFamilies=AF_UNIX" "NoNewPrivileges=yes" "RestrictSUIDSGID=yes" "CapabilityBoundingSet=cap_chown cap_dac_read_search cap_fowner cap_sys_admin" "Environment=MOTEL_BACKUP_UNIT=$u" "TimeoutStartUSec=infinity" "TimeoutStopUSec=3min" "Result=success" "ActiveState=inactive"; do
 		k=${row%%=*}

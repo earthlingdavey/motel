@@ -1,4 +1,4 @@
-# Builds the exact artifact an operator ships: the moteld binary from
+# Holds the exact artifact an operator ships: the moteld binary from
 # cmd/moteld (caddy standard + liveswap + penaltybox + Souin + Otter).
 # The e2e-motel container then plays the production VPS: systemd as
 # PID 1 running the packaged moteld.service as the motel user,
@@ -12,44 +12,17 @@
 # e2e/liveswap/artifacts.Dockerfile and the example's workflow.
 FROM denoland/deno:bin-2.9.8 AS deno
 
-# The source is bind-mounted, not copied, and Go's module and build
-# caches are BuildKit cache mounts, kept by the builder between builds
-# and shared by every worktree's: a one-line change compiles one package
-# and links, where `COPY . .` and a cold build downloaded every module
-# and compiled everything again after any edit to the context, and left
-# both caches in the layer [measured: 3.4 GB of build cache a rebuild].
-# The mount is writable because go may write go.work.sum; what it writes
-# is dropped with the step. The cache ids are motel's, shared by its
-# worktrees and no other build. A builder pruned, or CI's, starts cold.
-# moteld links a release as `make build` links one (Caddy's
-# CustomVersion), so whoami names one as a shipped box does; the people
-# suite (e2e/box/people.sh) reads it there, and holds each answer's
-# headers it checks, accepted or refused, to naming none.
-# client/ builds motel, the laptop client that suite runs on the box,
-# as a laptop would, over the box's own TLS.
-# The Go is docker-compose.yml's dev image, by the same tag and digest:
-# the Go that builds what ships.
-FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS builder
-WORKDIR /src
-RUN --mount=type=bind,target=/src,rw \
-	--mount=type=cache,id=motel-gomod,target=/go/pkg/mod \
-	--mount=type=cache,id=motel-gobuild,target=/root/.cache/go-build \
-	CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath \
-		-ldflags "-X github.com/caddyserver/caddy/v2.CustomVersion=v0.0.0-e2e" -o /moteld ./cmd/moteld \
-	&& cd backups && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel-backup ./cmd/motel-backup \
-	&& cd ../client && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel ./cmd/motel
-
-# notify's tests that run vmalert and vmalert-tool over the rendered
-# rules, compiled for the metrics box, which has both (Debian's
-# victoria-metrics); the dev image has neither, so `make test` skips
-# them. Built only for the metrics box, from the toolchain alone, so
-# BuildKit builds it beside the builder stage.
-FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS notify-tests
-WORKDIR /src
-RUN --mount=type=bind,target=/src,rw \
-	--mount=type=cache,id=motel-gomod,target=/go/pkg/mod \
-	--mount=type=cache,id=motel-gobuild,target=/root/.cache/go-build \
-	cd notify && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go test -c -o /notify.test .
+# The binaries come built, from the `bin` context (docker-compose.yml:
+# ./build/<the lane>), which e2e/bin.sh fills in the dev container right
+# before a make target builds this image; that script says why there and
+# not here, and what it builds: moteld linked as a release, so whoami
+# names one as a shipped box does (the people suite, e2e/box/people.sh,
+# reads it there, and holds each answer's headers it checks, accepted or
+# refused, to naming none); motel-backup; and motel, the laptop client
+# that suite runs on the box, as a laptop would, over the box's own TLS.
+# Build this image through its make target (or run e2e/bin.sh first, as
+# e2e/bench/observe.sh does): built by hand it copies whatever binaries
+# the lane's last run left there, not the source as it is now.
 
 # The box. A named stage, because the notify suite's box below builds on
 # it: docker-compose.yml names this one as e2e-motel's and e2e-upstream's
@@ -78,12 +51,12 @@ RUN systemctl mask \
 	console-getty.service \
 	|| true
 
-COPY --from=builder /moteld /usr/bin/moteld
+COPY --from=bin moteld /usr/bin/moteld
 # The box channel's step 6 asks it whether a backup run could plan
 # from the Caddyfile being pushed; nothing here runs a backup.
-COPY --from=builder /motel-backup /usr/bin/motel-backup
+COPY --from=bin motel-backup /usr/bin/motel-backup
 # Not the package's: the laptop's client, for the people suite.
-COPY --from=builder /motel /usr/local/bin/motel
+COPY --from=bin motel /usr/local/bin/motel
 COPY --from=deno /deno /usr/local/bin/deno
 # The example pins the Deno its workflow builds with in .deno-version;
 # the FROM above is Dependabot's to bump. Refuse to build when the two
@@ -186,5 +159,9 @@ RUN systemctl mask victoria-metrics.service \
 	&& apt-get update \
 	&& apt-get install -y --no-install-recommends victoria-metrics \
 	&& rm -rf /var/lib/apt/lists/*
-COPY --from=notify-tests /notify.test /usr/local/bin/notify.test
+# notify's tests that run vmalert and vmalert-tool over the rendered
+# rules, compiled for this box, which has both (Debian's
+# victoria-metrics); the dev image has neither, so `make test` skips
+# them. e2e/bin.sh builds the binary for this lane alone.
+COPY --from=bin notify.test /usr/local/bin/notify.test
 COPY e2e/metrics/Caddyfile /etc/motel/Caddyfile
