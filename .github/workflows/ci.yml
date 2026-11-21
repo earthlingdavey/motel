@@ -150,10 +150,12 @@ jobs:
       - if: ${{ !cancelled() }}
         run: make lint COMPOSE="$COMPOSE" MODULES="${{ matrix.module }}"
 
-  # Unit + integration on both architectures: arm64 is a first-class
-  # deploy target (cheap ARM VPSes), and the race detector plus the
-  # process-management integration tests are the deepest arch-specific
-  # coverage we have.
+  # Unit tests on both architectures: arm64 is a first-class deploy
+  # target (cheap ARM VPSes), and the race detector is arch-specific
+  # coverage. The integration lane is test-integration's, below. vet
+  # stays here, both tag sets: it type-checks the integration-tagged
+  # files in seconds, so a change that breaks them is red without a
+  # systemd booted (the Makefile's vet says why).
   test:
     needs: [changes]
     if: needs.changes.outputs.heavy == 'true'
@@ -194,6 +196,54 @@ jobs:
       # (so the weekly run cannot skip one) and every committed crasher
       # corpus still has a target to replay it.
       - run: make fuzz-list COMPOSE="$COMPOSE"
+
+  # The integration lane (real units under a real systemd, restic,
+  # sqlite3, the box applier) on both architectures, for the test job's
+  # reasons. A job of its own, not a step after make test: in series it
+  # waited for the unit tests, in the job that decides when a run is
+  # green, the longest of the run [measured, run 44935635314: the test job 902 s x86, 788 s arm64, 176
+  # and 170 of them this lane; alone it is a job of 219 s x86, 218 s
+  # arm64, its packages as fast as in series]. Not beside make test in
+  # one job either, to save the two runners: the unit tests hold all four
+  # cores, systemd's timings stretch, and tests fail [measured, same run:
+  # 3 red of 10 cells beside, 0 of 10 in series, 0 of 6 alone; liveswap's
+  # integration package 153 s beside against 115 in series on x86, single
+  # tests two to three times as long]. No ca-trust step: it proves the
+  # runner image, and the test job's cells run on these same two.
+  test-integration:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    name: test-integration (${{ matrix.runner }})
+    steps:
+      # Before checkout; floor and why: ci.yml's lint job.
+      - name: CA certificates at least the pinned floor
+        run: |
+          floor=20260816
+          v=$(dpkg-query -W -f='${Version}' ca-certificates)
+          if ! dpkg --compare-versions "$v" ge "$floor"; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --only-upgrade ca-certificates
+            sudo systemctl try-restart docker
+            v=$(dpkg-query -W -f='${Version}' ca-certificates)
+            dpkg --compare-versions "$v" ge "$floor" || { echo "ca-certificates $v is below $floor" >&2; exit 1; }
+          fi
+          echo "ca-certificates $v"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/runner-sample
+      # A family of its own: this lane's race build (-tags integration,
+      # no -cover) is not the test job's, so a cache that job saves does
+      # not hold it, and a cache is saved only by a job whose exact key
+      # missed.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache
+          key: test-integration-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: test-integration-${{ runner.os }}-${{ runner.arch }}-
       - run: make test-integration COMPOSE="$COMPOSE"
 
   govulncheck:
@@ -577,7 +627,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [changes, lint, test, govulncheck, e2e, e2e-backup, e2e-notify, e2e-metrics, package, install-test, gitleaks, usage-check]
+    needs: [changes, lint, test, test-integration, govulncheck, e2e, e2e-backup, e2e-notify, e2e-metrics, package, install-test, gitleaks, usage-check]
     runs-on: ubuntu-latest
     steps:
       # Skipped passes only for a job the changes job gates, and only
@@ -590,7 +640,7 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           echo "$NEEDS" | jq -e '
-            ["lint", "test", "govulncheck", "e2e", "e2e-backup", "e2e-notify", "e2e-metrics", "package", "install-test"] as $gated
+            ["lint", "test", "test-integration", "govulncheck", "e2e", "e2e-backup", "e2e-notify", "e2e-metrics", "package", "install-test"] as $gated
             | (.changes.result == "success" and .changes.outputs.heavy == "false") as $light
             | to_entries
             | map(select(.value.result != "success"
