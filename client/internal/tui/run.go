@@ -122,8 +122,9 @@ func Run(ctx context.Context, o Options, start model.View) (Printed, error) {
 	}
 	if o.Signing != nil {
 		o.Signing(func(on bool) {
-			u.S.Engine.Signing(on, o.Clock.Now())
-			u.post(func() { u.S.Signing = on })
+			at := o.Clock.Now()
+			u.S.Engine.Signing(on, at)
+			u.post(func() { u.S.Signing, u.S.SigningAt = on, at })
 		})
 		defer o.Signing(nil)
 	}

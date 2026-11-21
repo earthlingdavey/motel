@@ -73,7 +73,11 @@ const (
 	// in MeEvery.
 	MeAlways = 5 * time.Minute
 	// Idle pauses polling when no key was pressed for this long, so an
-	// unattended TUI neither asks for touches nor spends the rate.
+	// unattended TUI does not spend the rate: every read stops but the
+	// watch's (watch.go), which go on every PausedWatchEvery, and
+	// whoami's. Their token is signed again as at the keys: a key that
+	// cannot sign with nobody there (a hardware key's touch, an agent
+	// that asks) stops every read at its next signature.
 	Idle = 10 * time.Minute
 	// StaleAfter missed reads make a value stale.
 	StaleAfter = 3
@@ -377,9 +381,10 @@ func (e *Engine) nextSlot(en *entry, now time.Time) time.Time {
 	return slot(en, now, e.background())
 }
 
-// slot is the next time after now at en's phase in a cycle of every.
+// slot is the next time after now at en's phase in a cycle of every:
+// a phase laid for a longer cycle (the pause's) is taken within this one.
 func slot(en *entry, now time.Time, every time.Duration) time.Time {
-	base := now.Truncate(every).Add(en.phase)
+	base := now.Truncate(every).Add(en.phase % every)
 	for !base.After(now) {
 		base = base.Add(every)
 	}
@@ -554,30 +559,80 @@ func (e *Engine) watchApps(now time.Time) {
 }
 
 // appAlertsEvery is a background app's alerts' interval under
-// WatchApps: its status's, and never under AppWatchEvery.
-func (e *Engine) appAlertsEvery() time.Duration { return max(AppWatchEvery, e.background()) }
+// WatchApps: its status's, and never under AppWatchEvery; while
+// paused, never under PausedWatchEvery.
+func (e *Engine) appAlertsEvery() time.Duration {
+	if e.idleAt(e.latest) {
+		return max(PausedWatchEvery, e.background())
+	}
+	return max(AppWatchEvery, e.background())
+}
 
-// WatchInterval is how often the watch's read j is made now: the box's
-// alerts every WatchEvery, the open app's every AlertsEvery, another
-// app's at appAlertsEvery.
-func (e *Engine) WatchInterval(j Job) time.Duration {
+// boxWatchEvery is a viewer of the box's watch's interval at now:
+// WatchEvery, PausedWatchEvery while paused.
+func (e *Engine) boxWatchEvery(now time.Time) time.Duration {
+	if e.idleAt(now) {
+		return PausedWatchEvery
+	}
+	return WatchEvery
+}
+
+// WatchInterval is how often the watch's read j is made at now: the
+// box's alerts every WatchEvery, the open app's every AlertsEvery,
+// another app's at appAlertsEvery; each PausedWatchEvery or more while
+// paused.
+// It notes no time: it is asked from the UI's goroutine with an
+// answer's time, which may be before one the reads' goroutine gave, and
+// would be taken for the clock set back.
+func (e *Engine) WatchInterval(j Job, now time.Time) time.Duration {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	switch {
 	case j.Kind == KBoxAlerts:
-		return WatchEvery
-	case j.App == e.alertsApp:
+		return e.boxWatchEvery(now)
+	case j.App == e.alertsApp && !e.idleAt(now):
 		return AlertsEvery
 	}
 	return e.appAlertsEvery()
 }
 
-// Paused says whether the reads are paused at now: no key for Idle.
-func (e *Engine) Paused(now time.Time) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.seen(now)
-	return now.Sub(e.touched) >= Idle
+// idleAt says whether no key was pressed for Idle at t.
+func (e *Engine) idleAt(t time.Time) bool { return t.Sub(e.touched) >= Idle }
+
+// watchAnswers says whether the watch's alerts reads are made and
+// answer: one at least has answered and is not held (a refusal), and
+// the newest read of none failed.
+func (e *Engine) watchAnswers() bool {
+	n := 0
+	for j, en := range e.jobs {
+		switch {
+		case !e.watchJob(j) || en.held || j.Kind == KApps || j.Kind == KWhoAmI:
+		case en.misses > 0:
+			return false
+		case !en.answered.IsZero():
+			n++
+		}
+	}
+	return n > 0
+}
+
+// watchJob says whether j is the watch's read now, which goes on while
+// paused: a person with app grants only also reads the list and whoami
+// at their own pace, which say which apps are watched (an app added or
+// granted while paused).
+func (e *Engine) watchJob(j Job) bool {
+	switch {
+	case j.Kind == KWhoAmI:
+		// At its own pace, whatever the watch: it says which grants hold
+		// (one back while away, Session.follow), and releases a read a
+		// 403 held once it lists the role again.
+		return true
+	case e.watch == WatchBox:
+		return j.Kind == KBoxAlerts
+	case e.watch == WatchApps:
+		return j.Kind == KAlerts && e.listed[j.App] || j.Kind == KApps
+	}
+	return false
 }
 
 // BoxRulesOpen says whether the box's rules screen is open: GET
@@ -785,6 +840,15 @@ func (e *Engine) Touch(now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.seen(now)
+	if e.idleAt(now) {
+		// Back from the pause: the box's alerts, and the open app's, at
+		// their own pace again.
+		for j, every := range map[Job]time.Duration{{Kind: KBoxAlerts}: WatchEvery, {Kind: KAlerts, App: e.alertsApp}: AlertsEvery} {
+			if en, ok := e.jobs[j]; ok && !en.held && en.misses == 0 && !en.answered.IsZero() {
+				en.due = minTime(en.due, en.answered.Add(every))
+			}
+		}
+	}
 	e.touched = now
 	e.poke()
 }
@@ -808,7 +872,7 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.seen(now)
-	if e.inflight != nil || e.stopped != Running || now.Sub(e.touched) >= Idle {
+	if e.inflight != nil || e.stopped != Running {
 		return Job{}, false, 0
 	}
 	e.refill(now)
@@ -874,7 +938,12 @@ func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
 			break
 		}
 	}
+	idle := e.idleAt(at)
 	for j, en := range e.jobs {
+		if idle && !e.watchJob(j) {
+			// Paused: the watch's reads alone go on.
+			continue
+		}
 		if en.held || j.Kind == KBox && !e.boxOpen || j.Kind == KBackups && !e.backupsOpen || j.Kind == KBoxAlerts && !e.boxAlertsOpen && e.watch != WatchBox || j.Kind == KAlerts && j.App != e.alertsApp && (e.watch != WatchApps || !e.listed[j.App]) ||
 			j.Kind == KBoxRules && !e.boxRulesOpen || j.Kind == KRules && j.App != e.rulesApp || j.Kind == KSeries && j != e.series || skip != nil && j == *skip {
 			continue
@@ -1137,10 +1206,11 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	case j.Kind == KApps:
 		en.due = now.Add(AppsEvery)
 	case j.Kind == KBoxAlerts && e.watch == WatchBox:
-		en.due = now.Add(WatchEvery)
+		en.due = now.Add(e.boxWatchEvery(now))
 	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KBoxAlerts, j.Kind == KRules, j.Kind == KBoxRules:
 		en.due = now.Add(BoxEvery)
-	case j.Kind == KAlerts && j.App != e.alertsApp && e.watch == WatchApps:
+	case j.Kind == KAlerts && (j.App != e.alertsApp || e.idleAt(now)) && e.watch == WatchApps:
+		// A background app's, and while paused the open one's too.
 		en.due = slot(en, now, e.appAlertsEvery())
 	case j.Kind == KAlerts:
 		en.due = now.Add(AlertsEvery)
@@ -1197,6 +1267,11 @@ type Health struct {
 	SlowIn  time.Duration
 	// Back is set once, on the first answer after a run of none.
 	Back bool
+	// WatchRead: paused, and the watch's reads answer, the newest of
+	// each answered (one refused aside; one at least is read). While
+	// paused they are the only reads, so one that fails alone begins no
+	// run of no answer: this is what says it.
+	WatchRead bool
 	// Waiting is how long the box has been waited for: since the read in
 	// flight began to wait for it (not one cancelled); or, when a read
 	// waited WaitingAfter or longer and got no answer, none answered
@@ -1209,7 +1284,8 @@ func (e *Engine) Health(now time.Time) Health {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.seen(now)
-	h := Health{Stop: e.stopped, Paused: now.Sub(e.touched) >= Idle, Misses: e.misses, Back: e.recovering}
+	h := Health{Stop: e.stopped, Paused: e.idleAt(now), Misses: e.misses, Back: e.recovering}
+	h.WatchRead = h.Paused && e.watchAnswers()
 	e.recovering = false
 	if e.misses > 0 {
 		// The next read, as Take would make it: the retry, or the first

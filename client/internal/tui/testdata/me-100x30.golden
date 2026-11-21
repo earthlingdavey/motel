@@ -5,7 +5,8 @@ your key    SHA256:SAMPLE0000000000000000000000000000000000000
              ~/.ssh/id_ed25519.pub (the default file)
 box         deploy.example.com · moteld v0.7.0 · protocol 1 · client motel v0.7.0
 token       good until 14:21:40 UTC (9m left)
-             signed again a minute before it ends, and only while you use the screen
+             signed again a minute before it ends; after ten idle minutes only the alerts are read,
+               each at most once a minute, and it is signed for them
 
 from here you may
   view       the box
@@ -15,7 +16,6 @@ you may not roll back, relaunch, deploy or push: no person may yet. Deploys come
 
 What the box knows of you is in its Caddyfile (person and grant lines), which the operator keeps.
   `motel key` prints the line to send them.
-
 
 
 
