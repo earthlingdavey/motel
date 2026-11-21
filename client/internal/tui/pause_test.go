@@ -11,14 +11,23 @@ import (
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
-// away lets d pass with no key pressed, the clock's tick drawing a
-// frame each second and the reads made as they come due.
+// away lets d pass with no key pressed, a second at a time, the reads
+// made as they come due, each answer applied on the event loop, and
+// draws one frame at the end. The product draws a frame each second
+// (the clock's tick) and one with each answer; here none is drawn
+// before the end. What these tests read is the session's state and the
+// bells, and with the clock only going forward a frame changes nothing
+// but whether a bell owed has rung (Ring): the one bell these tests
+// count (TestPausedStillWatches's) has none before it, so no floor
+// holds it, and the frame at the end rings it as the answer's frame
+// would have. Under -race a frame a second for these hours was most of
+// the package's time.
 func (h *harness) away(d time.Duration) {
 	for end := h.now.Add(d); h.now.Before(end); {
 		h.now = h.now.Add(time.Second)
-		h.pump()
-		h.sync()
+		h.pumpUnseen()
 	}
+	h.sync()
 }
 
 // TestPausedStillWatches: a person away for twenty minutes: past the
