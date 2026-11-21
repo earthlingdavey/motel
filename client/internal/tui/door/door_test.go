@@ -162,10 +162,10 @@ func TestEscapeHolds(t *testing.T) {
 // text, ASCII or not: a box can send a line of many thousands of
 // characters, and each frame draws it. Seen to fail: with each cluster
 // added to its segment one at a time (out[k] += c): 30,009 allocations
-// for 30,000 zero-width spaces, or letters, against 1,010 and 1,009 for
-// 1,000.
+// for 30,000 zero-width spaces, or for 30,000 of e with an acute
+// accent, against 1,009 for 1,000.
 func TestWholeAllocatesOnce(t *testing.T) {
-	for _, c := range []string{"\u200b", "a"} {
+	for _, c := range []string{"\u200b", "\u00e9"} {
 		allocs := func(n int) float64 {
 			segs := []string{"level ", strings.Repeat(c, n) + "x", " ok"}
 			return testing.AllocsPerRun(5, func() { whole(segs) })

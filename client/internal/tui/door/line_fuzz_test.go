@@ -69,9 +69,12 @@ func classStyle(c model.Class, colour bool) tcell.Style {
 // classStyles are the styles classStyle has drawn.
 var classStyles sync.Map
 
-// doorSegs is l's segments as Line hands them to tview, the tags left
-// out: each made inert, and the characters before a row tview would
-// begin written as escapes.
+// doorSegs is l's segments as Line has them before whole, the tags
+// left out: each made inert, and the characters before a row tview
+// would begin written as escapes. It stops before whole on purpose:
+// checkLine finds the segment each cluster begins in from the segments
+// as the line gave them, so that what whole does is checked, not taken
+// as given.
 func doorSegs(l model.Line) []string {
 	segs := make([]string, len(l))
 	for i, s := range l {
@@ -81,55 +84,59 @@ func doorSegs(l model.Line) []string {
 }
 
 // checkLine holds l drawn as the screens draw a line, in a text view,
-// between two plain lines, "#" above and "-0" under (a hyphen and a
-// digit, which uniseg takes no break before, the one after a line feed
-// among them): each of the three is drawn on a row of its own, l as
-// many cells wide as l.Width says, each cell in the style of the
+// first, then a plain "-0" (a hyphen and a digit, which uniseg takes no
+// break before, the one after a line feed among them), then l again,
+// last: each of the three is drawn on a row of its own; l, each time,
+// as many cells wide as l.Width says, each cell in the style of the
 // segment its grapheme cluster begins in (no tag of the box's read, not
-// even to another class's style), and its styles closed at its end
-// (the line under it is drawn as it is alone); and every [ in its text
-// is a tag of the door's or inert (inertBrackets).
+// even to another class's style); its styles closed at its end (the
+// line under it is drawn as it is alone); and every [ in its text is a
+// tag of the door's or inert (inertBrackets). l first is a line a view
+// begins with, as the title bar and the crumb are; l last is one after
+// a line feed.
 func checkLine(t *testing.T, l model.Line, colour bool) {
 	t.Helper()
 	w := l.Width(Width) + 4
-	scr := drawLines([]model.Line{{{T: termtext.From("#")}}, l, {{T: termtext.From("-0")}}}, colour, w, 4)
-	if row(scr, 0, w) != "#" || row(scr, 2, w) != "-0" || row(scr, 3, w) != "" {
+	scr := drawLines([]model.Line{l, {{T: termtext.From("-0")}}, l}, colour, w, 4)
+	if row(scr, 1, w) != "-0" || row(scr, 3, w) != "" {
 		t.Errorf("%s (colour %v) is not drawn on a row of its own: %q, %q, %q, %q", lineName(l), colour, row(scr, 0, w), row(scr, 1, w), row(scr, 2, w), row(scr, 3, w))
 		return
 	}
 	if s := Line(l, colour).s; !inertBrackets(s, colour) {
 		t.Errorf("%s (colour %v): a [ in %q is neither a tag of the door's nor followed by a zero-width space", lineName(l), colour, s)
 	}
-	if _, st, _ := scr.Get(0, 2); st != lineStyle() {
+	if _, st, _ := scr.Get(0, 1); st != lineStyle() {
 		t.Errorf("%s (colour %v) leaves a style open: the line under it is drawn %v", lineName(l), colour, st)
 	}
-	if got, want := written(scr, 1), l.Width(Width); got != want {
-		t.Errorf("%s (colour %v) is drawn %d cells wide, and its Width says %d", lineName(l), colour, got, want)
-		return
-	}
-	// The clusters in order, each from the cell the one before ended
-	// at, as wide as uniseg says (tview draws one of no width nowhere).
-	segs := doorSegs(l)
-	x, at, seg, end := 0, 0, 0, 0
-	for rest, state := strings.Join(segs, ""), -1; rest != ""; {
-		var c string
-		var b int
-		c, rest, b, state = uniseg.StepString(rest, state)
-		for seg < len(segs) && at >= end+len(segs[seg]) {
-			end += len(segs[seg])
-			seg++
-		}
-		at += len(c)
-		cw := b >> uniseg.ShiftWidth
-		if cw == 0 {
-			continue
-		}
-		cls := l[seg].C
-		if _, st, _ := scr.Get(x, 1); st != classStyle(cls, colour) {
-			t.Errorf("%s (colour %v): cell %d (%q) is drawn %v, not as its segment, %s", lineName(l), colour, x, c, st, className[cls])
+	for _, y := range []int{0, 2} {
+		if got, want := written(scr, y), l.Width(Width); got != want {
+			t.Errorf("%s (colour %v) is drawn %d cells wide on row %d, and its Width says %d", lineName(l), colour, got, y, want)
 			return
 		}
-		x += cw
+		// The clusters in order, each from the cell the one before ended
+		// at, as wide as uniseg says (tview draws one of no width nowhere).
+		segs := doorSegs(l)
+		x, at, seg, end := 0, 0, 0, 0
+		for rest, state := strings.Join(segs, ""), -1; rest != ""; {
+			var c string
+			var b int
+			c, rest, b, state = uniseg.StepString(rest, state)
+			for seg < len(segs) && at >= end+len(segs[seg]) {
+				end += len(segs[seg])
+				seg++
+			}
+			at += len(c)
+			cw := b >> uniseg.ShiftWidth
+			if cw == 0 {
+				continue
+			}
+			cls := l[seg].C
+			if _, st, _ := scr.Get(x, y); st != classStyle(cls, colour) {
+				t.Errorf("%s (colour %v): cell %d (%q) on row %d is drawn %v, not as its segment, %s", lineName(l), colour, x, c, y, st, className[cls])
+				return
+			}
+			x += cw
+		}
 	}
 }
 

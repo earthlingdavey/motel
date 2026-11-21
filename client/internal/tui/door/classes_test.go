@@ -216,35 +216,46 @@ func TestClassesBesideATag(t *testing.T) {
 	}
 }
 
-// TestPairsBesideATag: every pair of reps after a tag, with each pair
-// of reps that is one grapheme cluster before it (TestClassesBesideATag
-// has each rep alone before one); in a Line, as l | z w,
-// a dressed segment then a plain one (the closing tag before the pair),
-// and as l z | w, plain then dressed (the opening tag inside the pair);
-// a few hundred at a time as one Line, each after a zero-width space,
-// which ends the cluster before it, and an a, after which uniseg reads
-// an unassigned pictograph as one (it does not after a space or a
-// zero-width space). Each is held to one row by tview's own splitter,
-// as a text view begins its rows; drawing them, as checkLine does,
-// would take minutes, and TestClassesBesideATag and FuzzLine hold
-// Width beside a tag. tview judges the
-// row break after a cluster a tag follows by that cluster and the one
-// character after the tag, so a break that hangs on the character
-// after that (uniseg's LB25, a hyphen then a digit) is reached only
-// with two characters after the tag, or one each side of it, and one
-// that hangs on a cluster's state (an emoji modifier after an emoji
-// base) only with that cluster before it. Under -race they take about
-// 35 s of the door's tests on a machine of 7 cores (3 s without). Seen
-// to fail: with tagBreaks taken out, on a thumbs-up or an unassigned
-// pictograph and a skin tone, then a tag, then a hyphen and a digit,
-// and on them and a hyphen, then a tag, then a digit (not on one row).
+// TestPairsBesideATag: every pair of reps after a tag, with a pair or a
+// triple of reps that is one grapheme cluster before it
+// (TestClassesBesideATag has each rep alone before one); in a Line, as l | z w, a dressed segment
+// then a plain one (the closing tag before the pair), and as l z | w,
+// plain then dressed (the opening tag inside the pair); a few hundred
+// at a time as one Line, each after a zero-width space, which ends the
+// cluster before it, and an a, after which uniseg reads an unassigned
+// pictograph as one (it does not after a space or a zero-width space).
+// Each is held to one row by tview's own splitter, as a text view
+// begins its rows; TestClassesBesideATag and FuzzLine hold Width beside
+// a tag, drawn. tview judges the row break after a cluster a tag
+// follows by that cluster and the one character after the tag, so a
+// break that hangs on the character after that (uniseg's LB25, a
+// hyphen then a digit) is reached only with two characters after the
+// tag, or one each side of it, and one that hangs on a cluster's state
+// (an emoji modifier after an emoji base) only with that cluster
+// before it. The clusters before it are the ones after which uniseg
+// reports a mandatory break with one rep, and nothing, after them
+// (canEnd): a tag hides all but that one, and uniseg reads more only
+// to take a break away, so after no other cluster can a tag begin a
+// row. The others (a letter and a combining mark, a Hangul syllable, a
+// flag) are not swept here; FuzzLine reaches them. Seen to fail: with
+// breaks judging each cluster by the text after it, on a thumbs-up or
+// an unassigned pictograph and a skin tone, then a tag, then a hyphen
+// and a digit, and on them and a hyphen, then a tag, then a digit (not
+// on one row).
 func TestPairsBesideATag(t *testing.T) {
 	seg := func(s string, c model.Class) model.Seg { return model.Seg{T: termtext.From(s), C: c} }
 	var lefts []string
 	for _, x := range reps {
 		for _, y := range reps {
 			if c := string(x.r) + string(y.r); uniseg.GraphemeClusterCount(c) == 1 {
-				lefts = append(lefts, c)
+				if canEnd("\u200ba", c) {
+					lefts = append(lefts, c)
+				}
+				for _, z := range reps {
+					if c := c + string(z.r); uniseg.GraphemeClusterCount(c) == 1 && canEnd("\u200ba", c) {
+						lefts = append(lefts, c)
+					}
+				}
 			}
 		}
 	}
@@ -305,72 +316,122 @@ func TestPairsBesideATag(t *testing.T) {
 	t.Logf("%d lefts, each before %d pairs", len(lefts), len(reps)*len(reps))
 }
 
-// TestLinesEachOnARow: each rep after a q, as one line, and each pair of
-// reps as the line under it, in each way the door joins lines (Texts,
-// Lines with the line above plain and dressed, LitLines): each line on
-// a row of its own, by tview's own splitter, a few thousand lines at a
-// time. uniseg takes no break before a hyphen a digit follows, the
-// mandatory one after a line feed among them, so the pair under is what
-// matters; what ends the line above was not seen to. Seen to fail: with
+// canEnd says whether uniseg reports a mandatory break after c, after
+// before, with a rep after c and nothing after that, for some rep.
+func canEnd(before, c string) bool {
+	for _, z := range reps {
+		s := before + c + string(z.r)
+		for at, rest, state := 0, s, -1; rest != ""; {
+			var cl string
+			var b int
+			cl, rest, b, state = uniseg.StepString(rest, state)
+			at += len(cl)
+			if at == len(before)+len(c) && rest != "" && b&uniseg.MaskLine == uniseg.LineMustBreak {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestLinesEachOnARow: each pair of reps as a line under a line "q",
+// and each pair of reps as a line over a line "-0", in each way the door
+// joins lines (Texts, Lines with the line above plain and dressed,
+// LitLines): each line on a row of its own, the row its own text, by
+// tview's own splitter, a few thousand lines at a time. uniseg takes no
+// break before a hyphen a digit follows, the mandatory one after a line
+// feed among them, so the line under is what matters: what ends the
+// line above was not seen to (every pair of reps over "-0" joined
+// alike), and is not swept against every line under. Seen to fail: with
 // the door's line feed written alone, on a hyphen and a digit under
 // each line, in every join.
 func TestLinesEachOnARow(t *testing.T) {
 	type pair struct{ above, under string }
 	var pairs []pair
 	for _, x := range reps {
-		for _, z := range reps {
-			for _, w := range reps {
-				pairs = append(pairs, pair{"q" + string(x.r), string(z.r) + string(w.r)})
-			}
+		for _, y := range reps {
+			xy := string(x.r) + string(y.r)
+			pairs = append(pairs, pair{"q", xy}, pair{xy, "-0"})
 		}
 	}
 	plain := func(s string) model.Line { return model.Line{{T: termtext.From(s)}} }
+	// Each join is of lines, and says each line's text alone.
 	joins := []struct {
 		name string
-		join func(ps []pair) Shown
+		join func(ss []string) (Shown, []string)
 	}{
-		{"Texts", func(ps []pair) Shown {
+		{"Texts", func(ss []string) (Shown, []string) {
 			var ts []termtext.Text
-			for _, p := range ps {
-				ts = append(ts, termtext.From(p.above), termtext.From(p.under))
+			var each []string
+			for _, s := range ss {
+				ts = append(ts, termtext.From(s))
+				each = append(each, Inert(termtext.From(s)).s)
 			}
-			return Texts(ts)
+			return Texts(ts), each
 		}},
-		{"Lines", func(ps []pair) Shown {
+		{"Lines", func(ss []string) (Shown, []string) {
 			var ls []model.Line
-			for _, p := range ps {
-				ls = append(ls, plain(p.above), plain(p.under))
+			var each []string
+			for _, s := range ss {
+				ls = append(ls, plain(s))
+				each = append(each, Line(plain(s), true).s)
 			}
-			return Lines(ls, true)
+			return Lines(ls, true), each
 		}},
-		{"Lines, the line above dressed", func(ps []pair) Shown {
+		{"Lines, the line above dressed", func(ss []string) (Shown, []string) {
 			var ls []model.Line
-			for _, p := range ps {
-				ls = append(ls, model.Line{{T: termtext.From(p.above), C: model.Bad}}, plain(p.under))
+			var each []string
+			for i, s := range ss {
+				l := plain(s)
+				if i%2 == 0 {
+					l = model.Line{{T: termtext.From(s), C: model.Bad}}
+				}
+				ls = append(ls, l)
+				each = append(each, Line(l, true).s)
 			}
-			return Lines(ls, true)
+			return Lines(ls, true), each
 		}},
-		{"LitLines", func(ps []pair) Shown {
-			var ss []string
-			for _, p := range ps {
-				ss = append(ss, p.above, p.under)
+		{"LitLines", func(ss []string) (Shown, []string) {
+			var each []string
+			for _, s := range ss {
+				each = append(each, Lit(s).s)
 			}
-			return LitLines(strings.Join(ss, "\n"))
+			return LitLines(strings.Join(ss, "\n")), each
 		}},
 	}
-	const batch = 2000
+	// rows says whether each line of ss is drawn on a row of its own,
+	// the row its own text and nothing else (but the zero-width space
+	// the door begins it with).
+	rows := func(join func(ss []string) (Shown, []string), ss []string) bool {
+		s, each := join(ss)
+		got := tview.WordWrap(s.s, 1<<30)
+		if len(got) != len(each) {
+			return false
+		}
+		for i, r := range got {
+			if strings.TrimPrefix(r, "\u200b") != each[i] {
+				return false
+			}
+		}
+		return true
+	}
+	const batch = 1000
 	for _, j := range joins {
 		t.Run(j.name, func(t *testing.T) {
 			t.Parallel()
 			for i := 0; i < len(pairs); i += batch {
 				ps := pairs[i:min(i+batch, len(pairs))]
-				if len(tview.WordWrap(j.join(ps).s, 1<<30)) == 2*len(ps) {
+				var ss []string
+				for _, p := range ps {
+					ss = append(ss, p.above, p.under)
+				}
+				if rows(j.join, ss) {
 					continue
 				}
 				alone := false
 				for _, p := range ps {
-					if rows := len(tview.WordWrap(j.join([]pair{p}).s, 1<<30)); rows != 2 {
-						t.Errorf("%s then %s: %d rows", runes(p.above), runes(p.under), rows)
+					if !rows(j.join, []string{p.above, p.under}) {
+						t.Errorf("%s then %s are not a line to a row", runes(p.above), runes(p.under))
 						alone = true
 					}
 				}
