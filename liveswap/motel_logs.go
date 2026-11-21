@@ -260,14 +260,24 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 	if json.Unmarshal([]byte(out), &top) != nil || top["lines"] == nil {
 		return out, nil, false
 	}
-	// A text the filter made longer than a line is cut: a piece of text
-	// that passed every layer, which holds no form the whole did not.
+	// The lines as they went in, at their times, or none: a value of
+	// JSON's punctuation across two lines made them one, and a cursor and
+	// a count past both would say a line was sent that was not.
 	var cut []wire.LogLine
-	if json.Unmarshal(top["lines"], &cut) == nil {
+	same := json.Unmarshal(top["lines"], &cut) == nil && len(cut) == len(lines)
+	for i := 0; same && i < len(cut); i++ {
+		same = cut[i].At.Equal(lines[i].At)
+	}
+	if !same {
+		return f.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, map[string]bool{}, true), nil, false
+	}
+	{
+		// A text the filter made longer than a line is cut, where no form
+		// stands (finalCut).
 		over := false
 		for i := range cut {
 			if len(cut[i].Text) > logsLineMax {
-				cut[i].Text, over = cutText(cut[i].Text, logsLineMax-len("…"))+"…", true
+				cut[i].Text, over = finalCut(f, cut[i].Text), true
 			}
 		}
 		if over {
@@ -311,6 +321,32 @@ const logsCutMargin = 8 << 10
 
 // tokenAlphabet is layer 4's (entropyTokenRe in redact.go).
 const tokenAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+=_-"
+
+// finalCut is s, a text that passed the final pass, cut to logsLineMax
+// with "…", where no form of a known value stands in it as the final
+// pass reads a body's string: the ellipsis joined to the text before
+// it, or a word a pair held, left bare. Shortened a rune at a time, for
+// as long as a form could reach back from the end; "…" alone past that.
+func finalCut(f *Redactor, s string) string {
+	reach := len("…")
+	if f != nil && len(f.secrets) > 0 {
+		reach += len(f.secrets[0].text)
+	}
+	n := logsLineMax - len("…")
+	for range reach + 1 {
+		kept := cutText(s, n)
+		out := kept + "…"
+		q, _ := json.Marshal(out)
+		if f.replaceKnown(string(q), map[string]bool{}, true) == string(q) {
+			return out
+		}
+		if kept == "" {
+			break
+		}
+		n = len(kept) - 1
+	}
+	return "…"
+}
 
 // filterLogLine is one line's text through the app's filter, at most
 // logsLineMax bytes of it sent. The filter sees the text cut to

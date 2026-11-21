@@ -261,19 +261,18 @@ func TestLogsBodyTimesAndCursorPassNoFilter(t *testing.T) {
 		t.Errorf("%s", w.Body)
 	}
 	// Shape: two lines made one by a value of the punctuation between them.
-	// The body goes whole through the filter, and names the key a line's
-	// own filtering replaced too.
+	// The body goes whole through the filter, which makes them one too:
+	// withheld, no cursor, no read's line.
 	j = demoJournal(2, func(i int) string { return []string{"made-up-value-0001 end of one", "start of two"}[i] })
 	h, people, _, logs := logsRig(t, j)
 	value := `one"},{"at":"2026-11-20T09:00:00.001Z","release":"v1","text":"start` // the text, a time and the punctuation between two lines
 	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K="+value+"\nS=made-up-value-0001\n"), 0o600))
 	w = sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
-	if strings.Contains(w.Body.String(), value) || strings.Contains(w.Body.String(), "made-up-value") ||
-		!strings.Contains(w.Body.String(), `"cursor":"`+cursorOf(1)+`"`) || !strings.Contains(w.Body.String(), `"redacted_env":["K","S"]`) {
+	if w.Body.String() != `{"error":"response withheld: a redacted value overlapped the response's own structure"}`+"\n" {
 		t.Errorf("a value across two lines: %d %s", w.Code, w.Body)
 	}
-	if got := logs.FilterMessage("access: person read logs").All(); len(got) != 1 || fmt.Sprint(got[0].ContextMap()["redacted_env"]) != "[K S]" {
-		t.Errorf("the fallback's journal line: %v", got)
+	if n := logs.FilterMessage("access: person read logs").Len(); n != 0 {
+		t.Errorf("a withheld body wrote %d read's lines", n)
 	}
 	// A withheld body (the env_file unreadable) is the filter's sentence,
 	// no cursor, and, sending no line, no journal line.
@@ -283,7 +282,7 @@ func TestLogsBodyTimesAndCursorPassNoFilter(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), `{"error":"response withheld`) || strings.Contains(w.Body.String(), "cursor") {
 		t.Errorf("withheld: %d %s", w.Code, w.Body)
 	}
-	if n := logs.FilterMessage("access: person read logs").Len(); n != 1 {
+	if n := logs.FilterMessage("access: person read logs").Len(); n != 0 {
 		t.Errorf("a withheld body wrote a read's line: %d lines", n)
 	}
 }
@@ -468,6 +467,26 @@ func TestLogsFinalPassLengthensNoText(t *testing.T) {
 		if len(l.Text) > logsLineMax || !utf8.ValidString(l.Text) {
 			t.Errorf("line %d: %d bytes", i, len(l.Text))
 		}
+	}
+}
+
+// TestLogsFinalCut: the fallback's cut, with its ellipsis, makes no form
+// of a known value, and leaves none a pair held: a value that ends in
+// "…", a value an outcome word; each is cut back until none stands.
+func TestLogsFinalCut(t *testing.T) {
+	f := NewRedactor([]string{"S=abcdef…", "K=succeeded"}, nil)
+	for _, s := range []string{
+		strings.Repeat("{", logsLineMax-9) + "abcdefuvwxyz",
+		strings.Repeat("{", logsLineMax-3-len(`"status":"succeeded`)) + `"status":"succeeded"}}}}`,
+	} {
+		out := finalCut(f, s)
+		q, _ := json.Marshal(out)
+		if len(out) > logsLineMax || !strings.HasSuffix(out, "…") || f.replaceKnown(string(q), map[string]bool{}, true) != string(q) {
+			t.Errorf("…%q", out[max(0, len(out)-30):])
+		}
+	}
+	if out := finalCut(f, strings.Repeat("x", 5000)); out != strings.Repeat("x", logsLineMax-3)+"…" {
+		t.Errorf("a plain text: %d bytes", len(out))
 	}
 }
 
