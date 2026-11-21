@@ -455,8 +455,8 @@ func (p *pusher) checkKilled() {
 
 // takeKilled renames the store's kill file to taken under the lock its
 // hook appends under (flock(1) on path+".lock"): a line is appended
-// before the rename, so it is read, or after, to a new file. No file is
-// nothing.
+// before the rename, so it is read, or after, to a new file. No file,
+// or the lock held, is nothing taken this tick.
 func takeKilled(path, taken string) error {
 	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
 		return nil // nothing to take; one written now is taken next tick
@@ -466,7 +466,11 @@ func takeKilled(path, taken string) error {
 		return err
 	}
 	defer func() { _ = lock.Close() }()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	// Never waited on: a hook that stalls holding it would hold the push
+	// loop and the stop. Held, the file is taken at a later tick.
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); errors.Is(err, syscall.EWOULDBLOCK) {
+		return nil
+	} else if err != nil {
 		return err
 	}
 	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()

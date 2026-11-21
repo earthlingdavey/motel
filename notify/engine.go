@@ -320,9 +320,10 @@ func cleanText(known []string, s string, safe ...string) string {
 	return deploytrust.CutRunes(s, maxSummary)
 }
 
-// telling is whether a box event report is told would reach anyone: a
-// config runs notify, and its operator line kept a channel (a boot
-// whose secrets file could not be used drops them all).
+// telling is whether a box warning report is told would reach anyone:
+// a config runs notify, and its operator line kept a channel that
+// receives warnings (a boot whose secrets file could not be used drops
+// channels; one whose floor is critical drops warnings).
 func (e *engine) telling() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -330,7 +331,15 @@ func (e *engine) telling() bool {
 }
 
 func (e *engine) tellingLocked() bool {
-	return e.active != nil && e.active.cfg != nil && len(e.active.cfg.operator) > 0
+	if e.active == nil || e.active.cfg == nil {
+		return false
+	}
+	for _, name := range e.active.cfg.operator {
+		if ch, ok := e.active.cfg.channels[name]; ok && ch.receives(SeverityWarning) {
+			return true
+		}
+	}
+	return false
 }
 
 // reportIfTelling is report for a box event whose source keeps it until

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1653,6 +1654,57 @@ func TestEngineTellingNeedsAnOperatorChannel(t *testing.T) {
 	e.active = &App{cfg: &resolved{}}
 	if e.telling() || e.reportIfTelling(ev) {
 		t.Fatal("told with no operator channel")
+	}
+	// The operator's one channel left takes critical alone: a warning
+	// would reach no one.
+	e.active.cfg = &resolved{operator: []string{"pager"}, channels: map[string]Channel{"pager": {Name: "pager", Kind: "ntfy", Severity: SeverityCritical}}}
+	if e.telling() {
+		t.Fatal("told to a critical-only operator channel")
+	}
+	e.active.cfg.channels["ops"] = Channel{Name: "ops", Kind: "slack"}
+	e.active.cfg.operator = append(e.active.cfg.operator, "ops")
+	if !e.telling() {
+		t.Fatal("not told with an operator channel that takes warnings")
+	}
+}
+
+// A hook stalled holding store-killed's lock holds nothing of motel's:
+// the file is left for a later tick.
+func TestStoreKillLockHeldWaits(t *testing.T) {
+	tp := newTestPusher(t)
+	dir := t.TempDir()
+	tp.m.stateDirOverride = dir
+	file := filepath.Join(dir, storeKilledName)
+	if err := os.WriteFile(file, []byte("1795180000 402653184\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := os.OpenFile(file+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { tp.checkKilled(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("checkKilled waited on a held lock")
+	}
+	if got := tp.take(); len(got) != 0 {
+		t.Fatalf("told while the lock was held: %+v", got)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("the file was taken under a held lock: %v", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	tp.checkKilled()
+	if got := tp.take(); len(got) != 1 {
+		t.Fatalf("not told once the lock was free: %+v", got)
 	}
 }
 
