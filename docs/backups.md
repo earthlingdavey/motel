@@ -40,7 +40,8 @@ Three things are needed before `setup`:
   expires current objects by age: a pack judged old can hold the only
   copy of data every backup uses. `setup` asks for an `s3:` URL, B2's
   included; `rest:`, `gs:` and `swift:` repositories are written
-  [by hand](../backups/README.md#by-hand), and restic's own `b2:`
+  [by hand](../backups/README.md#by-hand), into a file root's alone
+  (0600), which every run refuses otherwise, and restic's own `b2:`
   backend is refused: its B2 library retries a failed upload without
   end, and held a run for 27 hours with nothing said.
 - **Two keys**, neither able to destroy a version: the box's, which
@@ -283,7 +284,8 @@ motel-backup[9377]: demo: restore proven: snapshot c4f0d7c1 was fetched and chec
 
 A person with the viewer role on the box reads the same from their
 own laptop, without ssh: `motel backup status`, or `:backups` in
-`motel` (docs/people.md). It is what `status` says on the box, so it is
+`motel` (docs/people.md), on each release after v0.8.0; a box at
+v0.8.0 answers that read `404`. It is what `status` says on the box, so it is
 the box's claim about itself, as the next section says.
 
 What every line of `status` means is under

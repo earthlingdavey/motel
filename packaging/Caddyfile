@@ -44,10 +44,12 @@
 	# 	# verifies it against the provider's public keys — no shared
 	# 	# secret on the server. For non-CI deploys use a local key:
 	# 	# `moteld deploy-keygen`, then `deploy_trust local { public_key …; audience … }`.
+	# 	# The audience names this box: its deploy host, below.
 	# 	deploy_trust github {
-	# 		audience motel
-	# 		claim repository your-org/myapp
-	# 		claim ref        refs/heads/main
+	# 		audience deploy.example.com
+	# 		claim repository   your-org/myapp
+	# 		claim ref          refs/heads/main
+	# 		claim workflow_ref your-org/myapp/.github/workflows/deploy.yml@refs/heads/main
 	# 	}
 	#
 	# 	app myapp {

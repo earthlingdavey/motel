@@ -21,6 +21,9 @@ the behaviour they describe. Read only the one the finding is in:
 | box | `box/DESIGN-box.md`, "Triage: which failures to defend" |
 | packaging (`packaging/`, the `.deb`'s maintainer scripts) | `packaging/DESIGN-packaging.md`, "Triage" |
 | liveswap | `liveswap/DESIGN-liveswap.md`, "Accepted residuals" and the **Owed** table after it (scored rows; no per-level examples yet, so the general scales) |
+| access (`liveswap/access/`, and in liveswap a person's way in and the routes under `/_motel/`) | `liveswap/access/DESIGN-access.md`, "Triage": examples, the changes scored, and "Accepted residuals" |
+| client (`client/`, the `motel` command and its TUI) | `client/README.md`, the "Accepted" tables after "Getting it" and in "How box text is kept out of the client's voice", and the Owed table after them (scored rows; general scales) |
+| penaltybox | `penaltybox/DESIGN-penaltybox.md` (no triage section yet, so the general scales) |
 | backups (`backups/`, and `cmd/moteld/backupcheck.go`, the validate and reload gate) | `backups/README.md`, "Accepted residuals" (scored rows; general scales) |
 | notify (`notify/`, and liveswap's `Notifier` in `liveswap/lifecycle.go`) | `notify/DESIGN-notify.md`, "Triage": examples, "Accepted residuals" and "Owed" |
 | metrics (`notify/metrics*.go`, `notify/units/metrics/`, and liveswap's `MetricsSource` in `liveswap/appmetrics.go`) | `notify/DESIGN-metrics.md`, "Triage": examples, "Accepted residuals" and "Owed" |

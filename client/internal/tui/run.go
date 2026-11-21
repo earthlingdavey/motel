@@ -30,6 +30,8 @@ type Options struct {
 	Signing func(func(bool))
 	// Resign drops the token last signed, for r.
 	Resign func()
+	// Bell rings the terminal's bell for a read that brings a new alert.
+	Bell bool
 }
 
 // Prime makes the first reads before the screen opens, whoami and the
@@ -81,7 +83,7 @@ func Run(ctx context.Context, o Options, start model.View) (Printed, error) {
 	if o.Screen != nil {
 		u.App.SetScreen(o.Screen)
 	}
-	u.Resign = o.Resign
+	u.Resign, u.Bell = o.Resign, o.Bell
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	wg.Add(1)

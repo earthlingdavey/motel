@@ -33,7 +33,7 @@ func TestRulesSays(t *testing.T) {
 		`{"name":"mem","source":"operator","severity":"warning","subject":"app","app":"shop","kind":"threshold","op":">","threshold":0.8,"unit":"share","for_seconds":300,`+
 		`"readings":[{"app":"shop","measured_at":"@-65s","state":"asleep"}]},`+
 		`{"name":"rollback","source":"motel check","severity":"warning","subject":"app","kind":"event"}]}`)
-	for range 3 {
+	for range 4 { // whoami, the list, the watch's alerts, the rules
 		step(t, s, f, now)
 	}
 	if s.BoxRulesSt == nil {
@@ -290,7 +290,7 @@ func TestRuleWords(t *testing.T) {
 		`"readings":[{"app":"shop","value":5,"threshold":5,"window_seconds":600,"measured_at":"@-5s"}]},`+
 		`{"name":"usage","source":"operator","severity":"warning","subject":"app","kind":"guarded","op":">","threshold":0.9,"unit":"share",`+
 		`"guards":[{"op":"<","value":0,"meaning":"`+meaning+`"}],"readings":[{"app":"shop","instance":"/srv/a","value":0.41,"measured_at":"@-65s","state":"inactive"}]}]}`)
-	for range 3 {
+	for range 4 { // whoami, the list, the watch's alerts, the rules
 		step(t, s, f, now)
 	}
 	text := joined(s.RulesViewFit("", *now, 60, runes))
@@ -318,7 +318,7 @@ func TestRulesUnreadStore(t *testing.T) {
 	f.Body("box-rules.json", `{"store":"unanswered","alerts":[`+
 		`{"name":"app_memory_high","source":"builtin","severity":"warning","subject":"app","kind":"threshold","op":">","threshold":0.9,"unit":"share","for_seconds":600},`+
 		`{"name":"disk_low","source":"motel check","severity":"warning","subject":"box","kind":"threshold","op":">=","unit":"percent","readings":[{"instance":"/srv","value":40,"measured_at":"@-40s"}]}]}`)
-	for range 3 {
+	for range 4 { // whoami, the list, the watch's alerts, the rules
 		step(t, s, f, now)
 	}
 	text := joined(s.BoxRulesView(*now))

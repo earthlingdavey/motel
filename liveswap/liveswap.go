@@ -6,12 +6,14 @@
 // then gracefully stops the old version. Part of motel, from
 // smallhours.
 //
-// Three cooperating modules:
+// Four cooperating modules:
 //   - liveswap (this file): the app module holding app definitions and
 //     the per-app orchestration state
 //   - http.handlers.liveswap_webhook (handler.go): the deploy trigger
 //   - http.reverse_proxy.upstreams.liveswap (upstreams.go): routes
 //     reverse_proxy traffic to the active version's socket
+//   - http.handlers.liveswap_observe (observe.go): counts an app's
+//     responses for its metrics
 package liveswap
 
 import (

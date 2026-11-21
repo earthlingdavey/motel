@@ -227,7 +227,7 @@ func TestDeployRecordIsNotTouchedBeforeAcceptanceOrByARefusal(t *testing.T) {
 	must(t, os.RemoveAll(rig.spec.dirs.release("v1"))) // pruned by release GC, say; the record survives
 	before, err := readDeployRecord(rig.spec.dirs, "v1")
 	must(t, err)
-	rig.fetch.err = validationError{"artifact url https://elsewhere.test/a.tgz refused: host not in artifact_allowlist"}
+	rig.fetch.err = validationError{msg: "artifact url https://elsewhere.test/a.tgz refused: host not in artifact_allowlist"}
 	if err := deployOnceV1(t, rig); err == nil {
 		t.Fatal("want the allowlist's refusal")
 	}

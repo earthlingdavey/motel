@@ -16,8 +16,11 @@ import (
 // for; where the storage says there is none, or has not answered at
 // that clock, setup ends with the working file as it was.
 
+// With --existing no init runs: nothing answers under setupClock
+// beside it, so it is short here, for the tests that wait it out.
 func (b *box) setupExisting(t *testing.T, m *term, repo string) (*SetupReport, error) {
 	t.Helper()
+	clockMet()
 	return Setup(t.Context(), b.cfg, b, SetupOptions{Repository: repo, Existing: true, Terminal: m})
 }
 

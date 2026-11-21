@@ -112,9 +112,10 @@ most container hosts will not give you.
 			# authorized if any deploy_trust source verifies it. No
 			# shared secret is ever stored on the box.
 			deploy_trust github {                 # preset: GitHub Actions OIDC
-				audience motel
-				claim repository your-org/blog     # pin who may deploy
-				claim ref        refs/heads/main
+				audience deploy.example.com        # this box: its deploy host
+				claim repository   your-org/blog   # pin who may deploy
+				claim ref          refs/heads/main
+				claim workflow_ref your-org/blog/.github/workflows/deploy.yml@refs/heads/main
 			}
 
 			# Everything below is a default, shown for reference:
@@ -139,9 +140,10 @@ most container hosts will not give you.
 			command ./server --config config.yaml
 			env DATABASE_URL sqlite:{shared_dir}/api.db
 			deploy_trust github {                 # its own repo, its own block
-				audience motel
-				claim repository your-org/api
-				claim ref        refs/heads/main
+				audience deploy.example.com
+				claim repository   your-org/api
+				claim ref          refs/heads/main
+				claim workflow_ref your-org/api/.github/workflows/deploy.yml@refs/heads/main
 			}
 		}
 	}
@@ -938,7 +940,9 @@ Presets:
 a job on another CI, and the token's format for minting it elsewhere.
 
 Sub-directives: `audience` (required for OIDC — never trust an
-unaudienced token; for `local`, the name of this box, see below),
+unaudienced token; in a `liveswap` block, global or an app's, the
+name of this box, see below; a `box` block's is one name for all the
+boxes `bin/apply` pushes to),
 `claim <name> <value>` (exact-match, repeatable — pin `repository`,
 `ref`, `environment`, etc.; a claim named `@id` is refused, because
 Caddy deletes that key from the config before motel reads it),
@@ -985,8 +989,11 @@ about as that. The generic `oidc` preset is not read: it requires
 overrides is not read either: it then backs only the unknown-app
 path, through which nothing deploys. A `local` block without an
 `audience` accepts a token minted for any box that trusts the same
-key, so give each box its own audience and mint with `--audience` to
-match.
+key, and an OIDC block whose `audience` another box's block shares
+accepts a token sent to that box, for as long as the token lives. So
+give each box its own audience, its deploy host, and mint with
+`--audience` to match; the templates' `scripts/deploy.sh` asks for
+its `MOTEL_URL`'s host.
 
 `Authorization: Bearer` is the only accepted transport — Caddy redacts
 it from access logs automatically.
@@ -1004,24 +1011,25 @@ liveswap {
 
 	# Everyday path: CI deploys on merge, no secret anywhere.
 	deploy_trust github {
-		audience blog
-		claim repository your-org/blog
-		claim ref        refs/heads/main
+		audience deploy.example.com
+		claim repository   your-org/blog
+		claim ref          refs/heads/main
+		claim workflow_ref your-org/blog/.github/workflows/deploy.yml@refs/heads/main
 	}
 	# Break-glass: each dev registers their own public key (they keep
 	# the private half on their laptop). Revoke one by deleting its
 	# block; no shared secret, no effect on the others. The audience
 	# names this box (its deploy hostname), so a token minted for
 	# another box that trusts the same key is refused here; mint with
-	# `--audience blog.example.com --subject alice`.
+	# `--audience deploy.example.com --subject alice`.
 	deploy_trust local {
 		public_key /etc/motel/alice.pub
-		audience blog.example.com
+		audience deploy.example.com
 		subject alice
 	}
 	deploy_trust local {
 		public_key /etc/motel/bob.pub
-		audience blog.example.com
+		audience deploy.example.com
 		subject bob
 	}
 
@@ -1032,8 +1040,11 @@ liveswap {
 ```
 
 A `github` block's `audience` is what the job must ask GitHub for. The
-templates' `scripts/deploy.sh` asks for `motel`, so `audience blog`
-above needs `MOTEL_AUDIENCE: blog` in the job's `env:`, beside
+templates' `scripts/deploy.sh` asks for the host of `MOTEL_URL`,
+lowercase, without a port or a trailing dot, so `audience
+deploy.example.com` above matches a job whose `MOTEL_URL` is
+`https://deploy.example.com/blog`.
+Another audience needs `MOTEL_AUDIENCE` in the job's `env:`, beside
 `MOTEL_URL`, so the rollback step gets it too, or the box answers
 401.
 
@@ -1065,7 +1076,7 @@ key it was; `sub` is whatever the key's holder minted the token with
 
 A refused token is recorded too — in the journal only. The response
 is the same flat 401 whatever the reason: anyone with a GitHub
-repository can mint a token for audience `motel`, so an answer that
+repository can mint a token for any audience, so an answer that
 named the failed check would tell them which apps exist and what each
 block pins. The `webhook auth failed` line carries `refused`: one
 entry per source, in config order, each the source's label and what
@@ -1573,46 +1584,86 @@ What's yours to handle:
 
 ### GitHub Actions
 
-No deploy secret to store — the job mints an OIDC token per run
-(matching a `deploy_trust github { audience motel; claim repository
-your-org/blog; claim ref refs/heads/main }` block on the box):
+No deploy secret to store — the deploy job mints an OIDC token per run
+(matching a `deploy_trust github { audience deploy.example.com; claim
+repository your-org/blog; claim ref refs/heads/main; claim
+workflow_ref your-org/blog/.github/workflows/deploy.yml@refs/heads/main }`
+block on the box, for a workflow in `deploy.yml`; the audience is the
+box's deploy host, so no other box takes the token). Three
+jobs, so that the box only ever holds a token that reads the
+repository: the build runs the repository's code and its tools with a
+read token, the release job alone may write (it runs none of that
+code), and the deploy job, which talks to the box, reads:
 
 ```yaml
 permissions:
-  id-token: write               # required to mint the OIDC token
-  contents: write               # (for the release upload below)
+  contents: read
 
-steps:
-- name: Build artifact
-  run: |
-    npm ci && npm run build
-    tar -czf blog.tar.gz -C dist .
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha256: ${{ steps.build.outputs.sha256 }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Build artifact
+      id: build
+      run: |
+        npm ci && npm run build
+        tar -czf blog.tar.gz -C dist .
+        sha=$(sha256sum blog.tar.gz)
+        echo "sha256=${sha%% *}" >> "$GITHUB_OUTPUT"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: blog
+        path: blog.tar.gz
+        retention-days: 1
 
-- name: Upload release
-  id: release
-  uses: softprops/action-gh-release@v2
-  with:
-    tag_name: build-${{ github.run_number }}
-    files: blog.tar.gz
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write             # the release upload
+    outputs:
+      asset_url: ${{ fromJSON(steps.release.outputs.assets)[0].url }}
+    steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: blog
+    - name: Upload release
+      id: release
+      uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+      with:
+        tag_name: build-${{ github.run_number }}
+        files: blog.tar.gz
 
-- name: Deploy
-  env:
-    ASSET_URL: ${{ fromJSON(steps.release.outputs.assets)[0].url }}
-    GH_TOKEN: ${{ github.token }}
-  run: |
-    JWT=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-      "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=motel" | jq -er .value)
-    echo "::add-mask::$JWT"
-    SHA256=$(sha256sum blog.tar.gz | cut -d' ' -f1)
-    curl --fail-with-body --max-time 900 -X POST \
-      -H "Authorization: Bearer $JWT" \
-      -d '{
-        "url": "'"$ASSET_URL"'",
-        "version": "build-${{ github.run_number }}",
-        "auth_header": "token '"$GH_TOKEN"'",
-        "sha256": "'"$SHA256"'"
-      }' \
-      https://deploy.example.com/blog
+  deploy:
+    needs: [build, release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read              # the token the box fetches the asset with
+      id-token: write             # required to mint the OIDC token
+    steps:
+    - name: Deploy
+      env:
+        ASSET_URL: ${{ needs.release.outputs.asset_url }}
+        SHA256: ${{ needs.build.outputs.sha256 }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        JWT=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=deploy.example.com" | jq -er .value)
+        echo "::add-mask::$JWT"
+        curl --fail-with-body --max-time 900 -X POST \
+          -H "Authorization: Bearer $JWT" \
+          -d '{
+            "url": "'"$ASSET_URL"'",
+            "version": "build-${{ github.run_number }}",
+            "auth_header": "token '"$GH_TOKEN"'",
+            "sha256": "'"$SHA256"'"
+          }' \
+          https://deploy.example.com/blog
 ```
 
 `ASSET_URL` is the uploaded asset's API URL
@@ -1622,13 +1673,16 @@ hosts match exactly, and `github.com/your-org/` does not admit it.
 (`jq -er` fails the step if the mint returned nothing, instead of
 sending an empty bearer and blaming `deploy_trust`.)
 
-`SHA256` is the digest of the tarball this job built, taken from the
-runner's own copy: the box refuses the asset unless it hashes to the
-same, so nothing between the upload and the deploy can swap it.
+`SHA256` is the digest of the tarball the build job built, taken from
+the runner's own copy: the box refuses the asset unless it hashes to
+the same, so nothing between the build and the deploy can swap it.
 
 (`auth_header` is a separate, artifact-download credential — the token
 that reads a private release asset — not the deploy token. It is the
-job's own token, which expires when the job ends.)
+deploy job's own token, which reads the repository and nothing more,
+and expires when that job ends. Sent from a job with `contents:
+write`, it would let whoever controls the box write to the repository
+until then.)
 
 (For public repos, the plain `browser_download_url`
 (`https://github.com/your-org/blog/releases/download/<tag>/blog.tar.gz`)
@@ -1647,10 +1701,13 @@ relaunches the running version from its disk ([Relaunching the
 running version](#relaunching-the-running-version)); with other bytes
 under that version it is a `422` — versions are immutable — so a
 re-run never deploys other bytes under a version the box has. The
-example workflows rebuild the tarball on a re-run, and `tar -czf`
-stamps it with the build time, so their re-run is the `422`; to
-relaunch the running version from the Actions tab, **Run workflow**
-with it as the rollback target. A URL or push deploy that fails has its extracted
+example workflows rebuild the tarball when every job is re-run, and
+`tar -czf` stamps it with the build time, so that re-run is the `422`
+(and the release's asset is replaced by the rebuilt one); a re-run of
+their deploy job alone sends the run's last build and its digest
+again, which relaunches the running version only if that build is the
+one it runs. To relaunch the running version from
+the Actions tab, **Run workflow** with it as the rollback target. A URL or push deploy that fails has its extracted
 release removed, so its version can be deployed again (a failed
 rollback leaves its on-disk release alone) — unless the 5xx body says
 `release <version> left
@@ -1667,8 +1724,8 @@ a new version.
 deploy:
   stage: deploy
   id_tokens:
-    MOTEL_JWT:               # verified by `deploy_trust gitlab { audience motel; claim project_path your-org/blog; claim ref_path refs/heads/main }`
-      aud: motel
+    MOTEL_JWT:               # verified by `deploy_trust gitlab { audience deploy.example.com; claim project_path your-org/blog; claim ref_path refs/heads/main }`
+      aud: deploy.example.com
   script:
     - tar -czf blog.tar.gz -C dist .
     - |

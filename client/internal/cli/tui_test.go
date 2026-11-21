@@ -942,3 +942,16 @@ func TestUnknownCharsetNothingSent(t *testing.T) {
 		}
 	}
 }
+
+// TestBellOn: MOTEL_BELL turns the TUI's bell off when it says off, or
+// another word for it, in any case; unset or anything else, it rings.
+func TestBellOn(t *testing.T) {
+	for _, c := range []struct {
+		v  string
+		on bool
+	}{{"", true}, {"on", true}, {"yes", true}, {"off", false}, {"OFF", false}, {" Off ", false}, {"no", false}, {"false", false}, {"0", false}} {
+		if got := bellOn(c.v); got != c.on {
+			t.Errorf("MOTEL_BELL=%q: the bell on %v, want %v", c.v, got, c.on)
+		}
+	}
+}

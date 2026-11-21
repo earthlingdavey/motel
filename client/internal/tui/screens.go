@@ -23,10 +23,9 @@ import (
 // It runs inside tview's draw, which holds the application's lock: it
 // must not change the focus or show a page (both take the lock), so it
 // only sets text and sizes.
-func (u *UI) render() {
-	now := u.now()
+func (u *UI) render(now time.Time) {
 	left, right := u.S.Title(now)
-	door.SetText(u.title, door.Line(spread(left, right, u.w), u.Colour))
+	door.SetText(u.title, door.Line(bar(u.S.Mark(now), left, right, u.w), u.Colour))
 	v := u.top()
 	// Only the refusal and help (over it or over any screen) are prose;
 	// the other pages are labelled lines, which a wrap would break under
@@ -128,6 +127,48 @@ func spread(left, right model.Line, w int) model.Line {
 	out := append(model.Line{}, left...)
 	out = append(out, model.Seg{T: termtext.From(strings.Repeat(" ", gap))})
 	return append(out, right...)
+}
+
+// markKeeps is the least of the left side the mark's long form leaves
+// beside it, in cells: `motel` and most of the host.
+const markKeeps = 24
+
+// bar is the title bar: the mark of what fires first, then the left
+// side, and the freshness word at the end, which is never cut for the
+// mark. The mark's long form is taken when the left side keeps
+// markKeeps cells beside it, else the first of the short, the tiny and
+// the glyph alone that fits; beside the longest freshness words at 60
+// columns only the tiny form or the glyph does, and the mark then
+// stands alone before the word.
+func bar(m model.MarkForms, left, right model.Line, w int) model.Line {
+	if m.Empty() {
+		return spread(left, right, w)
+	}
+	cells := func(l model.Line) int { return l.Width(door.Width) }
+	right = right.Cut(max(w-1, 0), door.Width)
+	room := w - 1 - cells(right)
+	sep := ownLine(" · ")
+	var mark model.Line
+	for i, f := range []model.Line{m.Long, m.Short, m.Tiny, m.Glyph} {
+		if f == nil {
+			continue
+		}
+		need := cells(f)
+		if i == 0 {
+			need += cells(sep) + markKeeps
+		}
+		if need <= room {
+			mark = f
+			break
+		}
+	}
+	switch {
+	case mark == nil:
+		return spread(left, right, w)
+	case cells(mark)+cells(sep)+len("motel") > room:
+		return spread(mark, right, w)
+	}
+	return spread(append(append(append(model.Line{}, mark...), sep...), left...), right, w)
 }
 
 func ownLine(s string) model.Line { return model.Line{{T: termtext.From(s)}} }
@@ -303,9 +344,9 @@ func (u *UI) markCell(m model.Mark) *tview.TableCell {
 
 func colourOf(c model.Class) tcell.Color {
 	switch c {
-	case model.Bad:
+	case model.Bad, model.LoudBad:
 		return tcell.ColorRed
-	case model.Warn:
+	case model.Warn, model.LoudWarn:
 		return tcell.ColorYellow
 	case model.Good:
 		return tcell.ColorGreen
@@ -503,6 +544,7 @@ VIEWS (type after :)
 
 MARKS   ✖ broken now   ▲ look   ⟳ deploying   ? cannot tell   · nothing to show
 AGE     how old each row's answer is; "stale" after three missed reads
+ALERTS  first in the title bar, on every screen: how many fire that you may see (✖ 3 firing; ▲ when none is critical), reversed while one is new until a key, ? when the count is old or not known. The terminal's bell rings once for a read that brings a new one, at most once a minute; MOTEL_BELL=off turns it off
 
 This client only reads. Rolling back, adding silences and logs arrive when the box offers them.
 Backups are the box's own claim: look from a machine of your own with restic too.

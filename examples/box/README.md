@@ -17,7 +17,7 @@ and signs.
 | File | What it is |
 |---|---|
 | `deploy.example.com/Caddyfile` | One box's whole config; becomes `/etc/motel/Caddyfile` on the box whose deploy host names the directory |
-| `deploy.example.com/MOTEL_VERSION` | Optional: the release that box runs, one line (`0.3.1`, `v0.3.1-rc1`), when it is not the one the workflow checks with ([A box on another release](#a-box-on-another-release)); never sent to the box |
+| `deploy.example.com/MOTEL_VERSION` | Optional: the release that box runs, one line (`0.8.0`, `v0.8.0-rc1`), when it is not the one the workflow checks with ([A box on another release](#a-box-on-another-release)); never sent to the box |
 | `.github/workflows/apply.yml` | `make check` on every push and pull request, with the latest stable moteld (a `MOTEL_VERSION` repository variable pins another, such as a prerelease, for every box; a box's own `MOTEL_VERSION` file pins that box's); on `main`, sends the commit to each box (`bin/apply`) |
 | `Makefile` | `make signer`, `make check`, `make wip`; for secrets, `make secret`, `make secrets`, `make secret-show`, `make rekey`, `make secrets-import` |
 | `bin/` | What the Makefile and the workflow run |
@@ -30,8 +30,8 @@ that commit, with the commit and the
 commits before it back to the one the box runs. The box applies the
 file only if:
 
-- the workflow's token says it ran for this repo's `main` (the box
-  block's `deploy_trust`);
+- the workflow's token says it ran from this repo's `apply.yml` on
+  `main` (the box block's `deploy_trust`);
 - a key the box's own Caddyfile lists signed that commit and every
   commit between it and the one the box runs (`signer` lines);
 - the file is the one in that commit, for this box's host and path;
@@ -115,15 +115,22 @@ what it runs.
    anything it `import`s, since a box refuses a file that imports, and
    delete `template.caddy`. On a fresh box there is nothing to bring
    over. Either way, replace `your-org/boxes`, in the `box`
-   block's `claim repository`, with this repo's `owner/name`: the box
-   takes pushes from that repository's workflow alone, so a placeholder
-   left there refuses the first one. On a fresh box, also replace
-   `example.com`, `deploy.example.com` and `your-org/example`
-   with yours — `your-org` (your organization, or your username if the
-   repos are in your own account) twice more: the `artifact_allowlist`
-   entry pins the organization or account alone, and the app's
-   `deploy_trust` its repo. This lists the lines left to change,
-   comments aside, and prints nothing once all are changed:
+   block's `claim repository` and `claim workflow_ref`, with this
+   repo's `owner/name`: the box takes pushes from that repository's
+   apply workflow alone, so a placeholder left there refuses the first
+   one. On a fresh box, also replace `example.com`,
+   `deploy.example.com` and `your-org/example` with yours — `your-org`
+   (your organization, or your username if the repos are in your own
+   account) three times more: the `artifact_allowlist` entry pins the
+   organization or account alone, and the app's `deploy_trust` its
+   repo and its deploy workflow, in its `claim repository` and `claim
+   workflow_ref`. `deploy.example.com` is also the app's `audience`:
+   it names this box, the host of the app repo's `MOTEL_URL`, which
+   its `scripts/deploy.sh` asks for, so no other box takes the token.
+   The `box` block's `audience motel` stays: `bin/apply` asks for
+   that one name for every box.
+   This lists the lines left to change, comments aside,
+   and prints nothing once all are changed:
 
    ```sh
    grep -En '^([^#]*[^#A-Za-z0-9-])?(your-org|example\.com)([^A-Za-z0-9.-]|$)' */Caddyfile
@@ -203,8 +210,10 @@ what it runs.
 
 An app's secrets are commits too, encrypted so that only the box
 and its readers can read them: see [Secrets](#secrets). Hardening the box — SSH by key only, the
-SSH port shut, and, optionally, an administrator who is not root and
-Debian's updates installed on their own — is on
+SSH port shut, and, optionally, an administrator who is not root,
+Debian's updates installed on their own, seven kernel network modules
+no app needs refused, and a memory and CPU ceiling for all the apps
+together — is on
 [Hardening the box](https://github.com/smallhoursorg/motel/blob/main/docs/hardening.md).
 
 ## Change the config
@@ -352,7 +361,9 @@ One directory per box, each named for its deploy host. Every push goes
 to every box: each one's history must keep up, even when its own file
 did not change, and then the box answers that it already runs that
 Caddyfile. Each box is set up with `moteld init` from its own
-directory.
+directory. An app block's `audience` is its box's deploy host, so one
+copied from another box's file takes the directory's name there; the
+`box` block's `audience motel` is the same in every file.
 
 ### A box on another release
 
@@ -366,16 +377,16 @@ them, named, with nothing changed. A file beside the box's Caddyfile
 pins that box to its own release:
 
 ```
-deploy.example.com/MOTEL_VERSION     one line, of the form 0.3.1-rc1 or v0.3.1-rc1
+deploy.example.com/MOTEL_VERSION     one line, of the form 0.8.0-rc1 or v0.8.0-rc1
 ```
 
 `bin/install-moteld` then installs that release too, as
-`moteld-0.3.1-rc1`, verified against its `checksums.txt` like the
+`moteld-0.8.0-rc1`, verified against its `checksums.txt` like the
 rest, and `make check` checks that box's files with it, saying so in
 its line:
 
 ```
-deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer), checked with moteld-0.3.1-rc1
+deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer), checked with moteld-0.8.0-rc1
 ```
 
 For each box, in this order: its file; else the `MOTEL_VERSION`

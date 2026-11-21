@@ -3,7 +3,7 @@
 `access` is how a person, not CI, reaches a box from a laptop. A person
 is declared once in the `box` block of the Caddyfile with their ssh key
 (`person` and `grant` lines, box/DESIGN-box.md "People and grants"), is
-given the `viewer` role on one app or on the whole box, and signs a
+given the `viewer` or the `logs` role on one app or on the whole box, and signs a
 short token with their own key, which the client sends over HTTPS to
 the box's own name. ssh stays root's. One function, `Decide`, says on
 every request either webhook serves whether the caller may take the
@@ -11,8 +11,19 @@ route's action.
 
 This release gives people reads only: an app's status, deploys,
 alerts and numbers over time, the box's status, backups, and every alert and silence, who
-they are here, and which apps they may view. No
-person can deploy, roll back or push, whatever the lines say.
+they are here, and which apps they may view; and, with a `logs` grant,
+an app's logs. No person can deploy, roll back or push, whatever the
+lines say.
+
+The two roles: `viewer` reads an app's reads on its scope (an app, or
+the box with every app and the box's own reads), and never logs;
+`logs` reads what `viewer` reads on the same scope, and the logs of
+the app, or on the box of every app. No role implies another in the
+code: the views keep each role's scopes apart (`Views{Viewer, Logs}`),
+and `decidePerson` says, action by action, which role takes it. Where
+this page says "a viewer of the box" or "of the app", a person with a
+`logs` grant there is one too; "a logs reader" is a person with a
+`logs` grant.
 
 - The person who runs a box is the operator.
 - The words `Motel` (the `Authorization` scheme) and `m1.` (the
@@ -238,17 +249,32 @@ looked for, so a person whose grants do not cover the name is told the
 same 403 whether it is an app here or not, and only a viewer of the
 box is told 404 for a name that is no app, as on `GET /<app>`. Then the
 query, against the keys the row declares, each with the closed set of
-its values, the first the default (`queryKey`, `parseQuery`): as
-`url.ParseQuery` reads it, each key one the row takes, named once, with
-a value of its set; the value passed on is the row's own word, not the
-request's bytes. Anything else (a query that does not parse, a key the
-row does not take, a key twice, a value outside its set) is a 422 in
+its values, the first the default, or a grammar (`queryKey`,
+`parseQuery`): as `url.ParseQuery` reads it, each key one the row
+takes, named once, with a value of its set; the value passed on is the
+row's own word, not the request's bytes, or for a key with a grammar
+the value as sent, held whole to it. Anything else (a query that does
+not parse, a key the row does not take, a key twice, a value outside
+its set or its grammar) is a 422 in
 the route's own words that names what the row takes and echoes nothing
 of the request: `GET /_motel/apps/{app}/<read> takes no query` for a row
 with no key, which refuses an empty `?` too; `GET
 /_motel/apps/{app}/series takes only range (one of 1h, 24h, 7d, 14d),
-each once` for the series row. A key with a grammar rather than a closed
-set is not built: no row reads one. Then the read waits
+each once` for the series row. A key no set can hold is held to a
+grammar instead (`keyGrammar`): its value, as `url.ParseQuery` decoded
+it, must match the grammar whole; it has no default, so the row's
+function finds it only when the query named it; and the 422 names it by
+the grammar's words (`after (a journal cursor, as an answer gave it)`),
+never by the value. A raw `;` is no separator `url.ParseQuery` takes,
+so a value sent with one unescaped is the 422, never a key dropped (the
+client's `url.Values` escapes it). The one grammar is `journalCursor`
+(`journal.go`), a cursor as journalctl writes one, at most 145 bytes
+and one argument that never begins with `-`; no row reads it yet.
+journalctl takes far more than that grammar, and seeks by any time or
+sequence number a cursor names, a cursor of the full form with made-up
+ids among them, so the grammar keeps out what is no cursor and does
+not make a cursor one the box gave: the row that reads one must check
+that against the cursor's own entry. Then the read waits
 for the app's install as `GET /<app>` does. A global deploy source's
 token is told the 403 naming a declared key (`scope` `app`); an app's
 own deploy token and the box channel's are the flat 401, as on every
@@ -268,7 +294,7 @@ names a declared key, or the 404; an app's source's is the flat 401.
 | a deploy source of an app | a `Bearer` token one of that app's `deploy_trust` sources accepted | `AppDeployer`, the app in the path |
 | a global deploy source | a `Bearer` token a global liveswap source accepted | `AppDeployer` of no app (404 on an app's path, before the table) |
 | the box channel's source | a `Bearer` token the `box` block's `deploy_trust` accepted | `BoxChannel` |
-| a person | a `Motel` token `CheckToken` accepted | `Person`: the name, and the views the grants that apply from here give (`Views`: the box, or a list of apps) |
+| a person | a `Motel` token `CheckToken` accepted | `Person`: the name, and the views the grants that apply from here give, role by role (`Views`: for `viewer` and for `logs`, the box, or a list of apps) |
 
 ### The table
 
@@ -289,17 +315,27 @@ names a declared key, or the 404; an app's source's is the flat 401.
 | `box.rules` | `GET /_motel/rules` | as for `box.whoami` | as for `box.whoami` | a viewer of the box |
 | `app.rules` | `GET /_motel/apps/<app>/rules` | as for `app.alerts` | as for `box.whoami` | a viewer of that app or of the box |
 | `app.series` | `GET /_motel/apps/<app>/series[?range=1h\|24h\|7d\|14d]` | as for `app.alerts` | as for `box.whoami` | a viewer of that app or of the box |
+| `app.logs` | `GET /_motel/apps/<app>/logs`, the row arriving with the logs read | as for `app.alerts` | as for `box.whoami` | a logs reader of that app or of the box, never a viewer grant (403, `needs` `logs`, scope `app`, the same for an app and a name that is no app) |
 
 A box grant covers every app. A pair the table does not hold is
 refused. Three things are structural: no person's cell holds an act; no
 deploy source's cell holds a person's route; and a person's token is
-refused off a `GET` by the checker, before `Decide`.
+refused off a `GET` by the checker, before `Decide`. And every
+person's cell has its own case in `decidePerson`, the two any person
+takes (`box.whoami`, `box.apps`) named too: a cell with no case is
+refused to every person (`TestEveryPersonCellHasACase`), where before
+it was allowed to every person, one with no grant included.
 
 The tests: `TestDecideTable` writes every cell out for every kind,
 people included; `TestAllowedCells` pins the table both ways;
 `TestEveryRouteHasAnAction`, `TestEveryActionHasARoute` and
 `TestEveryMotelRouteHasAnAction` hold the route tables and the actions
-to each other; `FuzzNoRouteNoAnswer`, in each webhook, drives any
+to each other, but for the actions `arrivesWithItsRead` names
+(`app.logs`, whose row comes with the read), which
+`TestArrivesWithItsReadHasNoRow` fails once a row for one exists;
+`TestViewsByRole` holds what each set of grants gives, and
+`TestTwoAppsTwoPeople` has a logs reader of one app and of the box
+among its callers, each reading every row as its viewer twin does; `FuzzNoRouteNoAnswer`, in each webhook, drives any
 method, path and query for every kind of caller, people included.
 
 ### Scoping as structure
@@ -377,12 +413,19 @@ query from those two alone (notify/DESIGN-metrics.md, "An app's
 series"), so nothing of the request's reaches the store but a word of
 the set. The body is about that app alone, and its words (each panel's
 name and unit) pass the app's filter; the store's word and the window,
-the box's own of closed sets, and its numbers (the step, the end, every
-point) pass none: they are taken
-out before the filter and put back after its last pass, as an app's
-alerts' times are (`filterSeries`), since an env_file value that is a
-run of digits, a unix time or a date would otherwise be replaced inside
-a point and leave a body no client reads. A body the filter withheld,
+the box's own of closed sets, its numbers (the step, every point) and
+the window's end pass none: they are taken out before the filter and
+put back after its last pass, as an app's alerts' times are
+(`filterSeries`). The step and the points are numbers, which rule 7 of
+`redact.go` holds in any body, but for its fallbacks (a value across a
+number's edge, or one replaced elsewhere in the body), which send a
+body through whole, numbers and all; `filterSeries` keeps them out even
+then. The end is a time under a key rule 7 does not hold, so an
+env_file value that is a date or a piece of one would otherwise be
+replaced inside it, as a value equal to the store's word would be in
+that word, and leave a body no client reads. Taken out, they also leave
+the filter a few hundred bytes to read, not the points
+(notify/DESIGN-metrics.md, "An app's series"). A body the filter withheld,
 or whose words' structure it changed, goes whole through the filter as
 any body would. `TestTwoAppsTwoPeople` gives each app a series whose
 point is a number of its own, and asserts for every caller that no
@@ -433,12 +476,12 @@ box's read holds them all.
 | Answer | When | Body |
 |---|---|---|
 | 401 | every refusal of a token, a person's or a deploy token's, whatever the reason; a person outside every address list | the flat 401, byte for byte, headers included: `{"error":"invalid or missing deploy token (Authorization: Bearer <jwt>)"}`. No `Motel-*` header |
-| 403 | a verified caller `Decide` refuses | `wire.Forbidden`: `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`; `needs` is `viewer`, `deployer` or `key` (a token a declared key signed), `scope` is `app` or `box`. It names no app and echoes nothing of the request |
+| 403 | a verified caller `Decide` refuses | `wire.Forbidden`: `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`; `needs` is `viewer`, `logs` (`{"error":"this needs the logs role on this app","needs":"logs","scope":"app"}`), `deployer` or `key` (a token a declared key signed), `scope` is `app` or `box`. It names no app and echoes nothing of the request |
 | 404 | a viewer of the box asking for a name that is no app (`unknown app "<name>"`, as a global deploy source is told); a path under `/_motel/` with no row (`not found`) | `wire.Error` |
 | 429 | a person past their rate | `{"error":"too many requests; retry after <n> s"}`, with `Retry-After` |
 | 503 | a deploy token that verified for an app liveswap's `Start` has not installed within 5 s, or whose request ended first (#473); a person's read of such an app, or a list that names one | `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}`, with `Retry-After: 1` |
 | 200 | `GET /<app>` | `wire.Status`, the body a deploy token reads too. `deploying` is the deploy in flight: `version`, `deployed_by`, `started_at` (when the box took it: for a push, before its upload) and `phases`, those entered so far in order, the last one's `seconds` running to the answer; absent when none runs. It is set when the box takes a deploy (a rollback and a relaunch are deploys; the watchdog's restarts are not) and cleared in the step that sets `last_deploy`, so a read shows one or the other. It sits before `last_deploy`: the templates' `deploy.sh` reads the failing phase from `last_deploy` on |
-| 200 | `GET /_motel/whoami` | `wire.WhoAmI`: `name`, `key` (its fingerprint), `roles` (the grants that apply from here, no address list shown), `box`, `version`, `protocol`, `token_expires_at` |
+| 200 | `GET /_motel/whoami` | `wire.WhoAmI`: `name`, `key` (its fingerprint), `roles` (the grants that apply from here, one per role and scope: `{"role":"viewer"\|"logs","scope":"box"\|"app:<name>"}`, the box's first, then each app by name, viewer before logs on one scope; no address list shown), `box`, `version`, `protocol`, `token_expires_at` |
 | 200 | `GET /_motel/backups` | `wire.Backups`, which is `backups/status`'s `Result`: what `motel-backup status --json` says as any account on the box looks, the motel user's here (no warnings of the credential file, which only root's look reads), whether the backups are healthy, not, or could not be told (`could_not_tell`: on a box without backups, `backups are not set up: … is not there`; on a server that is not moteld, that it does not read them). One look every 10 s at most, shared by every person: a request in that time is given the answer kept, whose `at` says when it was decided. The box's own claim (docs/backups.md, "Look from your own machine") |
 | 200 | `GET /_motel/alerts` | `wire.BoxAlerts`: `monitor` (as for an app's), `alerts`, newest first, each a `wire.BoxAlert`: an app's alert's fields, then `app` (its `app` label; none for a box event, which names an app, if any, in its instance) and `instance`; `silences`, the active ones newest first, then the pending ones soonest first, each a `wire.Silence`: `id`, `state` (`active` or `pending`; never an expired one), `matchers` (`name`, `op`, one of `=`, `!=`, `=~`, `!~` spelled from Alertmanager's `isRegex` and `isEqual`, `value`), `starts_at`, `ends_at`, `created_by` and `comment`, as Alertmanager holds them; and `more_alerts`, `more_silences` when a list was cut at its cap (500, 200). With `off` or `unanswered`, both lists are `[]`. Every alert row has its keys sorted, and an app's its own `redacted_env` when its filter changed it; its times are Alertmanager's, put back after the filter's last pass, so an env_file value that is a piece of a time (a date) cannot leave the list unread. Not the heartbeat, the test alert, the deploy mute, nor `person_new_network` and `person_outside_list` ("A key used from somewhere new"), which name people's networks and addresses and go to the operator's channels alone. From the same fetch as an app's, up to 5 s old |
 | 200 | `GET /_motel/apps/<app>/series` | `wire.Series`: `store` (`on`, the store answered; `off`, the config's monitor block has no metrics line, or there is none; `unanswered`, the store did not answer within 3 s; a client reads another word as not knowing), `window` (one of `wire.SeriesRanges`), with `on` alone `step_seconds` and `end` (the window's end, a multiple of the step: the newest point is of the last whole step), then `panels`, each `name`, `unit` and `points` (`[unix seconds, value]` pairs, oldest first, a missing step no pair), in the fixed order `memory_bytes`, `cpu_cores`, `requests_per_second`, `5xx_share`, `p95_ms`, a panel with no point absent (the request panels for an app no observe names). A body the app's filter changed has its keys sorted and its own `redacted_env`. One set of queries per app and window every 30 s at most for the process, shared by every person: an answer can be up to 30 s old. Experimental |
@@ -556,25 +599,46 @@ owner's decision; no waiting period, no 403 of its own).
 | The record | per key fingerprint, its last 16 networks, the most recently used first; a seventeenth drops the one used longest ago. No time is kept: the order is the record. Keys the newest registry does not list are dropped at the first person's request under it (a registry's `Generation` orders the loads, so a reload's old handlers drop nothing, and a request they still serve for a removed key is neither recorded nor told); a person removed is forgotten, and told as a first use if added back. A load that admits no one leaves the record as it is, until a person is admitted again |
 | The file | `/var/lib/motel/people-networks.json`, motel's own, 0600, written by rename (`writeOwnFile`). `{"version":1,"keys":{"SHA256:…":["203.0.113.0/24","2001:db8:5::/48","unknown"]}}`. A new network or a key dropped is written within a second of the last write (so a thief cycling networks has it written once a second at most), in the background, one write at a time; a change of order alone at most once a minute; and liveswap's `Stop` and the box app's (a stop, an upgrade's restart, a reload's old config; the box app's for a config with no liveswap block) write what is pending, waiting for it at most 2 s (`FlushPeopleNetworks`). Named by moteld's main (`KeepPeopleNetworksIn`), so a test's handlers keep the record in memory alone |
 
+**A listed logs grant beside an unlisted viewer grant.** A person with
+`viewer app blog` and `logs app blog from 198.51.100.0/24` is admitted
+from anywhere on the viewer grant: from outside the list a new network
+is `person_new_network` as for anyone, and `person_outside_list` is
+not told, because a grant applies from there, so the key was not used
+outside every list; whoami lists `viewer` alone, and a logs read is
+the 403 naming `logs`, told to no channel (`TestLogsListThroughTheGate`,
+row 82). docs/people.md says so beside its advice of a `from` list on
+every logs grant; an operator who wants to hear of the key outside the
+office at all puts the list on the viewer grant too.
+
 **The record never touches the disk on a request's path.** The file is read in
 the background at the first person's request a process admits. Until it
 has been read, or for 30 s if the read does not come back, uses are
 recorded and their announcements held (up to 64 networks a key, not
 16, so a burst after a start is told whole; at the load each key keeps
 16 again, and one told then and cut is told again at its next use),
-then told for each network the file did not hold. A write runs on its timer's goroutine, outside
-the lock a request takes. (A request from a new network hands its
-announcement to notify's engine, under the engine's lock, which notify
-also holds while it writes its producers' file: an accepted residual
-below.) Each fault ends right, or said:
+then told for each network the file did not hold. A network is told,
+then written: a write leaves out a network whose announcement (its
+journal line and its alert) is not yet made, and the network is
+written once both are, so a crash between the two tells it again at
+its next use rather than never (`TestNetworksToldBeforeWritten`, the
+load's held uses and a request's alike). Memory holds it from the
+request that found it, so a request from it meanwhile finds it known
+and tells nothing (`TestNetworksToldOnceAtOnce`); an announcer that
+panics leaves it untold and out of memory, so its next use tells it.
+A write runs on its timer's goroutine, outside the lock a request
+takes, and each announcement is made outside that lock too, on the
+request's goroutine or the load's. (A request from a new network
+hands its announcement to notify's engine, under the engine's lock,
+which notify also holds while it writes its producers' file: an
+accepted residual below.) Each fault ends right, or said:
 
 | Fault | What happens |
 |---|---|
 | no file (the first start with people, the first after the upgrade) | `access: no record yet …` at information; each key's next use is told, as its first |
 | a file that does not parse (one a power loss emptied: there is no fsync), of a newer version, of none, a link at the name, larger than 1 MiB, or that cannot be read | one warning naming the file and why; moteld starts afresh and writes over it; each key's next use is told again as its first |
 | a read that does not come back within 30 s | the same warning (`it was not read within 30s`); the held uses are told, and the file is written over with what memory holds then: the read that comes back later is dropped, and each other key's next use is told again as its first |
-| a write that fails (a full disk, `EIO` at the rename) | one warning until a write succeeds again, then an information line; the record stays right in memory and is tried again each minute, no sooner for a new network, nor for a stop, which then waits for nothing; a restart before it is written tells again the networks used since |
-| a stop, a restart, a crash | a stop writes what is pending first, and waits for a read of the file under way (so the uses it holds are told and written), at most 2 s in all; a crash loses what was due: a change of order (the next use moves it again), a new network of the last second, told again at its next use, and the uses held by a read under way, told at their next use |
+| a write that fails (a full disk, `EIO` at the rename) | one warning until a write succeeds again, then an information line; the record stays right in memory and is tried again each minute, no sooner for a new network, nor for a stop, which then waits for no write (only for the announcements being made); a restart before it is written tells again the networks used since |
+| a stop, a restart, a crash | a stop writes what is pending first, and waits for a read of the file under way and for every new network's announcement being made, the load's held uses and a request's (so each is told, then written), at most 2 s in each `Stop` that writes the record (`TestNetworksFlushWaitsForTheRead`, `TestNetworksStopWaitsForTheTelling`); a crash loses what was due: a change of order (the next use moves it again), a new network of the last second, told again at its next use (a duplicate rather than a miss: no write holds a network before it is told, but for the told mark's residual below), and the uses held by a read under way, told at their next use |
 | two requests at once, on either webhook | one lock; each network told once (`TestNetworksConcurrent`, under `-race`) |
 | the clock stepping | nothing on disk holds a time; the hour of `person_outside_list` is on the monotonic clock |
 
@@ -621,7 +685,7 @@ access's examples:
 
 | Axis | Examples |
 |---|---|
-| **Severity 5** | a person reads an app they hold no grant on; a person's token acts, deploys or pushes; a token for one box accepted at another; a stranger's request answered as a person's; a key no line lists accepted |
+| **Severity 5** | a person reads an app they hold no grant on; a person reads an app's logs without a `logs` grant on it or on the box; a person's token acts, deploys or pushes; a token for one box accepted at another; a stranger's request answered as a person's; a key no line lists accepted |
 | **Severity 4** | every person locked out until the console, with no line saying why |
 | **Severity 3** | a refusal that tells a stranger something (a key is listed, a name is an app); a grant that grants more or less than `describe` prints; a person told the wrong role in a 403; an announcement that does not come |
 | **Severity 2** | a 401 for a valid token, retried and named; a 429 to a person inside their budget; a duplicate announcement |
@@ -694,20 +758,31 @@ access's examples:
 | 62 | `moteld validate` | the forwarded-networks warning beside the refusal of a `from` list behind the same server, naming the same remedy | 1 | 5 | 1 | fix: size 1, risk 1 | given only with no `from` list (`TestWarnPeopleNetworks`) |
 | 63 | the record on disk | with writes failing, a stop retried the write every 5 ms for its 2 s, so each reload's old config took 2 s to stop. Found in round 4 of the self-review | 2 | 3 | 3 | fix: size 1, risk 1 | while writes fail, a stop leaves the minute's retry as it is (`TestNetworksFlushAtStop`) |
 | 64 | the announcements | notify's engine kept people's announcements whenever no config ran notify, not only at a start, and told days-old ones as now when a monitor block came back. Found in round 4 of the self-review | 2 | 2 | 3 | fix: size 2, risk 1 | each kept at most a minute (`earlyFor`); an older one has its journal line alone (`TestPeopleSinkBeforeNotifyRuns`) |
-| 65 | the record on disk | a stop while the file is being read left the uses it held neither told nor written until their next use after the restart. Found by Copilot on #610 | 3 | 2 | 5 | fix: size 1, risk 1 | a stop waits for the read too, within its 2 s (`TestNetworksFlushWaitsForTheRead`) |
+| 65 | the record on disk | a stop while the file is being read left the uses it held neither told nor written until their next use after the restart. Found by Copilot on #610 | 3 | 2 | 5 | fix: size 1, risk 1 | a stop waits for the read too, within its 2 s (`TestNetworksFlushWaitsForTheRead`); whole only since row 73: until then the stop waited for the read and its write, not for the announcements the read made after it, so it could return with the held uses written and not told |
 | 66 | the announcements | old announcements kept by notify's engine filled its 64 places, so a fresh one in the minute before a config ran notify again was dropped. Found by Copilot on #610 | 3 | 2 | 3 | fix: size 1, risk 1 | the old ones are dropped before the bound is checked (`TestPeopleSinkBeforeNotifyRuns`) |
 | 67 | the record on disk | a config with a box block and no liveswap block admits people on `box_webhook`, but only liveswap's `Stop` wrote what was pending. Found by Copilot on #610 | 2 | 4 | 3 | fix: size 1, risk 1 | the box app's `Stop` does it too (`TestStopFlushesPeopleNetworks`) |
 | 68 | the announcements | one key cycling networks while no config runs notify filled the 64 places kept, so another key's first use then was dropped from the channels. Found by Copilot on #610 | 3 | 2 | 3 | fix: size 1, risk 1 | at most four kept per key, the limit per key's own bucket (`TestPeopleSinkBeforeNotifyRuns`) |
 | 56 | the record on disk | the removal of a temp file a crash left, run beside the read, removes the temp file of a write begun after the wait, which fails and is said (found in the self-review) | 2 | 2 | 1 | fix: size 1, risk 1 | leftovers removed by the writer, before its own temp file, where no other write of this process is under way (`TestNetworksFile`) |
 | 69 | an app's series | another app's numbers in an app's answer | 5 | 5 | 5 | fix | the source asked for the handle's app by its name, every query built from it and the window alone; `TestTwoAppsTwoPeople` with a number of each app's in its series; `TestSeriesChosenByTheHandle` |
 | 70 | an app's series | a query taken loosely, a window outside the set reaching the store, or the request's text echoed | 5 | 5 | 3 | fix | the row's declared key and its closed set, parsed strictly, the row's own word passed on; any other query the 422 in the route's words (`TestSeriesRouteQuery`, `FuzzNoRouteNoAnswer` with an oracle of its own, `queryTaken`) |
-| 71 | an app's series | an env_file value shaped like a number of the body (a unix time, digits inside a memory value, a date) replaced inside a point, so no client reads the answer | 3 | 5 | 3 | fix | the numbers pass no filter (`filterSeries`, `TestSeriesNumbersPassNoFilter`, which shows the whole body through the filter breaking) |
+| 71 | an app's series | an env_file value shaped like a number or time of the body (a unix time, digits inside a memory value, a date) replaced inside a point or the end, so no client reads the answer | 3 | 5 | 3 | fix | the numbers and the end pass no filter (`filterSeries`; since #612 rule 7 of `redact.go` holds every body's numbers but in its fallbacks, which `filterSeries` does not reach, and the end is a time it does not hold); `TestSeriesNumbersPassNoFilter` |
 | 72 | an app's series | the store loaded by series reads at the rate, or a store that does not answer holding the read | 2 | 5 | 3 | fix | four fixed range queries per app and window, shared for 30 s by every person and config, a 3 s budget a caller going away does not cut, a failure kept as long and journalled once, `"store":"unanswered"` (`TestSeriesViewShares`); measured under the box's caps (notify/DESIGN-metrics.md) |
+| 73 | the record on disk | a stop in the moment the file's load has written the uses it held and not yet told them (the write's timer goroutine first, the load's announcements after its unlock) returned, and the exit cut the announcements off: the journal line and the alert lost, and the network written, so never told. The same window made `TestNetworksHeldUntilRead` and `TestNetworksFileUnusable` flake in CI. Found by a flake's investigation, 2026-11-20 | 3 | 4 | 5 | fix: size 3, risk 2; **Wide** (every person's request from a new network) | a count of the announcements being made, the load's and a request's; a stop waits for it as for a write, within its 2 s (`TestNetworksStopWaitsForTheTelling`, an announcement held until the test lets it go) |
+| 74 | the record on disk | a crash between a new network's write and its announcement (the load's held uses, and a request's when the last write was over a second before: the write's timer at 0 can run before the announcement) left the network recorded and never told, the miss the crash residual below says the order prevents. Found by a flake's investigation, 2026-11-20 | 3 | 4 | 5 | fix: size 3, risk 2; **Wide** (as row 73) | tell, then remember: a network is kept in memory untold, every write leaves it out, and it is written once told (`TestNetworksToldBeforeWritten`) |
+| 75 | a query key with a grammar | a value outside the grammar reaching the row's function, a raw `;` splitting the value or dropping the key, or the request's value echoed in the 422 | 5 | 5 | 5 | fix | the value matched whole against an anchored grammar, the key refused when `url.ParseQuery` errs, the 422 the row's words through a filter with no values (`TestQueryKeyGrammar`, `TestQueryKeyGrammarSays`, `TestAppRouteKeys`, `TestJournalCursorGrammar`) |
+| 76 | `decidePerson` | an action in a person's cells with no case of its own allowed to every person, one with no grant or no views included: on main the second switch had no default, so `app.logs` added with its cell and without its case would have let every person read every app's logs. Found in the logs grant's plan (measured) | 5 | 5 | 5 | fix: size 2, risk 1; **Wide** (every person's request) | the switch closed: `box.whoami` and `box.apps` a case of their own, a default that refuses with no 403 body (`TestEveryPersonCellHasACase`, with a made-up cell; `TestDecideTable`) |
+| 77 | the grant line | a `logs` line loaded as a viewer line: `ParseGrant` set every grant's role to `viewer`, so its holder would have no logs while describe printed `viewer` | 3 | 5 | 3 | fix: size 1, risk 1 | the role taken from the line (`TestParseGrant`'s re-print and role of each logs line; `FuzzParseGrant`'s oracle takes `viewer` or `logs`, seeded with both) |
+| 78 | the views | a viewer reading logs, or a logs reader gaining a scope (logs on app A reading app B, or the box's reads) | 5 | 5 | 5 | fix | the views by role, no role implying another (`Scopes.On` per role; `ReadsLogs` the logs grant's alone); `TestViewsByRole`, the `app.logs` column of `TestDecideTable`, `TestDecidePersonRefusals`; `TestTwoAppsTwoPeople` with a logs reader of one app and of the box reading every row as its viewer twin |
+| 79 | the views | a `from` list not applied to a logs grant: logs read from outside the list | 5 | 5 | 5 | fix | each grant whose list does not hold the address is dropped before its role is read, as before (`TestRegistryViews`' listed logs grant beside an unlisted viewer grant, inside and outside the list; `TestLogsListThroughTheGate`, through `ServeHTTP`) |
+| 80 | the views | an existing viewer losing a read, or a logs reader of the box refused a box read, through a reader of the old `Box` and `Apps` fields left behind | 3 | 5 | 1 | fix: size 1, risk 1 | the fields removed, so the compiler named every reader (two: `decidePerson`'s box reads, now `CoversBox`, and whoami); `TestTwoAppsTwoPeople` and box's `TestTwoAppsTwoPeopleOnTheBoxWebhook` with every existing caller's status unchanged |
+| 81 | `CheckLines` | a "covers it" warning that is untrue: given whatever the covering grant's `from` list, so `viewer box from <office>` beside `viewer app blog` was told the app grant adds nothing, and an operator who removed it lost blog from outside the office; with `logs` three more pairs | 3 | 5 | 3 | fix: size 1, risk 1 | each warning only when the covering grant has no list (`TestCheckLines`: every pair, listed and not; `TestLinesBothReaders`) |
+| 82 | the announcements | a valid signature from outside a logs grant's list, beside a viewer grant with none, told only as a new network, never as `person_outside_list`, and its refused logs read told to no channel | 2 | 5 | 5 | fix by naming: size 1, risk 2 (the owner's decision of 2026-11-20: as it is, said in the docs) | docs/people.md ("When their key is used from somewhere new") and "A listed logs grant beside an unlisted viewer grant" above; `TestLogsListThroughTheGate` holds what is told |
 
 ### Accepted residuals
 
 | Residual | S | O | D | Size, risk of a fix | Why accepted |
 |---|---|---|---|---|---|
+| A logs grant removed by a push reads on until the reload that applies it, as any removed grant does (the existing residual of a removed person, below) | 2 | 5 | 1 | — | the views are built from the newest registry on every request, a follow's poll among them, so the reload ends it; box's `TestRemovedLogsGrantAfterReload` holds that it does |
 | `GET /_motel/alerts` passes a filter with no app's values over every silence and every box event (an alert with no `app` label, or one naming an app this config does not run), so an app's env_file value in a silence's comment, or in a box event's summary, would reach a viewer of the box unmasked, where an app's own alert masks it | 3 | 1 | 5 | 2, 2 (a silence whose matchers name one app here through that app's filter; a box event cannot be given one) | a comment posted through `moteld monitor silence add` is masked with every value the config knows when it is written (notify, "Silences"), and liveswap masks its events' summaries with the app's filter when it raises them; what is left is text root writes past motel (to Alertmanager's socket, as a producer), and the audience is a viewer of the box, who reads every app. Found in the self-review of the box-wide alerts read (#581) |
 | A removed person reads until the reload that applies the push removing their lines | 2 | 5 | 1 | — | the reload follows the push; a deny list would be state for that window |
 | A person's lines edited at the console are seen at the next reload, not at once | 2 | 3 | 3 | 1, 1 | as for every other line of the file; the operator reloads after an edit |
@@ -719,7 +794,13 @@ access's examples:
 | The time of a refusal tells a stranger which key types the box lists (a type no listed key has costs no verification) | 1 | 3 | 5 | — | it says nothing of who; hiding it would mean verifying every type for anyone, which is the cost row 16 removes |
 | A box too old for people and a key the box does not list both answer the flat 401 | 2 | 5 | 3 | — | the owner's decision: no answer names motel in a header; the client's message names both |
 | A legitimate burst over 60 requests is told to wait | 2 | 3 | 1 | — | `Retry-After` names the wait |
-| A crash in the second between a new network's record and its write tells it again after the restart | 2 | 4 | 3 | 2, 2 (the announcement held until the write) | a single fault, which rule 2 would fix, but the two orders trade a duplicate for a miss: told only after the write, a crash between the write and the telling leaves a network recorded and never told (severity 3), in the journal as well as the channels. The duplicate errs towards telling, and the crash is in the journal beside it. A stop, unlike a crash, writes first (row 41) |
+| A crash between a new network's announcement and its write (the write within a second of the last) tells it again at its next use after the restart | 2 | 4 | 3 | 2, 2 (the announcement held until the write) | a single fault, which rule 2 would fix, but the two orders trade a duplicate for a miss: told only after the write, a crash between the write and the telling leaves a network recorded and never told (severity 3), in the journal as well as the channels. The duplicate errs towards telling, and the crash is in the journal beside it. The code holds this order since row 74: no write holds a network not yet told. A stop, unlike a crash, waits for the announcements and writes them (rows 41, 73) |
+| A stop while new networks' announcements keep coming (a thief cycling networks without a pause, or notify's engine lock held by a disk that hangs) waits its whole 2 s, in each `Stop` that writes the record (liveswap's and the box app's, so up to 4 s for a reload's old config), and what is being told at its end is cut off by the exit, neither told nor written: told at its next use | 2 | 2 | 3 | 2, 2 (no announcement begun once a stop has; one deadline for both stops) | it takes a stop at the moment of a stolen key in use from many networks, or of a disk that hangs; the wait is bounded, and an announcement cut off is not written, so it is a duplicate's chance, not a miss. Found with row 73 |
+| A held use's announcer that panics, at the load, stops moteld: the load tells on its own goroutine, which nothing recovers. The held use is not written, so the restart tells it again at its next use. Found in the second pass of the self-review of rows 73 and 74; as before this change, but for the write | 3 | 2 | 1 | 2, 1 (a recover around the load's announcements) | it takes a defect in notify's `Announce`, which raises an event and panics on nothing it is given, and the crash is loud: Go's trace in the journal and systemd's restart. A request's announcer that panics is recovered by the http server, and its network is then left untold (`TestNetworksStopWaitsForTheTelling`) |
+| A request's announcer that panics on a key's first use, while a second new network of the key is being told, leaves no announcement saying `first_use`: the second was told as a new network, since the first was in memory, and the first, forgotten, is told as a new network at its next use. Found in the third pass of the self-review of rows 73 and 74 | 2 | 2 | 3 | 2, 2 (`first` counting told networks alone, which tells two first uses at once both as first) | it takes a defect in notify's `Announce` and a key's first two uses at once; both networks are still told, and only the word for which use differs |
+| A file the load found unusable, or holding keys the newest registry no longer lists, is written over only once the held uses are told, so an announcer that blocks (notify's engine lock held by a disk that hangs) keeps it on disk meanwhile, unless another write comes first. Found in the third pass of the self-review of rows 73 and 74 | 2 | 2 | 3 | 1, 2 (the load's write scheduled before its announcements, which then has each start with held uses write twice) | it takes a disk that hangs under notify's state and a file to replace at that start; memory is right, and a crash meanwhile tells each key's next use again, a duplicate |
+| A request's announcer that panics while another new network of the same key has been told meanwhile leaves the key one network short: the other's told mark cut the key to sixteen, the untold one among them, and the untold one is then forgotten, so the told network cut is told again at its next use. Found by Copilot on #632 | 2 | 2 | 3 | 2, 2 (the untold left out of the sixteen a key keeps) | it takes a defect in notify's `Announce` and two new networks of one key at once; the network is told again, a duplicate |
+| An announcement that ends marks its key's network told by its value, so if the same network was inserted again meanwhile (the key removed and added back by two loads, or the network cut and used again), the second entry is written before its own announcement is made, and a crash then misses it | 3 | 1 | 5 | 3, 2 (a token per untold entry) | it takes two loads or a cut and a reuse inside one announcement's microseconds, and a crash before the second announcement ends; the first announcement was made. Found in the self-review of rows 73 and 74 |
 | A key's `person_outside_list` can be told again within the hour after a restart: the hour is kept in memory alone | 2 | 4 | 1 | 3, 2 (the hours in the file) | the second message is true: a valid signature came from outside the lists again. One more line in the file's form, and a time on disk the clock can step, for a rate bound |
 | A read of the file slower than 30 s (a disk that all but hangs) is taken as no file: the held uses are told and the file is written over with what memory holds, so every other key's next use is told again as its first. Found in the self-review, rounds 1 and 3; the wait was 5 s, and is 30 s since round 3 (a read of at most a megabyte, on a disk merely busy at boot, comes well within it) | 2 | 2 | 1 | 2, 2 (no write until the late read comes back, then a merge) | it ends red and named: the warning says the record could not be used and that each key's next use is told as new. A deferred write is one more state the next fault (the read never coming back) can reach |
 | A request from a new network can wait on notify's engine lock while notify writes its producers' file under it (`external.json`, on a producer's state or a tick), so a disk that hangs there holds that request; a request from a known network does not. Found in the self-review, by both reviewers | 2 | 2 | 3 | 2, 2 (the announcement handed to the engine through a queue its goroutine drains) | it takes two faults: a disk that hangs under notify's state directory, and a key's first request from a network at that moment; that request alone waits, and its retry, from a network now recorded, does not. liveswap's own events (a deploy's) wait on the same lock already |
@@ -731,7 +812,7 @@ access's examples:
 | A silence of either alert made by hand with a regular expression on `alertname` (`amtool`, or Alertmanager's API), or with no `alertname`, is listed in the box-wide read with its matchers and comment | 2 | 5 | 5 | 1, 1 | the owner's rule: no guard for a by-hand command no doc asks for. `moteld monitor silence add --alert`, which docs/people.md names, makes the equality matcher the filter leaves out |
 | Before the file is read, a key used from A, then B, then A again has B told as its first use, and A as a new network: the held order is the order of last use. Found by Copilot on #610 | 2 | 2 | 3 | 2, 2 (the first held network kept apart from the order) | it takes a key's first uses from two networks in the moment the file is read after a start; both are told, and only which one says "first" differs |
 | A stop in the moment a file read is under way, right after a start, in which Caddy stops notify before liveswap: the read's held uses are written but their channel messages go to notify's engine after it stopped, and are lost at exit; the next process takes them as told. Found by Copilot on #610 | 3 | 1 | 3 | 3, 2 (undelivered announcements kept with the record, or the stops ordered) | it takes a stop within the read's moment after a start, and that order of stops; the `access:` journal line of each is written before the announcer is told |
-| More than 64 networks of one key in the first moments after a start, before the file is read (normally milliseconds, at most 30 s), drop the earliest untold | 3 | 1 | 5 | 2, 2 | it takes a stolen key, a burst of that size from that many networks, and a start, at once; the 64 networks told still say it |
+| More than 64 networks of one key in the first moments after a start, before the file is read (normally milliseconds, at most 30 s), or at once while their announcements block (notify's engine lock held by a disk that hangs), drop the earliest untold: memory keeps 64 at most until each is told (`TestNetworksUntoldBounded`; the bound after the read found by Copilot on #632). One dropped while being told is told and not written, so told again at its next use | 3 | 1 | 5 | 2, 2 | it takes a stolen key, a burst of that size from that many networks, and a start, at once; the 64 networks told still say it |
 | The rate table holds more than its 2,048 names while more than that have each asked in the last 30 s: only buckets that have refilled are dropped | 1 | 5 | 5 | 2, 2 | a load declares at most 1,024 people and only a verified token of a declared name adds a bucket, so it takes loads that replace every person in use, twice in 30 s; dropping a bucket in use would refill a throttled person. A bucket can be dropped once 30 s have passed since its name last asked |
 | A person whose only key is ECDSA (for example from an agent that makes only P-256 keys) cannot be declared until a later release admits that type | 2 | 2 | 1 | — | the owner's decision of 2026-11-15: a stranger presenting a listed public key buys one check of its type, 0.04 ms for Ed25519 against 0.5 to 1.3 ms for the larger ECDSA curves, and widening later breaks no one where narrowing would; the line's refusal names the remedy |
 | A token sent by hand over plain HTTP, to a site the operator serves in clear under the box's name, is answered like any other; no webhook checks that a request came over TLS | 3 | 1 | 3 | 2, 2 | the owner's decision: a hand-made plain-HTTP request is not catered for. The client, `motel`, speaks https only and follows no redirect; `deploy.sh` refuses an `http://` address unless `MOTEL_ALLOW_HTTP=1`, for a test box; the template's deploy host is served over https |
@@ -749,8 +830,9 @@ access's examples:
 
 ## Not in this release
 
-Any act by a person; a second role for people; every box-level read but
-the box's status, who am I and the list of apps; the nonce store; a
+Any act by a person; a role beyond `viewer` and `logs`; every box-level read but
+the box's status, who am I, the list of apps, backups, alerts and
+rules; the nonce store; a
 read held back from a new network (the announcements tell, and never
 gate); people on a box with no
 `box` block or no `box_webhook` site, or on any name but the box's

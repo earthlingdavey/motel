@@ -5,9 +5,26 @@ COMPOSE ?= docker compose
 # The workspace modules. NOTE: `./...` from the repo root matches only
 # the root module — nested modules are excluded from a parent module's
 # pattern even in workspace mode — so test/vet name each module's tree
-# explicitly.
+# explicitly. These, RUN and the e2e lanes' splits and suites are set
+# with ?=, so each is read from make's command line or the environment
+# alike.
 MODULES ?= . backups box client liveswap notify penaltybox
-PKGS = ./... ./backups/... ./box/... ./client/... ./liveswap/... ./notify/... ./penaltybox/...
+PKGS ?= ./... ./backups/... ./box/... ./client/... ./liveswap/... ./notify/... ./penaltybox/...
+
+# One test by name: make test's `go test -run` pattern, as in
+# make test PKGS=./penaltybox/... RUN=TestRetryAfterSeconds. Read with
+# $(value), so a `$` in it (^TestX$/^sub$) reaches go test as typed,
+# and its single quotes escaped for the shell.
+RUN ?=
+
+# MODULES, PKGS, RUN or an e2e lane's splits or suites left in the
+# environment narrow a run as on the command line, but unseen, and a
+# narrowed run passes: such a run ends by naming them. An empty
+# MODULES or PKGS, or an empty list of splits or suites, is refused:
+# it would run next to nothing.
+# $(call narrowed_note,<the variables the target reads>).
+env_narrowed = $(strip $(foreach v,$(1),$(if $(and $(filter environment,$(origin $(v))),$(value $(v))),$(v))))
+narrowed_note = $(if $(call env_narrowed,$(1)),@echo "════ make $@: $(call env_narrowed,$(1)) from the environment: only what it names ran ════")
 
 # Release version: the tag when present (release.yml passes it in),
 # else a digit-leading dev placeholder that deb version rules accept.
@@ -16,10 +33,12 @@ VERSION ?= $(shell (git describe --tags --exact-match 2>/dev/null || echo v0.0.0
 # Distro image for the package install smoke test (install-test).
 DISTRO ?= debian:13
 
-.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-dist install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
+.PHONY: test help test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-dist install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
 
-test:
-	$(COMPOSE) run --rm dev go test -race -cover $(PKGS)
+test: ## unit tests, all modules (race + coverage); PKGS= some packages, RUN= a go test -run pattern
+	$(if $(strip $(PKGS)),,$(error PKGS is empty: name packages, or leave it unset))
+	$(COMPOSE) run --rm dev go test -race -cover $(if $(value RUN),-run '$(subst ','\'',$(value RUN))') $(PKGS)
+	$(call narrowed_note,PKGS RUN)
 
 # The privileged systemd lanes (test-integration, e2e, install-test)
 # need a cgroup-v2 Docker host: Docker Desktop, or Linux with systemd.
@@ -52,7 +71,7 @@ endef
 # under it has changed [measured: a restic whose stuck-request default
 # changed, its pin "(cached)" and passing]. A new Debian release is
 # exactly such a change.
-test-integration:
+test-integration: ## real deploys through caddytest, under a real systemd user manager
 	$(cgroup2_preflight)
 	$(COMPOSE) up --build -d dev-systemd
 	status=0; \
@@ -75,30 +94,38 @@ test-integration:
 # `make test` or a bare vet, so a signature change that breaks them
 # stays invisible until the integration lane boots a whole systemd
 # container to find out.
-vet:
+vet: ## go vet, both tag sets
+	$(if $(strip $(PKGS)),,$(error PKGS is empty: name packages, or leave it unset))
 	$(COMPOSE) run --rm dev go vet $(PKGS)
 	$(COMPOSE) run --rm dev go vet -tags integration $(PKGS)
+	$(call narrowed_note,PKGS)
 
-tidy:
+tidy: ## go mod tidy in each of MODULES
+	$(if $(strip $(MODULES)),,$(error MODULES is empty: name a module, or leave it unset))
 	for m in $(MODULES); do $(COMPOSE) run --rm -w /src/$$m dev go mod tidy || exit 1; done
+	$(call narrowed_note,MODULES)
 
 # The PR-CI half of tidy: `go mod tidy -diff` writes nothing, prints
 # the diff tidy would make and exits non-zero when there is one, so a
 # missing go.sum line or a leftover require fails the PR that left it.
 # It checks each module's go.mod/go.sum only: go.work is ignored and
 # go.work.sum is not checked (that would be a separate check).
-tidy-check:
+tidy-check: ## fails if go mod tidy would change a module's go.mod/go.sum
+	$(if $(strip $(MODULES)),,$(error MODULES is empty: name a module, or leave it unset))
 	for m in $(MODULES); do $(COMPOSE) run --rm -T -w /src/$$m dev go mod tidy -diff || exit 1; done
+	$(call narrowed_note,MODULES)
 
 # Both tag sets, as for vet: a bare run never compiles the
 # integration-tagged files, so neither the linters nor gofmt see them.
 # A single `run.build-tags: [integration]` in .golangci.yml would not
 # do: it drops the `!integration` goleak TestMain files instead.
-lint:
+lint: ## golangci-lint (gofmt-gated), both tag sets; MODULES= the modules you touched
+	$(if $(strip $(MODULES)),,$(error MODULES is empty: name a module, or leave it unset))
 	for m in $(MODULES); do \
 		$(COMPOSE) run --rm -w /src/$$m lint golangci-lint run || exit 1; \
 		$(COMPOSE) run --rm -w /src/$$m lint golangci-lint run --build-tags integration || exit 1; \
 	done
+	$(call narrowed_note,MODULES)
 
 # Real fuzzing of the untrusted-input surfaces (seed corpora already
 # run inside `make test`). One target at a time — Go allows a single
@@ -118,7 +145,7 @@ FUZZ_MODULES = box client liveswap penaltybox
 # regression input) no longer has a target in its package to replay it
 # — dead corpora test nothing. The seed corpora themselves run in
 # `make test`.
-fuzz-list:
+fuzz-list: ## what fuzz will run, discovered per module
 	@for m in $(FUZZ_MODULES); do \
 		found=0; \
 		pkgs=$$($(COMPOSE) run --rm -T -w /src/$$m dev go list -f '{{.Dir}}' ./...) || { echo "$$pkgs"; echo "go list failed in $$m"; exit 1; }; \
@@ -138,7 +165,7 @@ fuzz-list:
 		[ $$found -eq 1 ] || { echo "no fuzz targets found in $$m"; exit 1; }; \
 	done
 
-fuzz:
+fuzz: ## fuzz the untrusted-input surfaces (FUZZTIME=2m per target, from the environment)
 	for m in $(FUZZ_MODULES); do \
 		pkgs=$$($(COMPOSE) run --rm -T -w /src/$$m dev go list -f '{{.Dir}}' ./...) || { echo "$$pkgs"; echo "go list failed in $$m"; exit 1; }; \
 		for p in $$pkgs; do \
@@ -159,20 +186,22 @@ fuzz:
 # always updates regardless of tool version, which is why vulncheck.yml
 # also runs this on a weekly cron. Accepted (unreachable, not yet
 # fixable) advisories are alert_dismissals in .github/pin-watch.yml.
-vulncheck:
+vulncheck: ## govulncheck, each of MODULES
+	$(if $(strip $(MODULES)),,$(error MODULES is empty: name a module, or leave it unset))
 	$(COMPOSE) run --rm dev sh .github/scripts/vulncheck.sh $(MODULES)
+	$(call narrowed_note,MODULES)
 
 # The manifest rules of pin-watch.py (.github/scripts/pin_watch_test.py),
 # in the same python image as usage-check, which depends on it so CI's
 # usage-check job runs both; the test stubs PyYAML, which the image
 # lacks and the rules never read.
-pin-watch-check:
+pin-watch-check: ## pin-watch.py's manifest rules
 	$(COMPOSE) run --rm -T --user "$$(id -u):$$(id -g)" usage python3 -I -B .github/scripts/pin_watch_test.py
 
 # The rule ci.yml's changes job skips the build-and-test jobs by
 # (.github/scripts/ci_changes_test.py): in the same image and lane as
 # pin-watch-check, since usage-check runs on every PR, skipped or not.
-ci-changes-check:
+ci-changes-check: ## the rule by which CI skips its build-and-test jobs on a PR of markdown or the usage ledger alone
 	$(COMPOSE) run --rm -T --user "$$(id -u):$$(id -g)" usage python3 -I -B .github/scripts/ci_changes_test.py
 
 # Full-history secret scan — the same engine and image as CI's gitleaks
@@ -188,7 +217,7 @@ ci-changes-check:
 # the branch's commits — those CI's git-mode run covers. A plain
 # checkout (and CI's) is unchanged.
 secretscan: GITLEAKS_FLAGS = $(shell test -d .git || echo --no-git)
-secretscan:
+secretscan: ## gitleaks: full history, or the working tree in a git worktree
 	$(COMPOSE) run --rm gitleaks detect --source /src --redact -v $(GITLEAKS_FLAGS)
 
 # motel's release, linked in as Caddy's CustomVersion. Caddy puts it
@@ -230,10 +259,10 @@ USAGE_MACHINE ?= $(shell git config motel.usage-machine)
 # starts with a hyphen is a value, not an option.
 export USAGE_MATCH USAGE_MACHINE
 USAGE_FLAGS = --match="$$USAGE_MATCH" --machine="$$USAGE_MACHINE"
-usage:
+usage: ## what building this costs, into usage/ and docs/footprint.md; needs gh auth login
 	GH_TOKEN=$$(gh auth token) $(COMPOSE) run --rm --user "$$(id -u):$$(id -g)" usage \
 		python3 -I .github/scripts/usage.py collect-claude collect-actions render --repo $(USAGE_REPO) $(USAGE_FLAGS)
-usage-claude:
+usage-claude: ## the Claude Code half of usage alone, no token
 	$(COMPOSE) run --rm --user "$$(id -u):$$(id -g)" usage \
 		python3 -I .github/scripts/usage.py collect-claude render $(USAGE_FLAGS)
 
@@ -242,7 +271,7 @@ usage-claude:
 # transcripts, no token) and fails when the page no longer matches them.
 # It is also the only lane that runs the python image, so Dependabot's
 # bumps of that pin are exercised.
-usage-check: pin-watch-check ci-changes-check
+usage-check: pin-watch-check ci-changes-check ## usage.py's tests, then fails if docs/footprint.md no longer matches usage/
 	$(COMPOSE) run --rm -T --user "$$(id -u):$$(id -g)" usage python3 -I -B .github/scripts/usage_test.py
 	$(COMPOSE) run --rm -T --user "$$(id -u):$$(id -g)" usage python3 -I .github/scripts/usage.py render
 	git diff --exit-code -- docs/footprint.md
@@ -258,7 +287,7 @@ usage-check: pin-watch-check ci-changes-check
 # host user and package's cp/rm staging fails (macOS masks this).
 # The two arch builds run concurrently: cache-warm, wall time is
 # mostly the two large links, and those overlap cleanly.
-build:
+build: ## cross-compile moteld and motel-backup for linux amd64/arm64 into build/
 	$(COMPOSE) run --rm -e GOFLAGS= -e CGO_ENABLED=0 dev sh -c '\
 		git config --global --add safe.directory /src; \
 		GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o build/moteld-linux-amd64 ./cmd/moteld & p1=$$!; \
@@ -280,7 +309,7 @@ build:
 # the command line cross-build: make build-client GOOS=darwin GOARCH=arm64.
 # package builds each of CLIENT_TARGETS this way, for the release.
 # GOFLAGS is cleared as for build, so Go records the commit too.
-build-client:
+build-client: ## the laptop client into build/; GOOS= GOARCH= cross-build
 	$(COMPOSE) run --rm -e GOFLAGS= -e CGO_ENABLED=0 -e GOWORK=off $(if $(GOOS),-e GOOS=$(GOOS)) $(if $(GOARCH),-e GOARCH=$(GOARCH)) dev sh -c '\
 		git config --global --add safe.directory /src; \
 		os=$$(go env GOOS); arch=$$(go env GOARCH); \
@@ -291,11 +320,15 @@ build-client:
 # each with build-client and packs it as
 # dist/motel_$(VERSION)_<os>_<arch>.tar.gz, with `motel` (0755) and
 # LICENSE (0644) at the archive's root; the release checksums and
-# attaches everything in dist/. A target is one more word here. A
-# linux one would take the name the server's own archive had up to
-# v0.7.0, which a box repository made from that release's template
-# still asks the latest release for (docs/upgrading.md).
-CLIENT_TARGETS = darwin/arm64
+# attaches everything in dist/. A target is one more word here. The
+# linux archives have the name the server's own archive had up to
+# v0.7.0: a box repository made from that release's template, unless
+# its repository variable pins an earlier release, installs this client
+# as its checker from the latest release, and its workflow fails at the
+# client's refusal of a server command (docs/upgrading.md). So does a
+# raw-binary host's own script that still fetches that name (README.md,
+# "Without the package").
+CLIENT_TARGETS = darwin/arm64 linux/amd64 linux/arm64
 
 # Builds .deb for both arches into dist/, then the client's archives
 # (CLIENT_TARGETS above). .deb only, and no .apk
@@ -319,7 +352,7 @@ CLIENT_TARGETS = darwin/arm64
 # The client's archives are packed in the dev container, not by the
 # host's tar: GNU tar on every host, so a Mac's tar adds none of
 # macOS's own metadata to them.
-package: clean-dist build
+package: clean-dist build ## the .debs and the client's archives into dist/
 	mkdir -p dist
 	$(COMPOSE) run --rm --entrypoint sh -e NFPM_VERSION=$(VERSION) nfpm -c '\
 		set -e; \
@@ -345,7 +378,7 @@ package: clean-dist build
 			rm -rf $$s; \
 		done'
 
-clean-dist:
+clean-dist: ## remove dist/'s packages and archives
 	rm -f dist/moteld_*.deb dist/motel_*.tar.gz
 
 # Installs the freshly built .deb inside a systemd container (DISTRO
@@ -357,7 +390,7 @@ clean-dist:
 # --cgroupns=host with the cgroup mount is the reliable
 # systemd-in-docker recipe on cgroup-v2 hosts (GitHub runners and
 # Docker Desktop alike).
-install-test:
+install-test: ## install dist/'s .deb under real systemd (DISTRO=debian:13); run package first
 	$(cgroup2_preflight)
 	docker build -t motel-install-test-$(subst :,-,$(DISTRO)) \
 		--build-arg BASE_IMAGE=$(DISTRO) packaging/test
@@ -391,7 +424,7 @@ install-test:
 # suite, inside it too: people declared in a box's file read it with
 # the client over the box's own TLS (e2e/box/people.sh says what it
 # holds).
-e2e:
+e2e: ## the liveswap, penaltybox, systemd, recovery, box and people suites against the shipped binary
 	$(cgroup2_preflight)
 	$(COMPOSE) up --build -d e2e-motel e2e-upstream e2e-artifacts
 	status=0; \
@@ -425,7 +458,7 @@ e2e:
 # e2e-metrics do not run at once on one host.
 NOTIFY_SPLITS ?= core reload
 NOTIFY_LIMIT ?= 1800
-e2e-notify:
+e2e-notify: ## the notify suite; NOTIFY_SPLITS= core reload (the default), heartbeat, or all
 	$(cgroup2_preflight)
 	$(if $(strip $(NOTIFY_SPLITS)),,$(error NOTIFY_SPLITS is empty: name a split, or all))
 	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null
@@ -453,6 +486,7 @@ e2e-notify:
 	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null; \
 	$(if $(filter heartbeat all,$(NOTIFY_SPLITS)),,echo "════ heartbeat split not run (notify 15, motel's 5-minute hold, ~9.5 min): CI runs it; NOTIFY_SPLITS=heartbeat runs it here ════";) \
 	exit $$status
+	$(call narrowed_note,NOTIFY_SPLITS)
 
 # The metrics suite: notify's box with Debian's victoria-metrics, and the
 # same stub receiver; its own target and CI job, as notify's. Its parts
@@ -469,7 +503,7 @@ e2e-notify:
 # would let them).
 METRICS_SPLITS ?= view vmalert store rules
 METRICS_LIMIT ?= 900
-e2e-metrics:
+e2e-metrics: ## the metrics suite; METRICS_SPLITS= view vmalert store rules (the default), or all
 	$(cgroup2_preflight)
 	$(if $(strip $(METRICS_SPLITS)),,$(error METRICS_SPLITS is empty: name a split, or all))
 	$(COMPOSE) rm -sf e2e-metrics-box e2e-sink >/dev/null
@@ -496,6 +530,7 @@ e2e-metrics:
 	rm -rf $$logs; \
 	$(COMPOSE) rm -sf e2e-metrics-box e2e-sink >/dev/null; \
 	exit $$status
+	$(call narrowed_note,METRICS_SPLITS)
 
 # The backup suite: a box with systemd, Debian's restic and sqlite3, and
 # an S3 server for the repository. Its own target and its own CI job —
@@ -519,10 +554,11 @@ e2e-metrics:
 # e2e, which shortens setup's clock alone (backups/engine/
 # setupclock_e2e.go): the package's binary is never built with it,
 # and `make build` refuses one that was.
-BACKUP_SUITES = setup backup units status restore check
+BACKUP_SUITES ?= setup backup units status restore check
 SUITE_LIMIT ?= 600
-e2e-backup:
+e2e-backup: ## the backup suites, a box each; BACKUP_SUITES= setup backup units status restore check (the default)
 	$(cgroup2_preflight)
+	$(if $(strip $(BACKUP_SUITES)),,$(error BACKUP_SUITES is empty: name a suite, or leave it unset))
 	$(COMPOSE) run --rm -e CGO_ENABLED=0 dev sh -c '\
 		go build -trimpath -o build/e2e-backup/moteld ./cmd/moteld & p1=$$!; \
 		(cd backups && go build -trimpath -tags e2e -o ../build/e2e-backup/motel-backup ./cmd/motel-backup) & p2=$$!; \
@@ -533,15 +569,15 @@ e2e-backup:
 	logs=$$(mktemp -d); i=0; \
 	for s in $(BACKUP_SUITES); do \
 		i=$$((i + 1)); \
-		( t0=$$(date +%s); $(COMPOSE) exec -T --index $$i e2e-backup-box timeout $(SUITE_LIMIT) /bin/sh /suite-$$s.sh >$$logs/$$s.log 2>&1; echo "$$? $$(($$(date +%s) - t0))" >$$logs/$$s.rc ) & \
+		( t0=$$(date +%s); $(COMPOSE) exec -T --index $$i e2e-backup-box timeout $(SUITE_LIMIT) /bin/sh /suite-$$s.sh >$$logs/$$i.log 2>&1; echo "$$? $$(($$(date +%s) - t0))" >$$logs/$$i.rc ) & \
 	done; \
 	wait; \
 	status=0; i=0; \
 	for s in $(BACKUP_SUITES); do \
 		i=$$((i + 1)); \
-		rc=; took=; read rc took <$$logs/$$s.rc || rc=unknown; \
+		rc=; took=; read rc took <$$logs/$$i.rc || rc=unknown; \
 		echo "════ $$s suite (box $$i, $${took:-?}s) ════"; \
-		cat $$logs/$$s.log; \
+		cat $$logs/$$i.log; \
 		if [ "$$rc" = 124 ]; then echo "════ $$s suite ended at SUITE_LIMIT ($(SUITE_LIMIT)s) ════"; fi; \
 		if [ "$$rc" != 0 ]; then \
 			status=1; \
@@ -553,6 +589,7 @@ e2e-backup:
 	rm -rf $$logs; \
 	$(COMPOSE) rm -sf e2e-backup-box e2e-s3 >/dev/null; \
 	exit $$status
+	$(call narrowed_note,BACKUP_SUITES)
 
 # Leak-hunting soak against the product binary: deploy/reload/traffic
 # churn, then goroutine/fd return-to-baseline assertions over the admin
@@ -564,7 +601,7 @@ e2e-backup:
 # container's console carries nothing from it and the journal is the
 # evidence — same as the e2e target above, tail-bounded here because a
 # soak pushes 15-20 minutes of churn through the stub servers.
-soak:
+soak: ## ~20 min leak hunt: deploy/reload churn, goroutine/fd assertions
 	$(COMPOSE) up --build -d e2e-motel e2e-upstream e2e-artifacts
 	status=0; \
 	$(COMPOSE) run --rm -e SOAK_DEPLOYS -e SOAK_RELOADS -e SOAK_CLIENTS -e SOAK_REQS \
@@ -576,11 +613,17 @@ soak:
 	$(COMPOSE) down --remove-orphans; \
 	exit $$status
 
-e2e-logs:
+e2e-logs: ## the e2e stack's logs and moteld's journal, while it is up
 	$(COMPOSE) logs e2e-upstream e2e-artifacts
 	$(COMPOSE) exec -T e2e-motel journalctl --no-pager -n 300
 
 # --rmi local: the images this checkout built (no custom tag), one set
 # per compose project; pulled images are kept.
-clean:
+clean: ## take the compose project down, with its volumes and the images it built
 	$(COMPOSE) down -v --remove-orphans --rmi local
+
+# Each target's `##` text, from its own line, in the order above. A
+# target without one is not listed. Not the default goal: a bare make
+# runs test.
+help: ## this list
+	@awk -F ':.*## ' '/^[a-z][a-z0-9-]*:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)

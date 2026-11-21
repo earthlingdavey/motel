@@ -32,8 +32,8 @@ import (
 // The box of the access tests: two apps, a and b, each with its own
 // deploy source and a canary value in its env_file; the box channel's
 // source; and people. alice views a, bob views b, carol views the box,
-// dave is declared with no grant, and ops is the signer (a person by its
-// ed25519 key, with no grant). The same file is the installed one the
+// erin holds logs on the box, dave is declared with no grant, and ops is
+// the signer (a person by its ed25519 key, with no grant). The same file is the installed one the
 // registry is read from, with its site written as the walk reads a
 // box's (a bare hostname), and the config the test provisions, with the
 // site over plain http so that no certificate is involved.
@@ -61,6 +61,7 @@ func newPeopleBox(t testing.TB) *peopleBox {
 			"bob@example.test":   accesstest.SKEd25519(),
 			"carol@example.test": accesstest.Ed25519(),
 			"dave@example.test":  accesstest.Ed25519(),
+			"erin@example.test":  accesstest.Ed25519(),
 			"ops@example.test":   accesstest.Ed25519(),
 		},
 		deploy: map[string]ed25519.PrivateKey{},
@@ -69,6 +70,7 @@ func newPeopleBox(t testing.TB) *peopleBox {
 			"grant alice@example.test viewer app a",
 			"grant bob@example.test viewer app b",
 			"grant carol@example.test viewer box",
+			"grant erin@example.test logs box",
 		},
 	}
 	for _, src := range []string{"a", "b", "box"} {
@@ -634,7 +636,7 @@ func TestTwoAppsTwoPeopleOnTheBoxWebhook(t *testing.T) {
 	reg := access.NewRegistry(peopleIdentity, l)
 	stranger := accesstest.Ed25519()
 	now := time.Now()
-	callers := []string{"alice@example.test", "bob@example.test", "carol@example.test", "dave@example.test", "ops@example.test",
+	callers := []string{"alice@example.test", "bob@example.test", "carol@example.test", "dave@example.test", "erin@example.test", "ops@example.test",
 		"a key no line lists", "deployer of a", "deployer of b", "the box channel", "no token"}
 	for _, rt := range routes {
 		for _, caller := range callers {
@@ -669,7 +671,8 @@ func TestTwoAppsTwoPeopleOnTheBoxWebhook(t *testing.T) {
 			case caller == "the box channel":
 				want = 0 // the row's own answer, whatever it is
 			case person && rt.method != http.MethodGet:
-			case person && caller == "carol@example.test" && rt.action == access.BoxStatus:
+			case person && (caller == "carol@example.test" || caller == "erin@example.test") && rt.action == access.BoxStatus:
+				// A viewer and a logs reader of the box.
 				want = http.StatusOK
 			case person:
 				want = http.StatusForbidden
@@ -714,6 +717,40 @@ func TestRemovedPersonRefusedAfterReload(t *testing.T) {
 	}
 	if w := b.get("/_motel/whoami", carol.Token(peopleIdentity, now, time.Minute)); w.Code != http.StatusOK {
 		t.Errorf("carol after the reload: %d %s", w.Code, w.Body)
+	}
+}
+
+// TestRemovedLogsGrantAfterReload: a push that removes a logs line and
+// keeps the viewer line beside it is applied by a reload; from then on
+// whoami lists the viewer grant alone, so the logs are refused.
+func TestRemovedLogsGrantAfterReload(t *testing.T) {
+	b := newPeopleBox(t)
+	b.grants = append(b.grants, "grant alice@example.test logs app a")
+	b.install()
+	b.load()
+	alice := b.people["alice@example.test"]
+	roles := func(when string) []string {
+		w := b.get("/_motel/whoami", alice.Token(peopleIdentity, time.Now(), time.Minute))
+		var me struct {
+			Roles []struct{ Role, Scope string }
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &me); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("alice %s: %d %s", when, w.Code, w.Body)
+		}
+		var out []string
+		for _, r := range me.Roles {
+			out = append(out, r.Role+" "+r.Scope)
+		}
+		return out
+	}
+	if got := roles("before"); !slices.Equal(got, []string{"viewer app:a", "logs app:a"}) {
+		t.Fatalf("alice before: %q", got)
+	}
+	b.grants = b.grants[:len(b.grants)-1]
+	b.install()
+	b.load()
+	if got := roles("after"); !slices.Equal(got, []string{"viewer app:a"}) {
+		t.Errorf("alice after her logs line is removed: %q", got)
 	}
 }
 

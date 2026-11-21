@@ -1,4 +1,4 @@
-motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
+✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the … live · 0s ago
 apps › blog › metrics 24h                                                as of 14:12:40 UTC · 0s ago
 over 24h · a point every 5 m · to 14:10 UTC (2m ago) · t: another window
 ^ a version's latest deploy that succeeded (a column is 15m)

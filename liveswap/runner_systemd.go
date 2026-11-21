@@ -551,7 +551,7 @@ func resolveInView(spec startSpec) (argv0, target string, err error) {
 	if err != nil {
 		// A command that is not there, or not executable: the release
 		// as shipped, or the command as configured — the deployer's.
-		return "", "", &preflightError{err.Error()}
+		return "", "", &preflightError{msg: err.Error()}
 	}
 	// As late as possible, and before the manager follows any of them:
 	// what a bind source points at is only knowable now (see
@@ -582,7 +582,11 @@ func resolveInView(spec startSpec) (argv0, target string, err error) {
 		if target != argv0 {
 			via = fmt.Sprintf(" (via %s, which is)", argv0)
 		}
-		return "", "", &preflightError{fmt.Sprintf("%s is not inside the sandbox view of app %s%s: an app sees its release dir, its shared dir and the OS runtime (/usr and a named handful of /etc), and nothing else on this host — ship the runtime inside the release, or install it under /usr", target, spec.app, via)}
+		const refusal = "%s is not inside the sandbox view of app %s%s: an app sees its release dir, its shared dir and the OS runtime (/usr and a named handful of /etc), and nothing else on this host — ship the runtime inside the release, or install it under /usr"
+		return "", "", &preflightError{
+			msg:  fmt.Sprintf(refusal, target, spec.app, via),
+			said: fmt.Sprintf(refusal, commandsFile, spec.app, ""),
+		}
 	}
 	if err := siblingToolsPresent(siblingShell, siblingSleep); err != nil {
 		return "", "", err
@@ -601,7 +605,7 @@ func siblingToolsPresent(shell, sleep string) error {
 	for _, p := range []string{shell, sleep} {
 		fi, err := os.Stat(p)
 		if err != nil || fi.IsDir() || fi.Mode().Perm()&0o111 == 0 {
-			return &preflightError{fmt.Sprintf("%s is missing or not executable on this host: every app unit runs its command behind `%s -c '%s'`, so the manager waits the app's grace on systemd 257 (#380); the supported host is Debian 13, where both are Essential", p, shell, siblingScript)}
+			return &preflightError{msg: fmt.Sprintf("%s is missing or not executable on this host: every app unit runs its command behind `%s -c '%s'`, so the manager waits the app's grace on systemd 257 (#380); the supported host is Debian 13, where both are Essential", p, shell, siblingScript)}
 		}
 	}
 	return nil
@@ -674,10 +678,10 @@ func checkUnitLines(spec startSpec) error {
 		if !found {
 			key = "an entry with no =" // never the value
 		}
-		return &preflightError{fmt.Sprintf("the environment of app %s would be a %d-byte line in its unit file (the largest variable, %s, %d bytes of it), over the %d-byte bound: a line past 1 MiB makes the unit unreadable to systemd after a daemon-reload — move large values out of env_file and the Caddyfile, into a file under the app's shared dir", spec.app, n, key, size, unitLineBudget)}
+		return &preflightError{msg: fmt.Sprintf("the environment of app %s would be a %d-byte line in its unit file (the largest variable, %s, %d bytes of it), over the %d-byte bound: a line past 1 MiB makes the unit unreadable to systemd after a daemon-reload — move large values out of env_file and the Caddyfile, into a file under the app's shared dir", spec.app, n, key, size, unitLineBudget)}
 	}
 	if n := unitLineLength("ExecStart", withSibling(spec.command)); n > unitLineBudget { // the argv as the unit carries it, behind its sibling shell
-		return &preflightError{fmt.Sprintf("the command of app %s would be a %d-byte line in its unit file, over the %d-byte bound: a line past 1 MiB makes the unit unreadable to systemd after a daemon-reload — shorten its arguments", spec.app, n, unitLineBudget)}
+		return &preflightError{msg: fmt.Sprintf("the command of app %s would be a %d-byte line in its unit file, over the %d-byte bound: a line past 1 MiB makes the unit unreadable to systemd after a daemon-reload — shorten its arguments", spec.app, n, unitLineBudget)}
 	}
 	return nil
 }

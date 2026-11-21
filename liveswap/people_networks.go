@@ -41,7 +41,10 @@ import (
 // file is read in the background at the first person's request a
 // process admits, and until it has been read (or networksLoadWait has
 // passed) uses are recorded and their announcements held, then told
-// for each network the file did not hold. A new network, or a key
+// for each network the file did not hold. A network is told, then
+// written: no write holds one whose announcement is not yet made, so a
+// crash between the two tells it again rather than never, and a stop
+// waits for the announcements being made. A new network, or a key
 // dropped, is written at once, in the background, one write at a time;
 // a change of order alone at most once a minute. A write that fails is
 // said once, kept in memory, and tried again each minute. A file that
@@ -224,6 +227,10 @@ type PeopleNetworks struct {
 	writing       bool
 	lastWrite     time.Time
 	failing       bool
+	// telling counts the new networks' announcements being made outside
+	// the lock (a request's, or the load's, the load's journal line among
+	// them): a stop waits for them, as for a write.
+	telling int
 }
 
 type keyNetworks struct {
@@ -233,9 +240,11 @@ type keyNetworks struct {
 
 type seenNetwork struct {
 	net netip.Prefix // the zero Prefix: an address the box could not read
-	// held: seen before the file was read, its announcement not yet
-	// made.
-	held bool
+	// untold: its announcement not yet made, held until the file is read
+	// or being made now. A write leaves it out (tell, then remember),
+	// and memory keeping it is what tells it once: a request from it
+	// meanwhile finds it known.
+	untold bool
 }
 
 func newPeopleNetworks(file string, now func() time.Time) *PeopleNetworks {
@@ -319,12 +328,13 @@ func (k *PeopleNetworks) seen(reg *access.Registry, fp, person string, addr neti
 		return
 	}
 	first := len(kn.nets) == 0
-	kn.nets = slices.Insert(kn.nets, 0, seenNetwork{net: net, held: k.state != networksRead})
-	if limit := networksPerKey; len(kn.nets) > limit && (k.state == networksRead || len(kn.nets) > networksHeldPerKey) {
-		if k.state != networksRead {
-			limit = networksHeldPerKey
-		}
-		kn.nets = kn.nets[:limit]
+	kn.nets = slices.Insert(kn.nets, 0, seenNetwork{net: net, untold: true})
+	// Cut to the networks a key keeps once told (toldLocked): an
+	// announcement cut short then forgets no network told before it.
+	// Until then, the cut of the held: announcements that block (on
+	// notify's engine) leave the key no longer than that.
+	if len(kn.nets) > networksHeldPerKey {
+		kn.nets = kn.nets[:networksHeldPerKey]
 	}
 	if k.state != networksRead {
 		if k.state == networksUnread {
@@ -333,10 +343,46 @@ func (k *PeopleNetworks) seen(reg *access.Registry, fp, person string, addr neti
 		k.mu.Unlock()
 		return
 	}
-	k.changedLocked(true)
+	// Told outside the lock (the journal, notify's engine), then
+	// written: a crash between the two tells it again, never not at all.
+	// Deferred, so an announcer that panics (the http server recovers
+	// the request) leaves no stop waiting, and the network untold.
+	k.telling++
 	a := k.announcer
 	k.mu.Unlock()
+	told := false
+	defer func() {
+		k.mu.Lock()
+		k.toldLocked(fp, net, told)
+		k.telling--
+		k.mu.Unlock()
+	}()
 	k.announce(logger, a, Announcement{Name: EventPersonNewNetwork, Person: person, Key: fp, From: networkText(net), First: first})
+	told = true
+}
+
+// toldLocked marks key fp's network net told, cuts the key to the
+// networks it keeps (the one used longest ago dropped), and has it
+// written; or, its announcement cut short (told false), forgets it, so
+// its next use tells it. A network dropped meanwhile (its key removed,
+// or cut by the networks a key keeps) is not written.
+func (k *PeopleNetworks) toldLocked(fp string, net netip.Prefix, told bool) {
+	kn := k.keys[fp]
+	if kn == nil {
+		return
+	}
+	i := slices.IndexFunc(kn.nets, func(s seenNetwork) bool { return s.net == net && s.untold })
+	switch {
+	case i < 0:
+	case told:
+		kn.nets[i].untold = false
+		if len(kn.nets) > networksPerKey {
+			kn.nets = kn.nets[:networksPerKey]
+		}
+		k.changedLocked(true)
+	default:
+		kn.nets = slices.Delete(kn.nets, i, i+1)
+	}
 }
 
 // outsideList announces a valid signature of key fp, person's, from
@@ -463,9 +509,12 @@ func (k *PeopleNetworks) changedLocked(urgent bool) {
 // file does not, and waits for it, or for a write already under way, at
 // most networksStopWait: liveswap's Stop, so that a restart (an upgrade,
 // a reload's old config) tells nothing again for want of a write that
-// was due. A write that hangs is left to itself past the wait; while
-// writes fail, the minute's retry is left as it is and a stop waits
-// for nothing.
+// was due. It waits for the new networks' announcements being made too
+// (a request's, or a read's held uses), each written once told, so none
+// is cut off by the exit. (An outside-list's is a request's alone, which
+// the http app's graceful stop waits for, and is never written.) A
+// write that hangs is left to itself past the wait; while writes fail,
+// the minute's retry is left as it is and a stop waits for no write.
 func FlushPeopleNetworks() { sharedNetworks.flushWithin(networksStopWait) }
 
 func (k *PeopleNetworks) flushWithin(wait time.Duration) {
@@ -473,10 +522,11 @@ func (k *PeopleNetworks) flushWithin(wait time.Duration) {
 	for {
 		k.mu.Lock()
 		// A read of the file under way holds uses not yet told nor
-		// written: waited for too, so they are told and written now
-		// rather than at their next use after the restart.
-		idle := k.file == "" || k.state == networksUnread || k.state == networksRead && (k.failing || !k.dirty && !k.writing)
-		if !idle && k.state == networksRead && !k.writing && (k.timer == nil || k.timer.Stop()) {
+		// written, and an announcement being made is not yet written:
+		// waited for too, so they are told and written now rather than
+		// at their next use after the restart.
+		idle := k.file == "" || k.state == networksUnread || k.state == networksRead && k.telling == 0 && (k.failing || !k.dirty && !k.writing)
+		if !idle && k.state == networksRead && k.dirty && !k.failing && !k.writing && (k.timer == nil || k.timer.Stop()) {
 			k.timer = time.AfterFunc(0, k.flush)
 		}
 		k.mu.Unlock()
@@ -499,9 +549,13 @@ func (k *PeopleNetworks) flush() {
 	for fp, kn := range k.keys {
 		nets := make([]netip.Prefix, 0, len(kn.nets))
 		for _, s := range kn.nets {
-			nets = append(nets, s.net)
+			if !s.untold { // written once told (toldLocked)
+				nets = append(nets, s.net)
+			}
 		}
-		snapshot[fp] = nets
+		if len(nets) > 0 {
+			snapshot[fp] = nets
+		}
 	}
 	k.dirty, k.urgent, k.writing = false, false, true
 	file, write := k.file, k.write
@@ -551,8 +605,8 @@ func (k *PeopleNetworks) startLoadLocked() {
 
 // loaded takes what the file held (or why it held nothing), once: the
 // read that comes back after the wait is dropped. Each network seen
-// before it that the file did not hold is announced; a network the file
-// held is not.
+// before it that the file did not hold is announced, then written; a
+// network the file held is not announced.
 func (k *PeopleNetworks) loaded(b []byte, readErr error) {
 	k.mu.Lock()
 	if k.state == networksRead {
@@ -570,18 +624,23 @@ func (k *PeopleNetworks) loaded(b []byte, readErr error) {
 	default:
 		fromFile, why = decodeNetworks(b)
 	}
-	var anns []Announcement
+	type heldUse struct {
+		ann Announcement
+		net netip.Prefix
+	}
+	var anns []heldUse
 	changed, reordered := why != nil, false
 	for fp, kn := range k.keys {
 		old := fromFile[fp]
 		var merged []seenNetwork
 		var held []seenNetwork
 		for _, s := range kn.nets {
-			if s.held && !slices.Contains(old, s.net) {
+			untold := s.untold && !slices.Contains(old, s.net)
+			if untold {
 				held = append(held, s)
 				changed = true
 			}
-			merged = append(merged, seenNetwork{net: s.net})
+			merged = append(merged, seenNetwork{net: s.net, untold: untold})
 		}
 		for _, n := range old {
 			if !slices.ContainsFunc(merged, func(s seenNetwork) bool { return s.net == n }) {
@@ -597,8 +656,8 @@ func (k *PeopleNetworks) loaded(b []byte, readErr error) {
 		kn.nets = merged
 		// The oldest held is the key's first use when the file held none.
 		for i := len(held) - 1; i >= 0; i-- {
-			anns = append(anns, Announcement{Name: EventPersonNewNetwork, Person: kn.person, Key: fp, From: networkText(held[i].net),
-				First: len(old) == 0 && i == len(held)-1})
+			anns = append(anns, heldUse{Announcement{Name: EventPersonNewNetwork, Person: kn.person, Key: fp, From: networkText(held[i].net),
+				First: len(old) == 0 && i == len(held)-1}, held[i].net})
 		}
 	}
 	for fp, nets := range fromFile {
@@ -615,9 +674,10 @@ func (k *PeopleNetworks) loaded(b []byte, readErr error) {
 		}
 		k.keys[fp] = kn
 	}
-	if changed || reordered {
-		k.changedLocked(changed)
-	}
+	// Told outside the lock, then written, as a request's (seen): the
+	// write is had once they are told. A request meanwhile writes
+	// without them.
+	k.telling++
 	logger, a := k.logger, k.announcer
 	file := k.file
 	k.mu.Unlock()
@@ -628,9 +688,18 @@ func (k *PeopleNetworks) loaded(b []byte, readErr error) {
 	case fromFile == nil:
 		logger.Info("access: no record yet of the networks people's keys were used from; each key's first use from here on is told", zap.String("file", file))
 	}
-	for _, ann := range anns {
-		k.announce(logger, a, ann)
+	for _, u := range anns {
+		k.announce(logger, a, u.ann)
 	}
+	k.mu.Lock()
+	for _, u := range anns {
+		k.toldLocked(u.ann.Key, u.net, true)
+	}
+	if changed || reordered {
+		k.changedLocked(changed)
+	}
+	k.telling--
+	k.mu.Unlock()
 }
 
 // networksFile is the file's form: each key's networks by fingerprint,

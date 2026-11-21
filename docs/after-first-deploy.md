@@ -6,8 +6,8 @@ config, secrets, the way back from an upgrade, day to day, and what to
 do at 3am. [Hardening the box](hardening.md) — SSH by key only, the
 SSH port shut to everyone but you, and, if you want them, an
 administrator who is not root, Debian's updates installed on their
-own, and seven kernel network modules no app needs refused — has a
-page of its own.
+own, seven kernel network modules no app needs refused, and a memory
+and CPU ceiling for all the apps together — has a page of its own.
 
 Names are the ones from the first page.
 
@@ -181,7 +181,9 @@ see during the restart, and how to pick a quiet moment for it.
   (step 2), are all that change on the box.
 - **A second box:** another directory in the box's repository, named
   for that box's deploy host, and `moteld init` from it once as root
-  on the new box. Every push goes to every box
+  on the new box. An app block copied from another box's file takes
+  this box's deploy host as its `audience`, the host of the
+  `MOTEL_URL` that deploys it there. Every push goes to every box
   ([More than one box](../examples/box/README.md#more-than-one-box)).
 - **Patching the box** (`apt upgrade`, as root, or on its own:
   [Hardening](hardening.md#4-debians-updates-on-their-own-if-you-want-them),

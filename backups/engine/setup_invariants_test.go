@@ -29,7 +29,7 @@ func TestWhateverLeavesInitRunningLeavesItWhatItNeeds(t *testing.T) {
 		name string
 		set  func(b *box, cancel func())
 	}{
-		{"its clock", func(b *box, _ func()) { b.hang = "init" }},
+		{"its clock", func(b *box, _ func()) { b.hang = "init"; clockMet() }},
 		{"an interrupt", func(b *box, cancel func()) {
 			b.hang = "init"
 			b.before = func(s unit.Spec) {
@@ -200,6 +200,9 @@ func TestAKeyThatCannotWriteAnExistingRepositoryIsRefusedBeforeAnythingIsWritten
 			b.outcome["probe"] = unit.Outcome{Result: "exit-code", ExitStatus: 12}
 			m.answers = []string{"AKIDX", "the-secret", "its-own-password"}
 			tc.set(b)
+			if b.hang == "open" {
+				clockMet()
+			}
 			_, err := b.setup(t, m, "s3:http://e2e-s3:9000/box")
 			if tc.refused == "" {
 				if err != nil || !strings.Contains(m.saidAll(), tc.said) {
@@ -253,6 +256,13 @@ func TestAKeyThatCannotWriteAnExistingRepositoryIsRefusedBeforeAnythingIsWritten
 	// made or not, with the password's fate.
 	b, m = setupBox(t)
 	b.hang, b.openErr = "open", load+"\n"
+	// Shortened once init is under way: its answer is not raced
+	// against the clock the opening waits out.
+	b.before = func(s unit.Spec) {
+		if strings.Contains(s.Name, "_init_") {
+			clockMet()
+		}
+	}
 	if _, err := b.setup(t, m, "s3:http://e2e-s3:9000/box"); err == nil || !strings.Contains(err.Error(), clock+" (restic said: "+load+"); "+lockLeftMade+", with a key that may delete: "+unlockWhere+"; the password shown above is the repository's: keep it") {
 		t.Fatalf("err %v, units %s", err, b.roles())
 	}
@@ -300,6 +310,7 @@ func TestAKeyThatCannotWriteAnExistingRepositoryIsRefusedBeforeAnythingIsWritten
 // opening says something, and the second opening's start never comes.
 func TestAnOpeningNeverStartedIsNotQuotedWithAnEarlierOnesWords(t *testing.T) {
 	b, m := setupBox(t)
+	clockMet()
 	b.outcome["probe"] = unit.Outcome{Result: "exit-code", ExitStatus: 12}
 	b.outcome["open"], b.openErr = unit.Outcome{Result: "exit-code", ExitStatus: 12}, "Fatal: wrong password or no key found — the first attempt's words\n"
 	opens := 0
@@ -595,7 +606,7 @@ func TestEveryExitAfterTheShowingSaysOneOfThreeFates(t *testing.T) {
 		{"init made it; the commit fails", func(b *box, m *term) {
 			commit = func(string, string) error { return errors.New("EIO on the rename") }
 		}, made},
-		{"init was left running at its clock", func(b *box, m *term) { b.hang = "init" }, ran},
+		{"init was left running at its clock", func(b *box, m *term) { b.hang = "init"; clockMet() }, ran},
 		{"init refused three times at the opening", func(b *box, m *term) {
 			b.outcome["init"] = unit.Outcome{Result: "exit-code", ExitStatus: 1}
 			b.initOut, b.initErr = "", wrongKey

@@ -49,6 +49,8 @@ type Fake struct {
 	// so the deploy in flight is the same deploy at each.
 	anchor time.Time
 	set    map[string]time.Time
+	// firing is what the demo's script fires (Arrive), newest first.
+	firing []Arrival
 }
 
 // Call is one read the fake answered.
@@ -75,6 +77,26 @@ func (f *Fake) Set(k string, err error) {
 func (f *Fake) Body(path, body string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.Bodies == nil {
+		f.Bodies = map[string]string{}
+	}
+	f.Bodies[path] = body
+	if f.set == nil {
+		f.set = map[string]time.Time{}
+	}
+	if f.Now != nil {
+		f.set[path] = f.Now()
+	}
+}
+
+// bodyIfNone sets path's body when none is set, at one hold of the
+// lock: the demo's script (Arrive) may set it meanwhile.
+func (f *Fake) bodyIfNone(path, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, set := f.Bodies[path]; set {
+		return
+	}
 	if f.Bodies == nil {
 		f.Bodies = map[string]string{}
 	}
@@ -204,11 +226,8 @@ func (f *Fake) Alerts(ctx context.Context, app string) (model.Got[wire.Alerts], 
 	var g model.Got[wire.Alerts]
 	j := model.Job{Kind: model.KAlerts, App: app}
 	path := "alerts/" + app + ".json"
-	f.mu.Lock()
-	_, replaced := f.Bodies[path]
-	f.mu.Unlock()
-	if _, err := fs.Stat(fixtures, "fixtures/"+path); err != nil && !replaced {
-		f.Body(path, `{"monitor":"on","alerts":[]}`)
+	if _, err := fs.Stat(fixtures, "fixtures/"+path); err != nil {
+		f.bodyIfNone(path, `{"monitor":"on","alerts":[]}`)
 	}
 	b, err := f.load(ctx, j, "alerts:"+app, path, &g.V)
 	g.Body = b

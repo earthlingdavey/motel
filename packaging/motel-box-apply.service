@@ -41,6 +41,7 @@ ProtectKernelTunables=yes
 ProtectControlGroups=yes
 PrivateTmp=yes
 NoNewPrivileges=yes
+RestrictSUIDSGID=yes
 RestrictAddressFamilies=AF_UNIX
 SystemCallFilter=@system-service
 SystemCallFilter=~io_uring_setup

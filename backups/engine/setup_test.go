@@ -131,12 +131,20 @@ func setupBox(t *testing.T) (*box, *term) {
 	// chown to root is root's to do; here what is asked for is recorded.
 	ownByRoot = func(path string) error { b.owned = append(b.owned, path); return nil }
 	syncDir = func(path string) error { b.synced = append(b.synced, path); return nil }
-	setupClock, setupProbeClock, setupNote = 200*time.Millisecond, 100*time.Millisecond, 50*time.Millisecond
+	// setupClock is long: init's answer is waited for beside it, and
+	// a runner that stalls past a short one says init did not answer
+	// (#611). A test that waits it out shortens it (clockMet).
+	setupClock, setupProbeClock, setupNote = time.Minute, 100*time.Millisecond, 50*time.Millisecond
 	t.Cleanup(func() {
 		setupClock, setupProbeClock, setupNote, ownByRoot, syncDir, writeID = oldClock, oldProbe, oldNote, oldOwn, oldSync, oldID
 	})
 	return b, &term{answers: []string{"AKIDX", "the-secret", "stored"}}
 }
+
+// clockMet shortens setupClock for a test that waits it out: an init,
+// an opening or a look with --existing that never answers. setupBox
+// restores it.
+func clockMet() { setupClock = 200 * time.Millisecond }
 
 func (b *box) setup(t *testing.T, m *term, repo string) (*SetupReport, error) {
 	t.Helper()
@@ -1819,6 +1827,7 @@ func TestAMistakeLeavesAWorkingSetupAsItWas(t *testing.T) {
 func TestARepositoryThatDoesNotAnswerIsGivenUpOnAndInitLeftRunning(t *testing.T) {
 	b, m := setupBox(t)
 	b.hang = "init"
+	clockMet()
 	_, err := b.setup(t, m, "s3:http://e2e-s3:9000/box")
 	if err == nil || !strings.Contains(err.Error(), "the repository did not answer within") || !strings.Contains(err.Error(), "restic init is left running as motel_backup_init_") || !strings.Contains(err.Error(), "systemctl stop motel_backup_init_") || !strings.HasSuffix(err.Error(), "keep the password shown above: restic init ran with it, and may have made the repository; run setup again, which looks first and asks for it if the repository is there") {
 		t.Fatalf("err = %v", err)
@@ -1834,13 +1843,16 @@ func TestARepositoryThatDoesNotAnswerIsGivenUpOnAndInitLeftRunning(t *testing.T)
 	// What a person waiting on init is told: Ctrl-C leaves a unit
 	// running that may have made the repository with the shown password
 	// — never "nothing has been written", which is the look's and the
-	// opening's.
-	if !strings.Contains(m.saidAll(), "still waiting for s3:http://e2e-s3:9000/box (Ctrl-C leaves restic init running, and the next setup waits for it; it may be making the repository with the password shown: keep it)") || strings.Contains(m.saidAll(), "nothing has been written") {
+	// opening's. Read from the password's showing on: a look slower than
+	// setupNote has said the look's, rightly (#611).
+	_, whileInit, _ := strings.Cut(m.saidAll(), "Repository password (new): ")
+	if !strings.Contains(whileInit, "still waiting for s3:http://e2e-s3:9000/box (Ctrl-C leaves restic init running, and the next setup waits for it; it may be making the repository with the password shown: keep it)") || strings.Contains(whileInit, "nothing has been written") {
 		t.Fatalf("said:\n%s", m.saidAll())
 	}
 	b, m = setupBox(t)
 	b.outcome["probe"] = unit.Outcome{Result: "exit-code", ExitStatus: 12}
 	b.hang = "open"
+	clockMet()
 	m.answers = []string{"AKIDX", "the-secret", "its-own-password"}
 	if _, err := b.setup(t, m, "s3:http://e2e-s3:9000/box"); err == nil || !strings.Contains(m.saidAll(), "still waiting for s3:http://e2e-s3:9000/box (Ctrl-C is safe: nothing of setup's has been written; a lock file restic was writing may stay") {
 		t.Fatalf("err %v\nsaid:\n%s", err, m.saidAll())
@@ -1850,6 +1862,7 @@ func TestARepositoryThatDoesNotAnswerIsGivenUpOnAndInitLeftRunning(t *testing.T)
 	b, m = setupBox(t)
 	b.outcome["probe"] = unit.Outcome{Result: "exit-code", ExitStatus: 12}
 	b.hang, b.stopErr = "open", unit.ErrNotConfirmedGone
+	clockMet()
 	m.answers = []string{"AKIDX", "the-secret", "its-own-password"}
 	_, err = b.setup(t, m, "s3:http://e2e-s3:9000/box")
 	if err == nil || strings.Contains(err.Error(), "the unit was stopped") || !errors.Is(err, unit.ErrNotConfirmedGone) {

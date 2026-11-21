@@ -209,6 +209,11 @@ func TestLinesBothReaders(t *testing.T) {
 			warn: "person carol has no grant: their key is told only who they are here (/_motel/whoami)"},
 		"a box grant and an app grant": {lines: "\t\tgrant bob viewer box\n\t\tgrant bob viewer app blog",
 			warn: "grant bob viewer app blog: the box grant already covers it"},
+		"a logs grant on an app":                 {lines: "\t\tgrant bob logs app blog"},
+		"a logs grant on the box":                {lines: "\t\tgrant bob logs box from 203.0.113.0/24"},
+		"viewer from anywhere, logs from a list": {lines: "\t\tgrant bob viewer app blog\n\t\tgrant bob logs app blog from 203.0.113.0/24"},
+		"logs on the box covers viewer on an app": {lines: "\t\tgrant bob viewer app blog\n\t\tgrant bob logs box",
+			warn: "grant bob viewer app blog: the logs grant on the box already covers it"},
 		"an ssh-rsa signer": {lines: "\t\tsigner carol ssh-rsa @RSA@\n\t\tgrant bob viewer box",
 			warn: "signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 key (ssh-keygen -t ed25519)"},
 
@@ -246,7 +251,7 @@ func TestLinesBothReaders(t *testing.T) {
 		"grant deployer":        {lines: "\t\tgrant bob deployer box", want: "grant bob deployer: deployer is held by a deploy_trust block, not granted"},
 		"grant signer":          {lines: "\t\tgrant bob signer box", want: "grant bob signer: signer is held by a signer line (signer bob <key-type> <base64>); this release takes it from no grant"},
 		"grant root":            {lines: "\t\tgrant bob root box", want: "grant bob root: root is held by root's key on the box, not granted"},
-		"grant unknown role":    {lines: "\t\tgrant bob admin box", want: `grant bob "admin": unknown role; the one role a grant gives is viewer`},
+		"grant unknown role":    {lines: "\t\tgrant bob admin box", want: `grant bob "admin": unknown role; a grant gives viewer or logs`},
 		"grant no scope":        {lines: "\t\tgrant bob viewer", want: "grant line: it takes <name> <role> box|app <app> [from <prefix>...]"},
 		"grant bad scope":       {lines: "\t\tgrant bob viewer all", want: `grant bob viewer "all": the scope is box or app <app>`},
 		"grant app no name":     {lines: "\t\tgrant bob viewer app", want: "grant bob viewer app: app takes the app's name"},
@@ -284,11 +289,16 @@ func TestLinesBothReaders(t *testing.T) {
 		"a grant for an ssh-rsa signer": {lines: "\t\tsigner carol ssh-rsa @RSA@\n\t\tgrant carol viewer box",
 			want: "grant carol viewer box: carol has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 key"},
 		"two grants on one scope": {lines: "\t\tgrant bob viewer app blog\n\t\tgrant bob viewer app blog from 10.0.0.0/8",
-			want: "grant bob viewer app blog: bob already has a grant on app blog; one per scope"},
+			want: "grant bob viewer app blog: bob already has a viewer grant on app blog; one per role and scope"},
+		"two logs grants on one scope": {lines: "\t\tgrant bob logs box from 10.0.0.0/8\n\t\tgrant bob logs box",
+			want: "grant bob logs box: bob already has a logs grant on the box; one per role and scope"},
+		"grant logs bad app": {lines: "\t\tgrant bob logs app Blog", want: `grant bob logs app "Blog": not an app name`},
 
 		// The module's parser sees the box block alone.
 		"a grant on an app the file does not run": {lines: "\t\tgrant bob viewer app shop",
 			walkOnly: "grant bob viewer app shop: the liveswap block runs no app shop"},
+		"a logs grant on an app the file does not run": {lines: "\t\tgrant bob logs app shop",
+			walkOnly: "grant bob logs app shop: the liveswap block runs no app shop"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := linesFile(t, c.lines)

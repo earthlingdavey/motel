@@ -37,7 +37,8 @@ func (h *Handler) appSeries(w http.ResponseWriter, r *http.Request, app appHandl
 		return respondFiltered(w, http.StatusOK, out)
 	}
 	// The filter withheld the body (its env_file unreadable) or changed
-	// its structure: the body whole through the filter, numbers and all.
+	// its structure: the body whole through the filter, as any body (its
+	// numbers held by rule 7 but in its fallbacks, its end and words not).
 	return RespondJSON(w, http.StatusOK, body, f)
 }
 
@@ -45,10 +46,15 @@ func (h *Handler) appSeries(w http.ResponseWriter, r *http.Request, app appHandl
 // passing none: the filter is given each panel's name and unit, and the
 // store's word, the window (the box's own words, of closed sets), the
 // step, the end and every point are put back after its last pass. They are the
-// store's numbers and the box's clock, never the app's bytes, and an
-// env_file value that is a run of digits (a port range, a unix time, an
-// id), a date or a piece of one would otherwise be replaced inside a
-// point or a time and leave a body no client reads. It reports false,
+// store's numbers and the box's clock, never the app's bytes. The step
+// and the points are numbers, which rule 7 of redact.go holds in any
+// body but in its fallbacks (a value across a number's edge, or one
+// replaced elsewhere in the body), and held here even then; the end is
+// a time under a key rule 7 does not hold, and an env_file value that
+// is a date or a piece of one would otherwise be replaced inside it, as
+// "unanswered" would be in the store's word, and leave a body no client
+// reads. The filter so reads a few hundred
+// bytes, not the points (notify/DESIGN-metrics.md). It reports false,
 // for the caller to send the body whole through the filter, when the
 // filter withheld the body or changed its structure (a value spanning
 // two words). As for an app's alerts (filterAlerts), the filter runs

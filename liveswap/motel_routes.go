@@ -90,11 +90,23 @@ func (h *Handler) whoami(w http.ResponseWriter, _ *http.Request, p *Person) erro
 	}
 	safe := []string{body.Name, body.Key, body.Box, body.Version}
 	if v := p.Principal.Views; v != nil {
-		if v.Box {
+		// The box's first, then each app by name; on one scope viewer
+		// before logs. Each is a grant that applies from here, by role.
+		if v.Viewer.Box {
 			body.Roles = append(body.Roles, wire.RoleHeld{Role: string(access.Viewer), Scope: "box"})
 		}
-		for _, app := range v.Apps {
-			body.Roles = append(body.Roles, wire.RoleHeld{Role: string(access.Viewer), Scope: "app:" + app})
+		if v.Logs.Box {
+			body.Roles = append(body.Roles, wire.RoleHeld{Role: string(access.Logs), Scope: "box"})
+		}
+		apps := slices.Concat(v.Viewer.Apps, v.Logs.Apps)
+		slices.Sort(apps)
+		for _, app := range slices.Compact(apps) {
+			if slices.Contains(v.Viewer.Apps, app) {
+				body.Roles = append(body.Roles, wire.RoleHeld{Role: string(access.Viewer), Scope: "app:" + app})
+			}
+			if slices.Contains(v.Logs.Apps, app) {
+				body.Roles = append(body.Roles, wire.RoleHeld{Role: string(access.Logs), Scope: "app:" + app})
+			}
 			safe = append(safe, app, "app:"+app)
 		}
 	}

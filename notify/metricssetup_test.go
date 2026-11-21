@@ -379,12 +379,12 @@ func TestMetricsSetupRetiresTheProxyShape(t *testing.T) {
 }
 
 // TestMetricsUnitsAreTheMeasuredOnes holds the shipped units to what ran
-// on hotserve-1 (hotserve1_stack_test.md), with this slice's paths and
-// caps; the store's proxy's user, the drop-in's chmod, the namespace
-// unit's test for a leftover, its start's limit and its restart of a
-// deaf Alertmanager, and Alertmanager's own socket in the namespace were
-// measured in the e2e box first, then ran on hotserve-1 through a deploy
-// and a cold boot; the delete of a leftover namespace in the e2e box alone
+// on hotserve-1, with this slice's paths and caps; the store's proxy's
+// user, the drop-in's chmod, the namespace unit's test for a leftover,
+// its start's limit and its restart of a deaf Alertmanager, and
+// Alertmanager's own socket in the namespace were measured in the e2e
+// box first, then ran on hotserve-1 through a deploy and a cold boot;
+// the delete of a leftover namespace in the e2e box alone
 // (notify/DESIGN-metrics.md, "The shape").
 func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	has := func(name string, unit []byte, wants ...string) {

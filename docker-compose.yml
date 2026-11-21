@@ -1,10 +1,20 @@
 services:
-  # Go toolchain for unit/integration tests, vet, tidy. The image is the
-  # toolchain pin — no Go install needed on the host. Integration tests
-  # spawn real child processes (the test app), which is why this service
-  # has no read_only hardening: the tests exercise process management.
+  # Go toolchain for unit/integration tests, vet, tidy, and the Go that
+  # compiles what ships (`make build`, `make build-client`). The image is
+  # the toolchain pin — no Go install needed on the host. Pinned by
+  # digest — the multi-arch index's, so amd64 and arm64 each get their
+  # own; the tag is for Dependabot and for people, and names Go's patch
+  # release, so a new one is a version Dependabot moves to (after its
+  # cooldown), not only a digest. Until it does, govulncheck fails on
+  # a called standard-library fix the pinned Go lacks, naming it; a
+  # bump by hand moves this line and the e2e and test/systemd
+  # Dockerfiles' golang lines together (`docker buildx imagetools
+  # inspect golang:<tag>` prints the index digest).
+  # Integration tests spawn real child processes (the test app), which
+  # is why this service has no read_only hardening: the tests exercise
+  # process management.
   dev:
-    image: golang:1.27-trixie
+    image: golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d
     working_dir: /src
     environment:
       GOFLAGS: -buildvcs=false
@@ -61,9 +71,10 @@ services:
     volumes:
       - .:/src
 
-  # Packager for the release .deb artifacts (`make package`).
+  # Packager for the release .deb artifacts (`make package`). Pinned by
+  # digest, as dev is.
   nfpm:
-    image: goreleaser/nfpm:v2.48.0
+    image: goreleaser/nfpm:v2.49.0@sha256:9ea46a59c4d055ef7071b22f3520b53e8dad98e18043b2f881b53bd7ffec634e
     working_dir: /src
     volumes:
       - .:/src

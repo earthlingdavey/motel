@@ -4,9 +4,10 @@
 doors a fresh server has. This page closes them: SSH by key only, the
 SSH port shut to everyone but you, and, if you want them, an
 administrator who is not root, Debian's updates for its release —
-security fixes and point releases — installed on their own, and seven
+security fixes and point releases — installed on their own, seven
 network protocols the kernel would otherwise load for any program
-refused. It is recommended, and none of it is needed to deploy.
+refused, and a memory and CPU ceiling for all the apps together. It is
+recommended, and none of it is needed to deploy.
 
 Nothing here changes how the box deploys or takes its config: app
 deploys authenticate with the workflow's token, and config with a
@@ -48,10 +49,12 @@ console is a poor substitute. Treat root's key accordingly.
 
 At the provider's firewall, allow **22 only from your own address**
 (home, VPN). TCP 80 and 443, and UDP 443 (HTTP/3), stay open to the
-world; nothing else on the box listens on a port, since every app is
-reached over a unix socket. UDP 443 may stay shut if you prefer: it
-costs only HTTP/3, and browsers fall back to HTTP/2 or HTTP/1.1 over
-TCP without saying so. The fallback needs the site served over TCP as
+world; deny everything else. motel itself listens on no other port,
+and reaches every app over a unix socket, but an app may still open a
+TCP or UDP port of its own, 1024 or above: its sandbox lets it, so the
+provider's firewall is what keeps such a port shut. UDP 443 may stay
+shut if you prefer: it costs only HTTP/3, and browsers fall back to
+HTTP/2 or HTTP/1.1 over TCP without saying so. The fallback needs the site served over TCP as
 well, as every site is unless a `protocols` line in the `servers`
 option, a `bind` or `default_bind` leaves out both `h1` and `h2`; a
 site served over HTTP/3 alone needs UDP 443 open.

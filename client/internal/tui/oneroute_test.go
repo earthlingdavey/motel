@@ -153,7 +153,7 @@ func TestOneRouteDoesNotSlowTheRest(t *testing.T) {
 // when everything answers again it says back, and whoami is asked once.
 func TestOutageBacksEveryReadOff(t *testing.T) {
 	h := start(t, 100, 30, nil)
-	keys := append(h.s.Names(), "apps", "whoami")
+	keys := append(h.s.Names(), "apps", "whoami", "box-alerts")
 	for _, k := range keys {
 		h.fake.Set(k, fiveHundred())
 	}

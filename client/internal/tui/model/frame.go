@@ -594,11 +594,11 @@ func (s *Session) scopes() Line {
 	return out
 }
 
-// roleSeg is a role as the whoami command says it: viewer, the one role
-// a box grants today, as a word; any other is the box's own word, which
-// the client took by its shape alone, and is quoted.
+// roleSeg is a role as the whoami command says it: viewer and logs, the
+// roles a box grants today, as words; any other is the box's own word,
+// which the client took by its shape alone, and is quoted.
 func roleSeg(role string) Seg {
-	if role == "viewer" {
+	if role == "viewer" || role == "logs" {
 		return own(role)
 	}
 	return quoted(role)
@@ -709,20 +709,37 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 	if len(me.Roles) == 0 {
 		out = append(out, cutTo(Line{own("  nothing yet: signed in as " + me.Name + ", you hold no grant here")}, width, cells))
 	}
-	for _, r := range me.Roles {
+	// The scopes' column: past the longest of the client's own verbs
+	// shown, at least 10. A role the box names, quoted, never moves it.
+	verbs := make([]Seg, len(me.Roles))
+	col := 10
+	for i, r := range me.Roles {
+		verbs[i] = roleSeg(r.Role)
+		switch r.Role {
+		case "viewer":
+			verbs[i] = own("view")
+		case "logs":
+			verbs[i] = own("view, read logs")
+			col = max(col, len("view, read logs"))
+		}
+	}
+	for i, r := range me.Roles {
 		on := "the box"
 		if n, ok := strings.CutPrefix(r.Scope, "app:"); ok {
 			on = "app " + n
 		}
-		verb := roleSeg(r.Role)
-		if r.Role == "viewer" {
-			verb = own("view")
-		}
-		out = append(out, cutTo(Line{own("  "), verb, own(pad("", 10-len([]rune(verb.T.String()))) + " " + on)}, width, cells))
+		out = append(out, cutTo(Line{own("  "), verbs[i], own(pad("", col-len([]rune(verbs[i].T.String()))) + " " + on)}, width, cells))
 	}
-	// What may not be read here: logs, by anyone yet; the box's own
-	// alerts and silences, by anyone but a viewer of the box.
+	// What may not be read here: logs, which this client shows no one
+	// yet (a holder of a logs grant is told the grant reads them); the
+	// box's own alerts and silences, by anyone but a viewer of the box.
 	cannot := "             Read logs: this client does not offer them yet."
+	for _, r := range me.Roles {
+		if r.Role == "logs" {
+			cannot = "             Read logs: your logs grant reads them, but this client does not show them yet."
+			break
+		}
+	}
 	if !s.BoxViewer() {
 		cannot += " Nor the box's own alerts and silences, which are a viewer of the box's: an app's are on its screen."
 	}

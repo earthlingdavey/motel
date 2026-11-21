@@ -57,6 +57,12 @@ type Session struct {
 	// StopErr is the failure that stopped every read.
 	StopErr error
 
+	// watch is what fires that this person may see, read on every
+	// screen (watch.go); alarm, the title bar's mark of it and the bell
+	// (alarm.go).
+	watch watchState
+	alarm alarm
+
 	// json is the JSON overlay's lines, made once per answer and width.
 	json struct {
 		key   jsonKey
@@ -150,7 +156,13 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 				s.refused = true
 			case FailNotSent: // nothing was asked of the box
 			default:
-				s.refused = true
+				// The watch's read refused says so in the title bar's mark,
+				// not its word: a grant limited by `from` would otherwise
+				// have the bar say refused all day while every other read
+				// answers.
+				if !s.watching(j) {
+					s.refused = true
+				}
 			}
 		case Stopped:
 			s.StopErr = err
@@ -159,6 +171,7 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 			}
 		}
 		apply(s, at)
+		s.watchRead(j, at, err)
 	}, err
 }
 
@@ -179,7 +192,14 @@ func (s *Session) seen(now time.Time) {
 				}
 			}
 		}
-		move(&s.last, &s.backAt)
+		move(&s.last, &s.backAt, &s.alarm.newAt, &s.alarm.rungAt)
+		for k, at := range s.alarm.unseen {
+			move(&at)
+			s.alarm.unseen[k] = at
+		}
+		for _, w := range s.watch.srcs {
+			move(&w.at)
+		}
 		if s.Me != nil {
 			move(&s.Me.At)
 		}
@@ -240,12 +260,14 @@ func (s *Session) forget() {
 	s.BoxRulesSt, s.BoxRulesErr = nil, nil
 	s.apps, s.records, s.series = nil, nil, nil
 	s.json.key, s.json.lines = jsonKey{}, nil
+	s.watch = watchState{forgotten: true}
+	s.alarm.forget()
 }
 
 // Forgotten says whether the session holds nothing the box said: true
 // at the start, and after an answer about another key or box.
 func (s *Session) Forgotten() bool {
-	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && s.BackupsSt == nil && s.BackupsErr == nil && s.BoxAlertsSt == nil && s.BoxAlertsErr == nil && s.BoxRulesSt == nil && s.BoxRulesErr == nil && len(s.apps) == 0 && len(s.records) == 0 && len(s.series) == 0 && s.json.lines == nil
+	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && s.BackupsSt == nil && s.BackupsErr == nil && s.BoxAlertsSt == nil && s.BoxAlertsErr == nil && s.BoxRulesSt == nil && s.BoxRulesErr == nil && len(s.apps) == 0 && len(s.records) == 0 && len(s.series) == 0 && s.json.lines == nil && len(s.watch.srcs) == 0 && len(s.alarm.unseen) == 0
 }
 
 func (s *Session) app(name string) *appData {

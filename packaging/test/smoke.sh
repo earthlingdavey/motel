@@ -288,6 +288,7 @@ expect_show $svc ProtectControlGroups yes
 expect_show $svc DevicePolicy closed
 expect_show $svc PrivateTmp yes
 expect_show $svc NoNewPrivileges yes
+expect_show $svc RestrictSUIDSGID yes
 expect_show $svc RestrictAddressFamilies AF_UNIX
 expect_show $svc SystemCallArchitectures native
 # moteld.service itself: the one capability, and no way to another.

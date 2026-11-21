@@ -84,7 +84,7 @@ const (
 	// whose resolve_timeout (5 m) would otherwise resolve it.
 	repostEvery = time.Minute
 	// oneShotLife is a one-shot's endsAt: long enough that it cannot
-	// expire inside any group_interval tick (alertmanager_edge_tests.md).
+	// expire inside any group_interval tick.
 	oneShotLife = 5 * time.Minute
 	// minHold is the least a recovery waits: #418's watchdog rule,
 	// max(30s, watchdog_grace), with 30 s for every other state.

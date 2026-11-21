@@ -40,7 +40,7 @@ func TestFrameReadsTheClockOnce(t *testing.T) {
 			clock := h.s.Now
 			h.s.Now = func() time.Time { read++; return clock() }
 			read = 0
-			h.u.render()
+			h.u.render(h.u.now())
 			h.s.Now = clock
 		})
 		if read != 1 {

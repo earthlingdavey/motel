@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"os/exec"
@@ -25,6 +26,7 @@ import (
 	"github.com/smallhoursorg/motel/backups/plan"
 	"github.com/smallhoursorg/motel/backups/record"
 	"github.com/smallhoursorg/motel/backups/unit"
+	"golang.org/x/sys/unix"
 )
 
 // Terminal is the operator at a terminal: what setup asks, with echo
@@ -573,38 +575,79 @@ func b2Region(repo string) string {
 	return b2RegionOf(s3Authority(repo))
 }
 
-// readRegular reads a file that is a regular one, following a link as
+// ReadRegular reads a file that is a regular one, following a link as
 // the manager does, and opened O_NONBLOCK so that a FIFO is refused, not
-// waited on.
-func readRegular(name string) ([]byte, error) {
+// waited on: how a run reads the credential file, and status as root.
+// What it returns beside the bytes is the open file's own stat, so that
+// a caller asks the file it read, not the name again.
+func ReadRegular(name string) ([]byte, fs.FileInfo, error) {
 	f, err := os.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // root's own file, a constant of the installation
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("it is not a regular file (%s)", fi.Mode().Type())
+		return nil, nil, fmt.Errorf("it is not a regular file (%s)", fi.Mode().Type())
 	}
-	return io.ReadAll(f)
+	raw, err := io.ReadAll(f)
+	return raw, fi, err
+}
+
+// credentialOwner is the uid the credential file must belong to: root,
+// or the account under test.
+var credentialOwner = uint32(0)
+
+// CredentialRootsAlone says why the credential file at name, as fi
+// (its open descriptor's stat) describes it, is not root's alone, or
+// nil: that it belongs to root and nobody else may read, write or run
+// it — what ssh asks of a private key — and that its directory is
+// root's and writable by nobody else, whose writer could put another
+// file in its place. The file holds the repository's password and the
+// storage key, and the motel uid must never read or replace them. Said
+// with the command that puts it right, as root; setup makes both so.
+func CredentialRootsAlone(name string, fi fs.FileInfo) error {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("the credential file %s: whose it is could not be told", name)
+	}
+	switch {
+	case st.Uid != credentialOwner:
+		return fmt.Errorf("the credential file %s belongs to uid %d, not root, and it holds the repository's password and the storage key: chown root:root %s && chmod 0600 %s, as root", name, st.Uid, name, name)
+	case st.Mode&0o077 != 0:
+		return fmt.Errorf("the credential file %s is open to others than root (mode %04o), and it holds the repository's password and the storage key: chmod 0600 %s, as root", name, st.Mode&0o7777, name)
+	}
+	dir := filepath.Dir(name)
+	var d unix.Stat_t
+	if err := unix.Stat(dir, &d); err != nil {
+		return fmt.Errorf("the credential file's directory %s could not be looked at: %w", dir, err)
+	}
+	if d.Uid != credentialOwner || d.Mode&0o022 != 0 {
+		return fmt.Errorf("the credential file's directory %s is uid %d's, mode %04o: it has to be root's and writable by nobody else, or someone else could put another file in the credential file's place: chown root:root %s && chmod 0755 %s, as root", dir, d.Uid, d.Mode&0o7777, dir, dir)
+	}
+	return nil
 }
 
 // repositoryInUse is what a run, a restore and a drill ask of the
-// repository the credential file names, before any unit: that it is
-// not a b2: one. The value is read as the manager reads it (envfile:
-// the last assignment, quotes and whitespace as systemd takes them),
-// and as restic tells a backend by its URL: the scheme, as written. A
-// file the manager could not read either is said here, in place of
-// every unit failing to start. Opened without blocking and read only
-// if it is a regular file: a FIFO in its place would otherwise hold the
-// run, and its lock, for ever.
+// credential file and the repository it names, before any unit: that
+// the file is root's alone, and that the repository is not a b2: one.
+// The value is read as the manager reads it (envfile: the last
+// assignment, quotes and whitespace as systemd takes them), and as
+// restic tells a backend by its URL: the scheme, as written. A file the
+// manager could not read either is said here, in place of every unit
+// failing to start. Opened without blocking and read only if it is a
+// regular file: a FIFO in its place would otherwise hold the run, and
+// its lock, for ever.
 func repositoryInUse(envFile string) error {
-	raw, err := readRegular(envFile)
+	raw, fi, err := ReadRegular(envFile)
 	if err != nil {
 		return fmt.Errorf("the credential file %s could not be read: %w", envFile, err)
+	}
+	if err := CredentialRootsAlone(envFile, fi); err != nil {
+		return err
 	}
 	v, findings := envfile.Parse(raw)
 	if why := envfile.RefusedWhole(findings); why != "" {

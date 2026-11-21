@@ -24,6 +24,8 @@ func fakeKey(j model.Job) string {
 		return "apps"
 	case model.KBox:
 		return "box"
+	case model.KBoxAlerts:
+		return "box-alerts"
 	case model.KDeploy:
 		return j.App + "@" + j.Version
 	case model.KAlerts:

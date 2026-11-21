@@ -110,7 +110,7 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 # capability, so nothing moteld execs holds another; NoNewPrivileges
 # keeps a setuid or setgid binary on the host from granting any (an
 # ambient capability survives it), and RestrictSUIDSGID keeps moteld from
-# making one. Every other unit the package ships had these already.
+# making one. Every other unit the package ships has these too.
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=yes
 RestrictSUIDSGID=yes

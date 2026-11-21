@@ -118,6 +118,7 @@ exactly one site carries `box_webhook`:
 			audience motel
 			claim repository your-org/boxes
 			claim ref refs/heads/main
+			claim workflow_ref your-org/boxes/.github/workflows/apply.yml@refs/heads/main
 		}
 		# signers
 		signer alice@example.com ssh-ed25519 AAAAC3Nz…
@@ -199,6 +200,7 @@ box {
 	person bob@example.com   ssh-ed25519 AAAAC3Nz…                    # a person who is not a signer
 	grant bob@example.com   viewer app example
 	grant bob@example.com   viewer app blog from 198.51.100.0/24 2001:db8:5::/48
+	grant bob@example.com   logs app example from 198.51.100.0/24      # example's logs too, from the office alone
 	grant alice@example.com viewer box
 }
 ```
@@ -228,7 +230,10 @@ box {
 - `grant <name> <role> box [from <prefix>…]` or `grant <name> <role>
   app <app> [from <prefix>…]`: the name first, as on every line about
   a person, so one search finds all of them; the scope always written;
-  `from` last. The one role is `viewer`. `deployer`, `signer` and
+  `from` last. The roles are `viewer`, which reads an app's reads on
+  its scope and never logs, and `logs`, which reads what `viewer`
+  reads on the same scope and the logs of the app, or on the box of
+  every app (liveswap/access/DESIGN-access.md). `deployer`, `signer` and
   `root` are refused by name, each saying who holds it today (a
   `deploy_trust` block, a `signer` line, root's key); `signer` is a
   reserved word, which a later release may take as a second spelling
@@ -247,8 +252,8 @@ the block is read, each refusal naming its lines:
 | a `grant` for a name no `person` or `signer` line declares | refused |
 | a `grant` for a name whose only keys are `ssh-rsa` signer keys | refused, naming the remedy |
 | a `grant` on an app the `liveswap` block does not run, or runs under a name written through a placeholder (the walk reads the name as written) | refused. The walk refuses both; the `box` app, at load and so at `moteld validate`, asks the `liveswap` app which apps the config runs and refuses a grant on any other (a config with no `liveswap` block runs none). It sees a placeholder's name resolved, so a grant on an app named through a placeholder is refused by the walk alone: such a line written at the console loads, and leaves an installed file that no longer walks, so every push is refused and no person is admitted (the load's journal says why) until root mends the line |
-| two grants for one name on one scope | refused |
-| a box grant and an app grant for one name | taken, warned: the box grant covers the app |
+| two grants for one name, of one role, on one scope | refused: `… already has a logs grant on app blog; one per role and scope`. A `viewer` and a `logs` grant on one scope are two lines, each with its own `from` list or none |
+| a grant that another grant of the name gives from everywhere: a `viewer` app grant beside a `viewer` box grant; a `viewer` grant beside a `logs` grant on the same app or on the box; a `logs` app grant beside a `logs` box grant | taken, warned (`… the box grant already covers it`, `… the logs grant on app blog already covers it`, `… the logs grant on the box already covers it`), only when the covering grant has no `from` list: outside a list, the covered grant is all the person holds |
 | a `person` name with no grant and no `signer` line | taken, warned |
 | an `ssh-rsa` signer whose name has no other key a person may hold | taken, warned |
 | people and no `monitor` block with a channel | taken, warned: by the walk (`moteld box describe`, and the journal at each load), and by `moteld validate`, which reads the adapted config; the module cannot see the `monitor` block |
@@ -1140,7 +1145,9 @@ can do both by other means.
 | A push whose `monitor` block names a secret `secrets/_box/` does not hold is refused on a box with no slot yet, whose `_box.env` an operator wrote by hand and validate would read | "Which checks run where" (`notifyCarried`) | 2 | 5 | 1 | 10; refused by name with the remedy (`make secret APP=_box VAR=<NAME>`), whose push replaces the hand-written file; the handler cannot read the box's file to tell the two apart, and the merge notes of #424 say it. /code-review xhigh on #424 |
 | The remedy of the row above does not reach a hand-written `_box.env` that motel cannot use: one root:root 0600 (made elsewhere and moved in with `mv`, docs/monitor.md, "The secrets file"), or one with a line that does not parse. Step 6's `moteld validate` runs as the motel uid, and notify's Provision reads the box's secrets file, and refuses one it cannot read or parse, before it looks at the names the push carries (`pushedSecrets`, consulted only in `resolveWith`): so every push whose `monitor` block has channels, the `make secret APP=_box VAR=<NAME>` push that would replace the file among them, is refused until root mends or removes the file at the console | "Which checks run where"; notify/app.go (`provisionNotify`) | 2 | 5 | 1 | 10; red and named: the refusal is `moteld validate: …` ending `monitor: reading the box's secrets: open /etc/motel/secrets/_box.env: permission denied`, or the line that does not parse (`monitor: /etc/motel/secrets/_box.env:<line>: not KEY=VALUE`, say), and docs/monitor.md gives the `chown`/`chmod`. The file is the console's, and it already has `moteld reload` refused and a restart drop every channel, so the console mends it either way. Skipping the read when the push carries every secret the block names is a new branch in Provision (size 2, risk 2). Review of the feature branch, 2026-11-14 |
 | A grant written as JSON config by hand, with a scope that is neither `box` nor `app`, is refused with the mismatch message ("a grant on the box names no app, and a grant on an app names one") and not the parser's "scope is box or app <app>" | "People and grants"; `box/app.go`, where the box's lines are read | 2 | 5 | 1 | 10; refused, and the message prints the scope and the app it was given. A Caddyfile's `grant` line is parsed first and gets the exact message; only config written as JSON, which no doc asks for, reaches this one |
-| A box repository on this template whose `<host>/MOTEL_VERSION` names a release from before the binary was `moteld` (v0.7.0 and earlier): `bin/install-moteld` finds no `moteld_<version>_linux_<arch>.tar.gz` at that release, skips it, and `make check` refuses that box; a `MOTEL_VERSION` repository variable naming one fails the install step outright. And a box repository still on those releases' template, with no pin, fails its install step once the latest release is a `moteld` one | examples/box/bin/install-moteld | 2 | 5 | 1 | 10; red and named both ways: the address it tried, and the file or the latest release's tag that asked for it; the owner's decision (2026-11-17) is no code for the earlier names: a box moves to a `moteld` release and its repository takes this template in the same push. Wide: a workflow users copy |
+| A box repository on this template whose `<host>/MOTEL_VERSION` names a release from before the binary was `moteld` (v0.7.0 and earlier): `bin/install-moteld` finds no `moteld_<version>_linux_<arch>.tar.gz` at that release, skips it, and `make check` refuses that box; a `MOTEL_VERSION` repository variable naming one fails the install step outright. And a box repository still on the template of v0.6.0 to v0.7.0 whose repository variable pins no earlier release (a box's file pins only that box's check; the apply job asks the default release alone): its `bin/install-motel` asks the latest release for `motel_<version>_linux_<arch>.tar.gz`, the server's archive name up to v0.7.0. At v0.8.0 there is none, and both jobs fail at their install step. Every later release carries the laptop client under that name: the script verifies it against `checksums.txt` and installs it as `motel`, and each job fails at the client's refusal of the first server command it asks, `make check` (for each box no file pins to an earlier release) with `check: motel: unknown command "describe" for "motel box"; motel box --help says more`, and `bin/apply`, for each box before anything is sent to it, with the same words for `"webhook"` | examples/box/bin/install-moteld; the client's archives (`Makefile`, `CLIENT_TARGETS`) | 2 | 5 | 1 | 10; red every way: this template's lines name the address it tried and the file or the latest release's tag that asked for it; the old template's job is red at the client's refusal, which names the command, not the template, and `docs/upgrading.md` quotes both lines with the remedy (this template in one commit). Measured 2026-11-20 with the v0.6.0, v0.6.1 and v0.7.0 templates against a stand-in release holding the client's archives, in a network namespace with loopback alone: nothing installed but the client, no request past the release's. The owner's decision (2026-11-17) is no code for the earlier names: a box moves to a `moteld` release and its repository takes this template in the same push; re-scored 2026-11-20, when the client's Linux archives took that name (the owner's decision of the same day). Wide: a workflow users copy |
+| `docs/upgrading.md`'s paragraph on a box repository of the template of v0.7.0 or earlier says no push applies "unless its repository variable names a release up to v0.7.0": for a template from before v0.6.0 the variable is `HOTSERVE_VERSION`, whose `bin/install-hotserve` finds no `hotserve_…` archive at v0.6.0 to v0.7.0 either, and "until it does" can be read as "until the variable names one" rather than "until the repository takes this template" | docs/upgrading.md | 3 | 5 | 1 | 15; a variable set that way fails the install step, naming the address tried, and the paragraph opens with the remedy (this template, in one commit) |
+| `docs/first-deploy.md` has `make check` run with "the release's `moteld` on `PATH`, from the tarball on its releases page": each release after v0.8.0 has two Linux tarballs per architecture, `moteld_…` and the laptop client's `motel_…`, and the client's holds no `moteld` | docs/first-deploy.md | 2 | 5 | 1 | 10; `make check` says `moteld` is not found, and the sentence names `moteld` |
 | A transaction record written by the binary of v0.7.0 or earlier, whose reload-failed message names the unit as it was then (`journalctl -u motel`), recovered after the move to this one: `bothFailed` compares the record's text with today's, so a second failed reload is reported as rolled back with the previous file's reload failed, where "the reload failed and so did the reload of the previous file" was due | `bothFailed` (box/txn.go) | 2 | 1 | 3 | 6; needs a failed reload, a run cut short mid-rollback, the move between the two packages and a second failed reload; both texts are red and name the journal |
 | An `applied.json` whose `found_sha256` is not a digest makes `GET /` say, while `signer` is `baseline`, that the installed Caddyfile is not the one the commit installed: no reader holds the field to a grammar, since only `GET /` reads it and a refusal in `readApplied` would stop every push | "`GET /`" in the Handler contract; `box/exchange.go` | 3 | 1 | 3 | 9; root-only state corrupted (occurrence 1), and the next push of a new commit drops the field. Self-review of #577's second review round |
 | After `moteld box baseline`, `GET /` holds the installed Caddyfile to the one the baseline found (`found_sha256`), while a push compares the `sha256` the baseline kept (step 10, `check.go`): a console edit made before the baseline is no longer said by `GET /`, `motel box status` or the box screen, though it is still live, and the next push reports it; after the baseline an unrecorded push's result asks for, the reverse: `GET /` is silent and the next push reports an edit no one made | "`box baseline <sha>`"; the `GET /` row; `box/handler.go` (`status`) | 3 | 5 | 3 | 45, **accepted over the bar, pending the owner** (the skill's rule 4): by digests alone the box cannot tell a file an unrecorded push installed from one edited before the baseline (in both, the found digest is not the kept one), and a baseline is the operator vouching at the console for the box as it stands. Review round three of #577 |
@@ -2057,7 +2064,7 @@ line — `host <host>`, then `app <name>` and `signer <principal>
 <key-type> <base64>`, each kind in file order; with a `person` or
 `grant` line in the box block, then `person <name> <key-type>
 SHA256:<fingerprint>` for each key a person's token may be signed with
-(ending ` signer` for a signer line's key), `grant <name> viewer
+(ending ` signer` for a signer line's key), `grant <name> <role>
 <scope> [from …]` for each grant, and a `warning <text>` line for each
 warning of "People and grants" — for the template's `make check`,
 which prints its line for each box from it and compares the boxes'
@@ -2132,6 +2139,7 @@ table and holds both shipped files to it, line for line, and the
 | `.service` | `[Service]` | `ProtectControlGroups=yes` | the same for the cgroup tree, which `ProtectKernelTunables=` leaves writable. Measured without it: the unit opened `/sys/fs/cgroup/cgroup.procs` for writing; with it, "read-only file system" |
 | `.service` | `[Service]` | `PrivateTmp=yes` | the verifier's files for its 65534 child, in a `/tmp` of the unit's own |
 | `.service` | `[Service]` | `NoNewPrivileges=yes` | |
+| `.service` | `[Service]` | `RestrictSUIDSGID=yes` | nothing the applier creates or chmods asks for a set-user-id or set-group-id bit (0600, 0640, 0644; the verifier's directory 0700, then 0755), so the line refuses only a mistake of its own. The set-group-id of `out/` and `secrets/` is `tmpfiles.d`'s, outside the unit, and what root makes in them takes their group as before. The line also makes `openat2` fail (`ENOSYS`; backups/design/plan.md, M23), which neither moteld's code nor the Go it is built with calls; `systemctl` and `ssh-keygen` run under it in the install test (the reload, the verification as 65534) and in the e2e box suite's pushes |
 | `.service` | `[Service]` | `RestrictAddressFamilies=AF_UNIX` | the manager's socket (`systemctl reload`, `is-active`); no network. It filters `socket(2)` alone: the table's last two rows close two routes around it, and the third, `socketpair(2)`, gives no socket outside `AF_UNIX` (only `AF_TIPC` implements it besides, and `tipc` loads only by root's hand, which docs/hardening.md step 5 refuses where taken) but still loads any aliased family's module, as in app units, where it is an accepted residual (liveswap/DESIGN-sandbox.md, "Module-backed protocols"; #315). `AF_UNIX` admits no protocol module |
 | `.service` | `[Service]` | `SystemCallFilter=@system-service` | |
 | `.service` | `[Service]` | `SystemCallFilter=~io_uring_setup` | less `io_uring_setup`, which `@system-service` admits through `@aio`: a ring's `IORING_OP_SOCKET` (kernel 5.19+) opens a socket of any family without `socket(2)`, the one call `RestrictAddressFamilies=` filters. A deny line after the allow list takes the name out of it. Nothing the applier runs sets up a ring |
@@ -2151,7 +2159,9 @@ works, and the verifier, running `ssh-keygen -Y verify` as 65534 in a
 directory under the unit's `PrivateTmp`, verifies and refuses as it
 does outside. The install test repeats the reload and the 65534
 verification with `setpriv` and `ssh-keygen`, and runs the real
-applier in the unit.
+applier in the unit. `RestrictSUIDSGID=` came after that measurement:
+the install test's runs, and the e2e box suite's pushes through the
+packaged unit, are what hold it.
 
 What this sandbox is for: the applier's own mistakes — a wrong path, a
 write to the wrong place — stay inside what the unit may write: its two
@@ -2874,3 +2884,7 @@ Dated one-liners; the full text of each is in git.
   (#577): it named the commit beside the digest of a file edited at the
   console since, and only someone holding the commit's own digest could
   tell (S3 O5 D3, 45). A field added; nothing removed.
+- 2026-11-20 — The applier unit gets `RestrictSUIDSGID=yes`, which
+  moteld.service's comment and packaging's design already said every
+  unit the package installs had (review of 2026-11-20; S5 O1 D5, 25;
+  size 1, risk 2, fixed); the install test holds the unit to it.

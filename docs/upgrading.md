@@ -108,23 +108,26 @@ fetches them in the background as it starts and no token waits on that,
 so the first issuer's token after a restart (a GitHub Actions deploy's)
 can still be answered 401 once; the script sends it again 3 seconds
 later, which goes through once the keys are in.
-That is this release's script. A `scripts/deploy.sh` copied from a
-template of v0.4.0 to v0.7.0 sends a request once more only after a
-401, and one from an earlier template never, so after the 503 that
-run fails. `diff` the copy against this release's
+That is this release's script, which also asks for a new audience:
+before it goes in over a copy from an earlier template, give the box
+the block [An app's deploy token names its
+box](#an-apps-deploy-token-names-its-box) says to add first. A
+`scripts/deploy.sh` copied from a template of v0.4.0 to v0.7.0 sends
+a request once more only after a 401, and one from an earlier
+template never, so after the 503 that run fails. `diff` the copy against this release's
 `examples/node/scripts/deploy.sh` (or `examples/deno/`'s): with no
 change of your own in it, copy the template's over it; with some,
 carry across `boxstarting()` and the `elif` branch of `send()` that
 calls it, or, in a copy with no `send()` (before v0.4.0), make your
 changes again in the template's. The template reads `MOTEL_` where a
 copy from before v0.6.0 reads `HOTSERVE_` (`MOTEL_URL` for
-`HOTSERVE_URL`, and so on), and its audience defaults to `motel`, not
-`hotserve`: before the template's goes in over such a copy, rename
-each `HOTSERVE_` to `MOTEL_` in the workflow file and in the
-repository variables (`HOTSERVE_URL`, and `HOTSERVE_RUNS_ON` if set)
-and anywhere else you set one, and unless the app's `deploy_trust`
-says `audience motel`, add `MOTEL_AUDIENCE: <its audience>` to the
-workflow's `env:`.
+`HOTSERVE_URL`, and so on), and its audience defaults to the host of
+`MOTEL_URL`, not `hotserve`: before the template's goes in over such
+a copy, rename each `HOTSERVE_` to `MOTEL_` in the workflow file and
+in the repository variables (`HOTSERVE_URL`, and `HOTSERVE_RUNS_ON`
+if set) and anywhere else you set one, and give the app's
+`deploy_trust` that audience as [An app's deploy token names its
+box](#an-apps-deploy-token-names-its-box) says.
 A crash has a window of its own: whatever was in flight is cut off,
 systemd waits a second
 (`RestartSec=1s`) and starts moteld again, and the apps are picked
@@ -359,10 +362,24 @@ is the exception, and takes this release's template before its next
 push: in one commit, copy `.github/workflows/apply.yml`,
 `.gitattributes`, `Makefile` and `bin/` from `examples/box/` over its
 own, and delete its `bin/install-motel` (`bin/install-hotserve` in one
-from before v0.6.0). With no pin, that script asks the latest release
-for an archive under the old name, which no `moteld` release has, so
-both of the workflow's jobs fail at their install step, naming the
-address tried, and no push applies. A pin that names a release from
+from before v0.6.0). Unless its repository variable names a release
+up to v0.7.0, no push applies until it does, whatever a box's
+`MOTEL_VERSION` file names: the apply job installs the default release
+alone and asks it each box's address. With no variable,
+`bin/install-hotserve` asks the latest release for a `hotserve_…`
+archive, which no release since v0.5.0 has, and both of the workflow's
+jobs fail at their install step, naming the address tried.
+`bin/install-motel` asks it for `motel_<version>_linux_<arch>.tar.gz`,
+the server's archive name up to v0.7.0. v0.8.0 has none, and the jobs
+fail the same way. Every release after v0.8.0 has one, the laptop
+client's ([client/](../client/README.md)): the script checks it
+against `checksums.txt` and installs it as `motel`. The apply job's
+`bin/apply` then fails for every box, before it sends that box
+anything, with `apply: <host>/Caddyfile: motel: unknown command
+"webhook" for "motel box"; motel box --help says more`; the check
+job's `make check` fails for each box with no file naming an earlier
+release, with `check: motel: unknown command "describe" for "motel
+box"; motel box --help says more`. A pin that names a release from
 before `moteld` is removed, or set to this release, at the same time:
 the repository variable, and any `<host>/MOTEL_VERSION` file (a
 template from before v0.6.0 names both `HOTSERVE_VERSION`, which the
@@ -373,6 +390,68 @@ skips that release and `make check` refuses that box.
 There is no APT repository yet, so nothing upgrades moteld behind
 your back; the hosted repository on the [roadmap](../README.md#roadmap) is what
 will change that.
+
+## An app's deploy token names its box
+
+An app set up from a template of v0.8.0 or earlier has `audience
+motel` in its `deploy_trust github` block on the box (`hotserve` from
+a template before v0.6.0), and its `scripts/deploy.sh` asks GitHub
+for that name. Every box shares that
+name, so a token sent to one box is accepted by any other that trusts
+the same repository and branch, a second box or a staging one, for as
+long as the token lives. This release's template names the box: the
+app's block says `audience deploy.example.com`, the box's deploy host,
+and `scripts/deploy.sh` asks for the host of `MOTEL_URL`, lowercase
+and without a port. The box's own code is unchanged, and so is the
+`box` block's `audience motel`: `bin/apply` asks for that one name
+for every box of the repository.
+
+With the box and the app repository out of step, a deploy is answered
+401 and the running version keeps serving; the step's output names
+the audience it asked for. So move each app in three steps, in this
+order. An app whose workflow sets `MOTEL_AUDIENCE` to a name no other
+box's block has already names its box, and needs none of them.
+
+1. **Add a block on the box.** In the app's block, add a copy of its
+   `deploy_trust github` block with the box's deploy host as its
+   `audience`, beside the old one: a deploy is accepted when any of
+   the app's blocks accepts it. Commit it signed and push (on a box
+   without a repository, edit `/etc/motel/Caddyfile`, `moteld validate
+   --config` it and `systemctl reload moteld`).
+2. **Take this release's `scripts/deploy.sh`** in the app
+   repository: with no change of your own in it, copy the template's
+   over it; with some, carry across the mint in the `if` on
+   `ACTIONS_ID_TOKEN_REQUEST_URL` whole (the lines that set
+   `audience` and the `curl` that asks for it) and the `"$audience"`
+   in `refused()`. A workflow `env:` that sets `MOTEL_AUDIENCE` keeps
+   asking for that name: remove it. Push; the deploy goes through the
+   new block.
+3. **Remove the old block**, the one with the audience the old
+   script asked for (`motel`, `hotserve` before v0.6.0, or the
+   workflow's `MOTEL_AUDIENCE`), signed and pushed. A token for
+   another box is now refused here.
+
+None of this is the `.deb`'s: going back to an earlier `moteld`
+changes neither side, and deploys still go through.
+
+## A backup credential file written by hand
+
+The first release that refuses a backup credential file that is not
+root's alone refuses one written [by hand](../backups/README.md#by-hand)
+with an editor under umask 022, which is 0644: every run, restore and
+drill stops before it starts anything, names the file, its mode and the
+command that puts it right, and `motel-backup status` goes unhealthy.
+A file `motel-backup setup` wrote is root's alone already. Before the
+install, as root:
+
+```sh
+stat -c '%n %U %a' /etc/motel-backup /etc/motel-backup/repository.env
+```
+
+It should say `root 755` of the directory, which every account looks
+into to see whether backups are set up, and `root 600` of the file
+(`root 400` passes too). For anything else:
+`chown root:root /etc/motel-backup /etc/motel-backup/repository.env && chmod 0755 /etc/motel-backup && chmod 0600 /etc/motel-backup/repository.env`.
 
 ## A person's key, told once after the install
 
@@ -686,3 +765,47 @@ git commit --allow-empty -m "Relaunch after patching" && git push
 
 Or reboot, which relaunches every app at once but takes the sites
 down while it does.
+
+## Removing the package
+
+`apt remove moteld` stops the box: the backup timers and the backup
+and drill services, moteld, and the box applier's path unit, and then
+the `motel` user's service manager, which stops every app. A
+`motel-backup` command started from a shell (a run, a restore at its
+prompt) holds the run lock and is left to run with its program gone,
+named on the terminal: let it end before you remove the package. moteld is disabled, the
+path unit and the backup timers are masked until the package is
+installed again, and the `motel` user no longer lingers: the package's
+own files go, with the drop-ins and the linger its install made and the
+backup timers' stamps, so that a reinstall does not take a backup and
+a drill as missed and run both at once. Nothing else is deleted, `/etc/motel/Caddyfile` included.
+
+`apt purge moteld` then deletes what the package made and nothing else
+holds: the masks and the enable state of the path unit and the backup
+timers, `/etc/motel/Caddyfile` (a symlink there is kept, and named), the
+starter's record in `/var/lib/motel-package`, the box applier's tree in
+`/var/lib/motel-box`, `motel-backup`'s record in
+`/var/lib/motel-backup` and its cache in `/var/cache/motel-backup`. It
+keeps, and says so on the terminal:
+
+- the box's key for secrets and the env files decrypted with it,
+  `/etc/motel/age`, `/etc/motel/age.pub` and `/etc/motel/secrets`, so
+  `/etc/motel` stays: the key is the one way to read the secrets in the
+  box's repository;
+- the Caddyfile and the applier's tree, when a run of the applier still
+  holds its lock after 30 s, and that tree when something is mounted
+  at or under it;
+- the backup repository's credential, `/etc/motel-backup/repository.env`:
+  its password is the one way to read the backups already made;
+- a non-empty `/var/lib/motel-backup/staging` or `restore`, which holds
+  copies of an app's data a killed run left.
+
+It never touches `/var/lib/liveswap` (the apps' releases and data) or
+`/var/lib/motel` (Caddy's certificates, and the record of where
+people's keys were used), and the `motel` and `motel-backup` accounts
+stay. Neither command touches the backups themselves, off the box, or
+what `moteld monitor setup` installed: [Turn it off, and remove
+it](monitor.md#turn-it-off-and-remove-it) removes that, and its second
+step reloads moteld, so take it before the package goes. Remove the
+kept files yourself once nothing needs them: `rm -r /etc/motel
+/etc/motel-backup`.

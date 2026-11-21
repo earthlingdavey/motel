@@ -5,9 +5,14 @@
 # "Allow auto-merge" must be on. Without those, this workflow
 # deliberately has no effect worth trusting.
 #
-# Major version bumps are left open for human review — for a grouped
-# PR, update-type reports the highest bump in the group, so any group
-# containing a major stays open too.
+# Only patch and minor updates merge, and only when every update in the
+# PR is one: an allow-list. A major, or an update fetch-metadata gives
+# no type, stays open for human review. Its update-type output will not
+# do for this: for a group it is the highest typed bump and skips an
+# untyped one, so a patch beside an untyped update reads as a patch.
+# Hence updated-dependencies-json, entry by entry. Dependabot has typed
+# a digest-only image refresh (the tag unchanged) semver-patch, so one
+# merges; one that came untyped would stay open.
 name: dependabot-automerge
 
 on: pull_request
@@ -41,8 +46,14 @@ jobs:
           echo "ca-certificates $v"
       - uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         id: meta
-      - if: steps.meta.outputs.update-type != 'version-update:semver-major'
-        env:
+      - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+          UPDATES: ${{ steps.meta.outputs.updated-dependencies-json }}
+        run: |
+          if jq -e 'length > 0 and all(.[]; .updateType == "version-update:semver-patch" or .updateType == "version-update:semver-minor")' <<<"$UPDATES" >/dev/null; then
+            gh pr merge --auto --squash "$PR_URL"
+          else
+            echo "left for review: not every update is a patch or a minor"
+            jq -r '.[] | "\(.dependencyName) \(.prevVersion) -> \(.newVersion): \(if .updateType == "" then "no type" else .updateType end)"' <<<"$UPDATES"
+          fi

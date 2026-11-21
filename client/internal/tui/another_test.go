@@ -75,6 +75,8 @@ func TestAnotherKeyDropsWhatWasRead(t *testing.T) {
 	if strings.Contains(s, "asking") {
 		t.Errorf("after r an app's state, or the list, is not read:\n%s", s)
 	}
+	// The bucket's refill for the reads after r, the watch's among them.
+	h.now = h.now.Add(2 * time.Second)
 	h.press(":", "deploys blog "+rec, tcell.KeyEnter)
 	if s := h.screen(); !strings.Contains(s, "FAILED in soaking") {
 		t.Errorf("after r the record opened is not drawn:\n%s", s)

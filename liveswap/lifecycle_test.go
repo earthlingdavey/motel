@@ -304,6 +304,51 @@ func TestLifecycleDeployRefused(t *testing.T) {
 	}
 }
 
+// A refusal whose message quotes the deployer's text (here a path in
+// the release) is told to the operator's channels by its said; the
+// 422 keeps the message whole.
+func TestLifecycleDeployRefusedSaysNoDeployersText(t *testing.T) {
+	rig, n := notifiedRig(t)
+	rig.runner.preflightErr = &preflightError{msg: deployersWords + " is a 32-bit executable", said: commandsFile + " is a 32-bit executable"}
+	err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/1", version: "v1"})
+	if err == nil || !strings.Contains(err.Error(), deployersWords) {
+		t.Fatalf("the 422 must keep the message whole: %v", err)
+	}
+	ev, ok := n.find(EventDeployRefused)
+	if !ok || ev.Summary != "deploy of v1 refused: pre-flight: "+commandsFile+" is a 32-bit executable" {
+		t.Fatalf("events = %v, refused = %+v", n.names(), ev)
+	}
+}
+
+// The watchdog's relaunch refused at its pre-flight is told, and kept
+// in alerts.json, by the refusal's said; status keeps the message whole.
+func TestLifecycleRelaunchRefusedSaysNoDeployersText(t *testing.T) {
+	rig, n := notifiedRig(t)
+	deployV1(t, rig)
+	rig.startWatchdogT(t)
+	waitUntil(t, "watchdog to arm", func() bool {
+		s := rig.ma.wd.currentState()
+		return s == wdStateGrace || s == wdStateWatching
+	})
+	msg, said := deployersWords+" is a 32-bit executable", commandsFile+" is a 32-bit executable"
+	rig.runner.setPreflightErr(&preflightError{msg: msg, said: said})
+	rig.runner.handleAt(0).kill()
+	advanceUntil(t, rig, time.Second, "the relaunch refused", func() bool {
+		_, ok := n.find(EventRelaunchRefused)
+		return ok
+	})
+	if ev, _ := n.find(EventRelaunchRefused); ev.Summary != "the watchdog's relaunch of v1 was refused, so the app is down: "+said {
+		t.Fatalf("summary = %q", ev.Summary)
+	}
+	if _, reason := rig.ma.wd.refusal(); reason != said {
+		t.Fatalf("the kept reason = %q, want %q", reason, said)
+	}
+	waitUntil(t, "status to name the refusal", func() bool {
+		wd := rig.ma.status().Watchdog
+		return wd != nil && wd.LastFailure == msg
+	})
+}
+
 func TestLifecycleRollback(t *testing.T) {
 	rig, n := notifiedRig(t)
 	deployV1(t, rig)

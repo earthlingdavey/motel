@@ -329,7 +329,7 @@ Concept map from the Nomad-era stack:
 
 ## Architecture
 
-Three cooperating modules, flat package `liveswap`:
+Four cooperating modules, flat package `liveswap`:
 
 1. **`liveswap`** (`liveswap.go`) — a `caddy.App`, registered as a
    Caddyfile global option. Owns app definitions, defaults
@@ -345,6 +345,11 @@ Three cooperating modules, flat package `liveswap`:
    rewriting config via the admin API — a reload per deploy, config
    drift, races with operator edits — and (b) a bespoke proxy handler —
    reimplementing reverse_proxy badly.
+4. **`http.handlers.liveswap_observe`** (`observe.go`) — the response
+   observer, the `observe <app>` directive: counts an app's responses
+   by status class, times them to their headers and reads the cache's
+   verdict, per release (notify/DESIGN-metrics.md, "The response
+   observer").
 
 ### The reload trap (the one Caddy-specific thing you must not break)
 
@@ -662,8 +667,8 @@ row's function (box/DESIGN-box.md, "Handler contract").
 
 `access/` holds the actions (`app.status`, `app.deploy_record`,
 `app.deploy`, `app.rollback`, `box.status`, `box.push_result`,
-`box.push`, and `box.whoami`, `box.apps`, `box.backups`, `box.alerts`, `app.alerts`, `box.rules`, `app.rules` and `app.series`, served
-here under `/_motel/`), the principal kinds and `Decide`, which refuses every pair
+`box.push`, and `box.whoami`, `box.apps`, `box.backups`, `box.alerts`, `app.alerts`, `box.rules`, `app.rules`, `app.series` and `app.logs`, served
+here under `/_motel/`; `app.logs`'s row arrives with the logs read), the principal kinds and `Decide`, which refuses every pair
 its table does not list. A deploy token's principals: a deploy source
 of the app in the path, which may take every app action on that app
 and on no other, and the box channel's source, which may take the three
@@ -679,7 +684,9 @@ a deployer of no app, is refused the people's routes; and a person
 `Decide` refuses is told so. Each gets a 403 that names what is needed
 (`wire.Forbidden`). A refusal with no such word, which no principal
 meets, would be a 403 `forbidden`. The tests hold the tables to each other both ways
-(`TestEveryRouteHasAnAction`, `TestEveryActionHasARoute`), write the
+(`TestEveryRouteHasAnAction`, `TestEveryActionHasARoute`), but for the
+actions `arrivesWithItsRead` names, whose row arrives with their read
+and which `TestArrivesWithItsReadHasNoRow` fails once it has one; write the
 decide table out cell by cell (`TestDecideTable`), and drive every
 method, path and query for each kind of caller (`FuzzNoRouteNoAnswer`,
 in each webhook): a request that matches no row is answered 401, 404
@@ -767,24 +774,35 @@ plugin's handler can take its ID.
 | `handler.go` | the webhook: payload validation, deploy dispatch, the status endpoint, and every body's filter (`RespondJSON`); authentication is `deploytrust`'s |
 | `access/` | leaf package: the webhooks' actions, the principal kinds and `Decide`, the one table of who may take which action; the `person` and `grant` lines, the registry of people and the person token's checker (access/DESIGN-access.md); `handler.go` and the box webhook each hold a route table that names an action per row ("Who may take which action") |
 | `people.go` | `AdmitPerson`: a person's way in on both webhooks (the token, the address list, the failure budgets, the rate) |
-| `motel_routes.go` | the rows under `/_motel/`: `whoami` and `apps` |
+| `people_networks.go` | the networks each person's key was used from, and the two events a stolen key should set off; told, never a gate (access/DESIGN-access.md, "A key used from somewhere new") |
+| `motel_routes.go` | the box-wide rows under `/_motel/`: `whoami`, `apps`, `backups`, `alerts` and `rules`, and the dispatch to the app-scoped rows |
+| `motel_approutes.go` | the app-scoped rows, `/_motel/apps/<app>/<read>`: `alerts` (served here), `rules` and `series`, and the query keys each row takes |
+| `motel_series.go` / `series.go` | `GET /_motel/apps/<app>/series`, an app's numbers over time; `SeriesSource`, the metrics store's, which notify installs |
+| `motel_alerts.go` / `alerts.go` | `GET /_motel/alerts`, the alerts and silences a viewer of the box reads (access/DESIGN-access.md, "The answers"); `AlertsSource`, what Alertmanager holds, which notify installs |
+| `motel_rules.go` | `RulesSource`, the rules the box alerts on, which notify installs, and the two rules rows |
+| `motel_backups.go` | `GET /_motel/backups`; `BackupsSource`, which moteld installs (cmd/moteld/main.go); `allowBox` and `boxHandle`, which the backups, alerts and rules rows are given |
+| `wiretypes.go` | liveswap's names for the bodies, which are package `wire`'s types |
+| `wire/` | leaf package: every body liveswap's webhook answers with, and the box webhook's `GET /`, which a client decodes into without linking Caddy; `testdata/wire` pins the bytes |
 | `redact.go` | the response filter (`Redactor`) that `RespondJSON` applies: known `env_file` values in their encoded forms, a safe list, shape rules, entropy; the four rules every writer of a body holds head the file |
 | `deploytrust/` | leaf package: deploy auth — the `deploy_trust` grammar (`Parse`), its sources and verifiers (OIDC + local-key JWT verification), the webhook preamble (`Limiter.Authenticate`) and what a failed attempt costs the journal (`Limiter`, on an injected clock). Imports nothing of liveswap's; the box webhook authenticates through it too. `trusttest/` beside it mints tokens and runs an issuer for tests |
 | `internal/dispenser/` | leaf package: the one Caddyfile rule the parsers here and `deploytrust.Parse` apply alike — a repeated subdirective is refused — in one place so the two cannot drift |
 | `upstreams.go` | dynamic upstream source (the cutover read side) |
 | `observe.go` | `observe`: the response observer's handler and writer, and the per-release counters on `managedApp` ("The response observer") |
+| `lifecycle.go` | the lifecycle events liveswap tells a `Notifier` (notify's), the alerts an app stands in (`<app>/alerts.json`) and `ReportStanding` |
 | `appmetrics.go` | what the metrics store reads of liveswap: `AppSamples` (each app's instance and its request counts) and the `MetricsSource` hook that adds `metrics` to `GET /<app>`, with the `?range=` windows |
 | `runner.go` / `runner_systemd.go` / `systemd_dbus.go` | runner interface + the systemd transient-unit implementation + its D-Bus client |
 | `sweep.go` | `App.Start`'s reconciliation against the manager: stop the units, and prune the dirs, of apps no loaded config names. Module-layer (the pool is the ledger), driving the runner |
-| `socket.go` | the per-instance socket: nonce, path checks, stale-socket pruning, the unix dialer |
+| `socket.go` / `socket_linux.go` / `socket_other.go` | the per-instance socket: nonce, path checks, stale-socket pruning, the unix dialer; the link that never follows a symlink is Linux's (elsewhere, an error) |
 | `sandbox.go` | the per-unit sandbox: view spec, base view, bind-source checks, capability probe (see DESIGN-sandbox.md) |
 | `harden/` | leaf package: the supervisor goes non-dumpable at init, before `os` |
+| `backupsources.go` | the files a backup declaration was read from, which validate and reload hold to the backup run's view |
+| `backupdecl/` | leaf package: what an app declares about its backups (its SQLite databases and plain files), standard library only |
 | `allowlist.go` | `artifact_allowlist` parsing, canonicalisation and URL pinning |
 | `download.go` | capped, redacted artifact download; `releaseFetcher` (download+extract orchestration) |
 | `extract.go` | validate-then-extract hardened tar handling |
 | `elf.go` | the pre-flight's ELF check: a release's command built for another machine, or 32-bit, is refused before any unit exists. It also declares `preflightError`, the type every pre-flight refusal shares, reported as a 422 |
 | `health.go` | prober with soak/deadline arithmetic on an injected clock |
-| `journal.go` | the journal tail a failed deploy's response carries: `journalctl` run with argument lists built here, its output bounded |
+| `journal.go` | the journal tail a failed deploy's response carries: `journalctl` run with argument lists built here and an empty environment, its output bounded |
 | `watchdog.go` | continuous crash/health supervision: per-app loop, restart budget, backoff, the wait for a deploy holding the lock |
 | `state.go` | `state.json` atomic persistence; the release order (deploy time) that keep-N GC and `available_versions` share |
 | `deploying.go` | the deploy marker, `<app>/deploying.json`: a URL or push deploy in flight, so the next start or deploy removes the release of one moteld stopped during, and records it failed |
@@ -1053,6 +1071,10 @@ severity × occurrence × detection, then the fix's size and risk.
 | An env file's malformed line whose text before the first `=` is a secret or part of one, at most 21 bytes of letters, digits, `_`, `.`, `-` and spaces and not a valid name, is quoted in the parse error. That text can be: a generated secret under 128 bits that ends in `=` padding and starts with a digit (`openssl rand -base64` of 8, 10, 11, 13 or 14 bytes, or fewer); the part before the first `=` of a longer generated password whose characters include `=` (`pwgen -sy`, KeePass's special characters); a key and a padded value with a space where the `=` belongs (`API_KEY 3q2x8w==` is quoted as `"API_KEY 3q2x8w"`); or a short secret the operator chose and wrote with no key. It surfaces at each launch (the journal, the deploy's answer); while the file does not parse, in the reason every webhook and status answer is withheld with (`withhold`, redact.go); and for the box's own secrets file in notify's journal lines and in the refusal `moteld validate` and a reload return, which the box handler sends to the pusher. Nothing masks it: a file that does not parse gives the filter no values. | `invalidEnvKeyMsg` (app.go) | 5 | 5 | 5 | 125 | size 1, risk 1 (never quote the text) | Rule 1 would fix it; the repository's owner chose to keep the quote for a mistyped name (`MY-KEY`, `my.key`, `9LIVES`), the common case, so the error says what to mend, and confirmed it on 2026-11-14. The bound keeps out every generated secret of 128 bits or more, which takes at least 22 characters in that alphabet however it is encoded, and the alphabet keeps out every URL, so no channel URL is quoted whole. |
 | The integration suite's end of a scenario (`endApps`, #534) gives the load of its app-less config 60 s. A load whose `Destruct` waits longer for a deploy still in flight times out: the test fails with the timeout named, and Caddy goes on stopping the units while `t.TempDir`'s removal runs, so `directory not empty` may follow it. | `endApps`, `integration_test.go` | 2 | 2 | 1 | 4 | size 1, risk 2 (a longer client timeout) | Rule 2 holds (it ends red, the timeout named); under rule 3 the product is under 20 and the fix is not size 1, risk 1. It needs a test that already failed mid-deploy and a deploy that outlasts 60 s, where the scenarios' configs set `deadline 5s` and their artifact servers are closed before `endApps` runs. |
 | The integration suite's `endApps` returns when the root holds no app dir, which only an app's first deploy or launch makes. A scenario that fails while its own deploy is in flight but before that deploy made the app's dir leaves its config loaded, and the deploy can then make `<root>/<app>` while `t.TempDir`'s removal runs: `directory not empty` follows the test's own failure. | `endApps`, `integration_test.go` | 2 | 2 | 1 | 4 | size 2, risk 2 (load the app-less config whenever Caddy answers, an empty root included) | Rule 2 holds (it ends red, the test's own failure named first); under rule 3 the product is under 20 and the fix is not size 1, risk 1. It needs a scenario that already failed and a deploy of its caught between its request and its first directory. |
+| A `deploy_refused` for an artifact URL the allowlist refuses says only `artifact url refused`, and for one that does not parse `invalid artifact url`: the reason (no entry covers the host, a port or query parameter an entry does not declare, the parse error) is in the 422 and the journal, not in the operator's channels. Each reason quotes the URL or a piece of it, the deployer's text, which a summary must not carry. | `pinArtifactURL` (`said`) | 2 | 5 | 1 | 10 | size 2, risk 2 (a said for each of `matchAllowlist`'s refusals, so that the deployer-free ones, "not covered by artifact_allowlist (<the entries>)", pass through) | Under 20, and not a size-1, risk-1 fix (rule 3). The summary names the version and that its URL was refused; the deployer reads the reason in its 422 (self-review of the deploy_refused fix, review of 2026-11-20). |
+| A rollback (**Run workflow** in the app templates' `deploy.yml`) in a repository with no `MOTEL_URL` variable fails on `deploy.sh`'s own refusal (`MOTEL_URL: set MOTEL_URL to the app webhook, e.g. https://deploy.example.com/example`), with no annotation saying it is a repository variable or where to set it; a push still stops at the build job's `Check MOTEL_URL is set` step, whose annotation says both. A rollback runs the deploy job alone, and the check is the build job's since the workflow became three jobs (review of 2026-11-20). | `examples/node/.github/workflows/deploy.yml`, `examples/deno/.github/workflows/deploy.yml` (the deploy job) | 2 | 5 | 1 | 10 | size 2, risk 2 (the check's step again in the deploy job) | Under 20, and not a size-1, risk-1 fix (rule 3). Red and named: the run fails on its first line naming the variable and its value's shape, and publishes nothing; the first run of a repository made from the template is a push, which gets the annotation. |
+| A `MOTEL_URL` whose host is empty (`https:///example`) or an IPv6 literal (`https://[::1]/example`) has the templates' `deploy.sh` ask GitHub for an empty audience, or for the literal with its brackets, where a box's identity is a hostname (the client refuses both as a box's name). GitHub mints its default audience for the empty one. | `examples/node/scripts/deploy.sh`, `examples/deno/scripts/deploy.sh` (the mint) | 2 | 5 | 1 | 10 | size 2, risk 2 (a refusal before the mint: one more branch) | Under 20, and not a size-1, risk-1 fix (rule 3). Red and named: the request fails (curl reads `https:///example` as the host `example`, and says it cannot resolve it), or the box's 401 is followed by the audience the run asked for, to hold against the block's. No doc gives either form (review of 2026-11-20, per-box audience). |
+| A **Re-run failed jobs** of the app templates' release job more than a day after its build finds no tarball: the build keeps it as a workflow artifact for one day (`retention-days: 1`), and `download-artifact` fails naming the artifact it cannot find. A re-run of every job builds again and goes through, under the same version (review of 2026-11-20). | `examples/node/.github/workflows/deploy.yml`, `examples/deno/.github/workflows/deploy.yml` (`upload-artifact`) | 2 | 2 | 1 | 4 | size 1, risk 2 (a longer retention, which counts against a private repository's artifact storage) | Under 20, and not a size-1, risk-1 fix (rule 3). It takes a failed release and a re-run of that job alone a day later; red and named, and the whole run's re-run is the remedy. The deploy job fetches the published release, not the artifact, so its re-run alone is unaffected. |
 
 **Owed** (over the bar, not yet fixed):
 
@@ -1061,6 +1083,8 @@ severity × occurrence × detection, then the fix's size and risk.
 | A secret pasted alone on an `env_file` line, base64 with its `=` padding (`dGhpc2lzYXNlY3JldA==`), parses as a variable named after it whose value is `=` or empty, so the response filter's known-value layer never learns it (`buildEnvFull`, `NewRedactor`: values under `secretMinLen` are skipped, names are not values). An app that prints its environment (a journal tail, a probe's body) sends it out in a deploy's response; layer 4 masks only a token of `entropyMinLen` (20) or more that looks generated, so a short one passes. Wide: every app's deploy responses. Found reviewing box/no-secret-taken-for-a-name (2026-11-14) | 5 | 5 | 5 | its own liveswap PR, with the owner's go (size 2, risk 1–2): the name of a pair whose value is empty or only `=` signs becomes a known value when it is `secretMinLen` or more, under a fixed label such as `[redacted:env_file line]`, never `[redacted:<KEY>]`, which would print it, and kept out of the `redacted_env` list |
 | An operator's rule of every app is named in the operator's words, and its name reaches every app's viewer: on `GET /_motel/apps/<app>/rules` (#581's rules read) and, on `main` since #602, as an alert's name on `GET /_motel/apps/<app>/alerts`. A name that holds another app's (`rule shop_errors threshold 5xx_share > 0.05 for 10m`, no `app`) tells blog's viewer that shop exists, where every other part of an app's answer names no other app. Found in Copilot's round 2 overview of the rules read (#606) | 3 | 5 | 5 | the owner's call, its own PR (size 2, risk 2): the smallest fix is a load-time refusal, named (`moteld validate`), of a rule of every app whose name holds another app's name as an `_`-separated word; the alternative is a row accepting it by the owner's decision |
 | A bind mount can give two apps one directory, or put one app's data inside another's: an fstab source another app also uses, or a whole app dir mounted at another's. A mount resolves to itself, so the launch check (`resolveBindSources`) passes it: blog launches on shop's data, writable, and nothing says so. | 5 | 5 | 5 | #308, to design: equal `(st_dev, st_ino)` alone misses a source nested in another's; when to check, what to refuse and what to say are open there. Until then, the README's bind-mount advice says the source must be the app's own |
+| The app templates' release job (and liveswap/README.md's recipe) creates its tag with no `target_commitish`, so GitHub puts a new tag on the default branch's head when the release is made, not on the commit the run built: a push that lands while an earlier run is between its checkout and its release leaves that run's tag, named for its commit, on the later commit. The tarball and the box's version are the built commit's; only the tag's code is not (review of 2026-11-20, pre-existing; the jobs' split widens the window by the build job's length) | 3 | 5 | 5 | `examples/node/.github/workflows/deploy.yml`, `examples/deno/.github/workflows/deploy.yml`, the recipe: `target_commitish: ${{ github.sha }}` (size 1, risk 2). Not made here: softprops/action-gh-release documents a 403 for `github.token` creating a tag on an older commit, so the change may turn the race from a mis-placed tag into a red release; it needs a run in a real repository first |
+| A re-run of every job of an app template's run that deployed replaces the release's `app.tar.gz` with the rebuilt tarball (softprops/action-gh-release's `overwrite_files` defaults to true), which the box refuses with a 422: the release page then holds bytes that never ran under that version, while the box runs the first build (review of 2026-11-20, pre-existing: the single-job workflow re-uploaded the same way) | 3 | 5 | 5 | the templates' release job. Not made here: `overwrite_files: false` keeps the deployed asset but leaves the wrong one in place after a deploy that failed (a release built on the wrong runner, then set right and re-run), whose remedy the templates' `deploy.sh` names; the fix needs a choice between the two, the owner's |
 
 ## Resource caps
 

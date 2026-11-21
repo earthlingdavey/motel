@@ -10,7 +10,7 @@ import (
 )
 
 // The timings the route tree carries (DESIGN-notify.md, "The route
-// tree"), each measured on hotserve-1 (alertmanager_edge_tests.md):
+// tree"), each measured on hotserve-1:
 const (
 	// One-shots: every event its own group (group_by ['...']) and no
 	// wait, so a second distinct one-shot is never held for a tick and
@@ -67,6 +67,9 @@ type amConfig struct {
 
 type amGlobal struct {
 	ResolveTimeout string `yaml:"resolve_timeout"`
+	// HTTPConfig is every receiver's that has none of its own:
+	// Alertmanager copies the global one to those only.
+	HTTPConfig amHTTPConfig `yaml:"http_config"`
 }
 
 type amRoute struct {
@@ -97,18 +100,26 @@ type amRecv struct {
 
 // The *_file fields keep every URL out of the YAML, out of
 // Alertmanager's /api/v2/status echo and out of its failure log
-// (measured: alertmanager_delivery_test.md). send_resolved is never
-// omitted: its default differs by integration.
+// (measured). send_resolved is never omitted: its default differs by
+// integration.
 type amWebhook struct {
 	URLFile      string        `yaml:"url_file"`
 	SendResolved bool          `yaml:"send_resolved"`
 	HTTPConfig   *amHTTPConfig `yaml:"http_config,omitempty"`
 }
 
-// amHTTPConfig carries the fixed headers an ntfy channel's receiver
-// sends: ntfy reads a message's priority from X-Priority.
+// amHTTPConfig is the global http_config and an ntfy channel's own,
+// which carries the fixed headers its receiver sends: ntfy reads a
+// message's priority from X-Priority. FollowRedirects is never set and
+// never omitted: Alertmanager's default follows a redirect, a 307
+// replaying the POST to wherever the endpoint names, which would let
+// whoever runs it send a notification on to the box's loopback, past
+// checkURL. A receiver's own http_config starts from that default, not
+// from the global one, so each says false (DESIGN-notify.md, "The
+// monitor block").
 type amHTTPConfig struct {
-	Headers map[string]amHeader `yaml:"http_headers"`
+	FollowRedirects bool                `yaml:"follow_redirects"`
+	Headers         map[string]amHeader `yaml:"http_headers,omitempty"`
 }
 
 type amHeader struct {

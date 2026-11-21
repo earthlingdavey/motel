@@ -12,7 +12,9 @@
 # procps: pgrep/ps for the process-tree assertions. sqlite3 and restic:
 # Debian's, because what the backups module's integration tests
 # measure is how those two programs behave.
-FROM golang:1.27-trixie
+# The Go is docker-compose.yml's dev image, by the same tag and digest:
+# the Go that builds what ships.
+FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \

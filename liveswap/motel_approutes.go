@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -27,12 +28,13 @@ const motelAppsPrefix = motelPrefix + "/apps/"
 // and the query as parsed against the keys.
 //
 // A row declares each key it takes and the closed set of its values,
-// the first the default; the query is parsed strictly against them
-// (parseQuery), after Decide. A query that does not parse, a key the
-// row does not take, a key given twice and a value outside its set are
-// each the 422 that names what the row takes, in the route's own
-// words, and echoes nothing of the request's; a row with no key takes
-// no query at all, an empty one among them.
+// the first the default, or the grammar its value must match; the
+// query is parsed strictly against them (parseQuery), after Decide. A
+// query that does not parse, a key the row does not take, a key given
+// twice and a value outside its set or its grammar are each the 422
+// that names what the row takes, in the route's own words, and echoes
+// nothing of the request's; a row with no key takes no query at all,
+// an empty one among them.
 type motelAppRoute struct {
 	read   string
 	action access.Action
@@ -40,32 +42,50 @@ type motelAppRoute struct {
 	serve  func(h *Handler, w http.ResponseWriter, r *http.Request, app appHandle, q appQuery) error
 }
 
-// queryKey is one query key a row takes, and the closed set of its
-// values: the first is the value when the query does not name the key.
+// queryKey is one query key a row takes: the closed set of its values,
+// the first the value when the query does not name the key; or, for a
+// key no set can hold (a cursor), the grammar its value must match
+// whole, and then no default: the key is in the query only when named.
+// A key has a set or a grammar, never both (TestAppRouteKeys).
 type queryKey struct {
-	name   string
-	values []string
+	name    string
+	values  []string
+	grammar *keyGrammar
+}
+
+// keyGrammar is what a key with no closed set holds its value to: an
+// anchored pattern the whole value must match, and the words the 422
+// names it by, which quote nothing a request sent.
+type keyGrammar struct {
+	re   *regexp.Regexp
+	says string
 }
 
 // appQuery is the value of each key a row takes, as the query named it
-// or its default: only those keys, and only values of their sets.
+// or its default: only those keys, and only values of their sets or
+// matching their grammars. A key with a grammar is in it only when the
+// query named it (no grammar takes an empty value, so q[name] == "" is
+// the key not named).
 type appQuery map[string]string
 
 var motelAppRoutes = []motelAppRoute{
 	{"alerts", access.AppAlerts, nil, (*Handler).appAlerts},
 	{"rules", access.AppRules, nil, (*Handler).appRules},
-	{"series", access.AppSeries, []queryKey{{"range", wire.SeriesRanges}}, (*Handler).appSeries},
+	{"series", access.AppSeries, []queryKey{{name: "range", values: wire.SeriesRanges}}, (*Handler).appSeries},
 }
 
 // parseQuery is the request's query against the keys rt takes, or
 // false, for the 422: as url.ParseQuery reads it (an empty query, and
 // empty pieces between the &s, name nothing), each key one rt takes,
-// named once, with a value of its set. A row with no key takes no
-// query, so any query, an empty one too, is refused.
+// named once, with a value of its set or one its grammar takes whole.
+// A row with no key takes no query, so any query, an empty one too, is
+// refused.
 func (rt *motelAppRoute) parseQuery(r *http.Request) (appQuery, bool) {
 	out := appQuery{}
 	for _, k := range rt.keys {
-		out[k.name] = k.values[0]
+		if k.grammar == nil {
+			out[k.name] = k.values[0]
+		}
 	}
 	if r.URL.RawQuery == "" && !r.URL.ForceQuery {
 		return out, true
@@ -82,6 +102,15 @@ func (rt *motelAppRoute) parseQuery(r *http.Request) (appQuery, bool) {
 		if i < 0 || len(vs) != 1 {
 			return nil, false
 		}
+		if g := rt.keys[i].grammar; g != nil {
+			// No word of the row's to pass on: the value as
+			// url.ParseQuery decoded it, held whole to the grammar.
+			if !g.re.MatchString(vs[0]) {
+				return nil, false
+			}
+			out[name] = vs[0]
+			continue
+		}
 		j := slices.Index(rt.keys[i].values, vs[0])
 		if j < 0 {
 			return nil, false
@@ -94,7 +123,8 @@ func (rt *motelAppRoute) parseQuery(r *http.Request) (appQuery, bool) {
 }
 
 // takes is the 422's sentence: the route by its pattern, and the keys
-// it takes with their values, the row's own words alone.
+// it takes with their values or their grammars' words, the row's own
+// words alone.
 func (rt *motelAppRoute) takes() string {
 	route := "GET /_motel/apps/{app}/" + rt.read
 	if len(rt.keys) == 0 {
@@ -102,6 +132,10 @@ func (rt *motelAppRoute) takes() string {
 	}
 	parts := make([]string, len(rt.keys))
 	for i, k := range rt.keys {
+		if k.grammar != nil {
+			parts[i] = k.name + " (" + k.grammar.says + ")"
+			continue
+		}
 		parts[i] = k.name + " (one of " + strings.Join(k.values, ", ") + ")"
 	}
 	return route + " takes only " + strings.Join(parts, " and ") + ", each once"
