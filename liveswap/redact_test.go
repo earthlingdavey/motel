@@ -624,3 +624,91 @@ func TestReportedKeysMergeWithTheBodys(t *testing.T) {
 		t.Fatalf("only the strings of a mixed array are kept: %s", got)
 	}
 }
+
+// TestFinalPassHoldsStill: a pass replaces longest first, so a marker
+// and the text beside it can make a longer value the pass had looked
+// for already. What the final pass returns must hold still, or it is
+// not sent: a withheld sentence is the body that can hold nothing, a
+// body is withheld, a text is [#0].
+func TestFinalPassHoldsStill(t *testing.T) {
+	const made = "[redacted:K] withheld" // S's value, made of K's marker and a word
+	env := []string{"K=response", "S=" + made}
+	for _, tc := range []struct {
+		name  string
+		extra string
+		body  string
+	}{
+		// A value of the body's punctuation: the structure sentence.
+		{"structure", `P=["a","b"]`, `{"log_tail":["a","b"],"status":"failed"}`},
+		// A value inside the outcome word: the outcome sentence.
+		{"outcome", "O=ucceeded", `{"status":"succeeded"}`},
+	} {
+		r := NewRedactor(append(env, tc.extra), nil)
+		out := r.redactJSON([]byte(tc.body))
+		if strings.Contains(out, made) || !strings.HasPrefix(out, `{"error":"[#0]"`) || !json.Valid([]byte(out)) {
+			t.Errorf("%s: %s", tc.name, out)
+		}
+	}
+	// The same in a body that is sent: the heuristics' marker holds A's
+	// value, the final pass makes B's beside it.
+	r := NewRedactor([]string{"A=[redacted:query]", "B=[redacted:A] end!"}, nil)
+	out := r.redactJSON([]byte(`{"log_tail":["see https://x.example/y?q=1 end!"],"status":"failed"}`))
+	if strings.Contains(out, "[redacted:A] end!") || !strings.Contains(out, "response withheld") || !json.Valid([]byte(out)) {
+		t.Errorf("body: %s", out)
+	}
+	if got, _ := r.Redact("see https://x.example/y?q=1 end!"); got != "[#0]" {
+		t.Errorf("text: %q", got)
+	}
+}
+
+// TestMarkersHoldNoKnownValue: the final pass's check never withholds
+// in an ordinary configuration. No marker chooseMarker picks holds a
+// known value, so the markers a pass writes are still under the next:
+// values that are a piece of a key's name (DATABASE beside
+// DATABASE_URL), the words of the named markers (redacted, REDACTED,
+// withheld, removed), a value of a URL's password, an outcome word and
+// the app's own name. A body holding every value, as written and as
+// encoding/json escapes it, is sent with markers, not withheld; and so
+// is the text.
+func TestMarkersHoldNoKnownValue(t *testing.T) {
+	env := []string{
+		"DATABASE_URL=postgres://app:s3cr3t-pa55word@db.internal:5432/app", // gitleaks:allow — made up for this test
+		"DB_NAME=DATABASE",
+		"DB_USER=PASSWORD",
+		"SECRET_KEY_BASE=8f2b6c1d9e0a7f3b5c4d2e1f0a9b8c7d", // gitleaks:allow — made up for this test
+		"PLACEHOLDER=redacted",
+		"SHOUT=REDACTED",
+		"STATE=withheld",
+		"VERB=removed!!",
+		"STATUS_WORD=succeeded",
+		"APP_NAME=billingapp",
+		`LEGACY=p"w\ord'x12`,
+		"ADMIN=pässwört-Ñ-2024",
+	}
+	r := NewRedactor(env, nil)
+	r.holdOwnName("billingapp")
+	for _, sec := range r.secrets {
+		for _, inBody := range []bool{false, true} {
+			if got := r.replaceKnown(sec.marker, map[string]bool{}, inBody); got != sec.marker {
+				t.Errorf("marker %q of %v holds a known value: %q", sec.marker, sec.keys, got)
+			}
+		}
+	}
+	var text []string
+	for _, kv := range env {
+		_, v, _ := strings.Cut(kv, "=")
+		text = append(text, "saw "+v+" here")
+	}
+	line := strings.Join(text, "; ")
+	body, err := json.Marshal(map[string]any{"app": "billingapp", "status": "succeeded", "log_tail": text, "error": line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := r.redactJSON(body)
+	if strings.Contains(out, "response withheld") || strings.Contains(out, "[#0]") || !strings.Contains(out, `"status":"succeeded"`) {
+		t.Errorf("an ordinary body was withheld: %s", out)
+	}
+	if got, _ := r.Redact(line); got == "[#0]" || strings.Contains(got, "s3cr3t") {
+		t.Errorf("an ordinary text: %q", got)
+	}
+}

@@ -75,7 +75,9 @@ import (
 //     in NewRedactor, whatever named it — a request, the config, a
 //     name read off disk — so provenance is never tracked, and every
 //     caller passes a plain list (redactorFor, recordRedactor).
-//  2. The final known-value pass is the last write to a body. What
+//  2. The final known-value pass is the last write to a body, and what
+//     it returns holds still: one more pass would change nothing, or
+//     the body is withheld (a text, Redact's, is [#0]). What
 //     redactJSON adds after it cannot carry the app's bytes: the
 //     redacted_env field (a fixed name, key names filtered, and the
 //     strings the filtered body already held). The stream's spliced
@@ -638,9 +640,40 @@ func reportedKeys(seen map[string]bool) []string {
 // the box webhook writes somewhere other than a response body.
 func (r *Redactor) Redact(s string) (string, []string) {
 	seen := map[string]bool{}
-	s = r.filter(s, seen, false)
-	s = r.replaceKnown(s, seen, false)
+	s, still := r.finalPass(r.filter(s, seen, false), seen, false)
+	if !still {
+		s = "[#0]"
+	}
 	return s, reportedKeys(seen)
+}
+
+// finalPass is the known-value pass that ends a body or a text: s with
+// every form replaced, and whether what it returns holds still, one
+// more pass leaving it as it is. A single pass replaces longest first,
+// so a marker and the text beside it can make a longer value that pass
+// had looked for already (K=response and S=[redacted:K] withheld: the
+// words "response withheld" become S's value after K's replacement);
+// what does not hold still is never sent. A pass that replaced nothing
+// holds still by construction, so a body with no value in it pays for
+// one pass.
+func (r *Redactor) finalPass(s string, seen map[string]bool, inBody bool) (string, bool) {
+	t := r.replaceKnown(s, seen, inBody)
+	if t == s {
+		return t, true
+	}
+	return t, r.replaceKnown(t, map[string]bool{}, inBody) == t
+}
+
+// settled is s, a body that holds nothing of the app's (one of the
+// filter's withheld sentences), after the final pass, when that pass
+// leaves it JSON and holding still; else the body that can hold
+// nothing, returned as it is, with no pass of its own.
+func (r *Redactor) settled(s string, seen map[string]bool) string {
+	t, still := r.finalPass(s, seen, true)
+	if !still || !json.Valid([]byte(t)) {
+		return `{"error":"[#0]"}`
+	}
+	return t
 }
 
 // filter is layers 1 to 4 in order, with the safe strings held out of
@@ -810,8 +843,8 @@ func (r *Redactor) holdOwnName(name string) {
 // redactJSON filters a marshalled JSON body and, when a known value
 // was found, adds a `redacted_env` field naming the keys. Whatever is
 // finally sent — the filtered body or a fallback — gets a last
-// layer-1 pass, so no known form is in the bytes written, and the
-// result is valid JSON.
+// layer-1 pass that must hold still (finalPass), so no known form is in
+// the bytes written, and the result is valid JSON.
 //
 // The report field is added after that pass, its name verbatim and
 // each key name filtered on its own: the name is fixed public text in
@@ -827,8 +860,11 @@ func (r *Redactor) holdOwnName(name string) {
 // the keys still reported. A filter whose env_file could not be read
 // withholds every body: the heuristics alone are not the promise. A
 // body that is still not JSON at the end — a value equal to the
-// response's own punctuation, twice over — becomes the one body that
-// can contain nothing: a marker under 8 characters.
+// response's own punctuation, twice over — or a sentence the last pass
+// does not leave still, becomes the one body that can contain nothing
+// of the app's: a marker under 8 characters, in a fixed text that is
+// the same in every such answer (a value equal to a piece of it, such
+// as `{"error"`, is learnt from nothing, as the report field's name).
 func (r *Redactor) redactJSON(raw []byte) string {
 	seen := map[string]bool{}
 	var body string
@@ -844,7 +880,7 @@ func (r *Redactor) redactJSON(raw []byte) string {
 		if !json.Valid([]byte(body)) {
 			body = `{"error":"response withheld: the app's env_file could not be read"}`
 		}
-		body = r.replaceKnown(body, seen, true)
+		body = r.settled(body, seen)
 	} else {
 		body = r.filterBody(string(raw), seen)
 	}
@@ -923,9 +959,12 @@ func (r *Redactor) filterWhole(raw string, seen map[string]bool) string {
 	outcomes := len(outcomePairRe.FindAllStringIndex(raw, -1))
 	body := r.filter(raw, seen, true)
 	if !json.Valid([]byte(body)) {
-		return r.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, seen, true)
+		return r.settled(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, seen)
 	}
-	body = r.replaceKnown(body, seen, true)
+	body, still := r.finalPass(body, seen, true)
+	if !still {
+		return r.settled(`{"error":"response withheld: a marker and the text beside it made another redacted value"}`, seen)
+	}
 	// Every outcome the body had is still a word (rule 3), or the body
 	// is withheld: a value that is part of a word ("ucceeded") was
 	// replaced inside it, and a body whose status is not a word of the
@@ -933,7 +972,7 @@ func (r *Redactor) filterWhole(raw string, seen map[string]bool) string {
 	// find, and none moves one next to an outcome key, so nothing can
 	// make a pair; the count can only fall.
 	if len(outcomePairRe.FindAllStringIndex(body, -1)) < outcomes {
-		return r.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own outcome"}`, seen, true)
+		return r.settled(`{"error":"response withheld: a redacted value overlapped the response's own outcome"}`, seen)
 	}
 	return body
 }
