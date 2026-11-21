@@ -35,10 +35,11 @@ import (
 //     the forms it could appear in — as written, base64 (standard and
 //     URL alphabets, padded and not), hex, URL-escaped — and, for a
 //     value that is a URL with a password, the password on its own in
-//     the same forms; each form also in any backslash escaping, at any
-//     depth (escapePattern): JSON's as every runtime measured writes
-//     it, a quoting function's, and either escaped again, as a body
-//     holds an app's JSON line. Replaced with [redacted:KEY], but
+//     the same forms; each form also in any backslash escaping, up to
+//     three levels deep (escapePattern): JSON's as every runtime
+//     measured writes it, a quoting function's, and either escaped
+//     again, as a body holds an app's JSON line; and in a body a JSON
+//     escape in the value's own text (a literal \n) also as its bytes. Replaced with [redacted:KEY], but
 //     inside a body's times and numbers, which no layer sees (rule
 //     7). Inline
 //     `env` values are not secrets by policy (the Caddyfile is in a
@@ -595,8 +596,9 @@ var shortEscapes = map[rune]byte{'\b': 'b', '\t': 't', '\n': 'n', '\f': 'f', '\r
 // (Python's surrogateescape). A backslash is read as pairs first, so a
 // run of them before an escaped quote leaves the quote its own; a lone
 // one is the value's in text only (escapePatternFor). Mixed
-// escaping (one / escaped and the next not), either case and any depth
-// are read alike. None for a form of letters and digits alone, whose
+// escaping (one / escaped and the next not), either case and a depth
+// of up to three levels (spellingDepth: runs of up to seven backslashes
+// before an escape) are read alike. None for a form of letters and digits alone, whose
 // plain text is its only spelling, and for one with more than
 // escapeMax characters to read. Every piece is quoted, so a pattern
 // always compiles.
@@ -622,72 +624,110 @@ func escapePattern(form string) (bool, string) {
 // always escaped, a pair or more.
 func escapePatternFor(form string, inBody bool) string {
 	var b strings.Builder
-	for i, c := range form {
-		size := utf8.RuneLen(c)
-		if c == utf8.RuneError {
-			_, size = utf8.DecodeRuneInString(form[i:])
-		}
-		if !escapable(c) && !quotable(c) {
-			b.WriteString(form[i : i+size])
-			continue
-		}
-		b.WriteString(`(?:`)
-		if c == '\\' {
-			b.WriteString(`(?:\\\\)+`)
-			if !inBody {
-				b.WriteString(`|\\`)
+	for i := 0; i < len(form); {
+		if n := jsonEscapeLen(form[i:]); inBody && n > 0 {
+			// A JSON escape in the value's own text (a literal \n): in a
+			// body also as its bytes, which the app's line holds when it
+			// prints what the escape stands for, as layer 1 read every
+			// form before patterns.
+			b.WriteString(`(?:` + regexp.QuoteMeta(form[i:i+n]) + `|`)
+			for j := i; j < i+n; {
+				j += writeSpelling(&b, form, j, inBody)
 			}
-		} else {
-			b.WriteString(`\\*`)
-			b.WriteString(regexp.QuoteMeta(string(c)))
-		}
-		if !escapable(c) {
 			b.WriteString(`)`)
+			i += n
 			continue
 		}
-		if c == utf8.RuneError && size == 1 {
-			b.WriteString(`|\\+x`)
-			writeHexAnyCase(&b, rune(form[i]), 2)
-			b.WriteString(`|\\+u[dD][cC]`)
-			writeHexAnyCase(&b, rune(form[i]), 2)
-		}
-		if c < 0x10000 {
-			b.WriteString(`|\\+u`)
-			writeHexAnyCase(&b, c, 4)
-		} else {
-			hi, lo := utf16.EncodeRune(c)
-			b.WriteString(`|\\+u`)
-			writeHexAnyCase(&b, hi, 4)
-			b.WriteString(`\\+u`)
-			writeHexAnyCase(&b, lo, 4)
-		}
-		b.WriteString(`|\\+U`)
-		writeHexAnyCase(&b, c, 8)
-		if c >= 0x80 {
-			b.WriteString(`|\\+u\{0*`)
-			writeHexAnyCase(&b, c, len(strconv.FormatInt(int64(c), 16)))
-			b.WriteString(`\}`)
-			if c != utf8.RuneError || size > 1 {
-				// Each byte of its UTF-8 as \xXX: Python's repr of bytes,
-				// Ruby's inspect of a binary string.
-				b.WriteString(`|`)
-				for _, u := range []byte(form[i : i+size]) {
-					b.WriteString(`\\+x`)
-					writeHexAnyCase(&b, rune(u), 2)
-				}
-			}
-		}
-		if c < 0x100 {
-			b.WriteString(`|\\+x`)
-			writeHexAnyCase(&b, c, 2)
-		}
-		if e, ok := shortEscapes[c]; ok {
-			b.WriteString(`|\\+`)
-			b.WriteByte(e)
-		}
-		b.WriteString(`)`)
+		i += writeSpelling(&b, form, i, inBody)
 	}
 	return b.String()
+}
+
+// jsonEscapeLen is the length of the JSON escape s begins with (\n, \",
+// \\, \uXXXX), 0 if none.
+func jsonEscapeLen(s string) int {
+	if len(s) < 2 || s[0] != '\\' {
+		return 0
+	}
+	if strings.IndexByte("bfnrt\"/\\", s[1]) >= 0 {
+		return 2
+	}
+	if s[1] == 'u' && len(s) >= 6 {
+		if _, err := strconv.ParseUint(s[2:6], 16, 16); err == nil {
+			return 6
+		}
+	}
+	return 0
+}
+
+// writeSpelling writes the pattern of the character of form at i, for
+// text or a body, and returns its length in form. Runs of backslashes
+// are read up to spellingDepth levels deep (7 before an escape, 8 for a
+// backslash), so a spelling is never longer than spellingBound.
+func writeSpelling(b *strings.Builder, form string, i int, inBody bool) int {
+	const r0, r1, pairs = `\\{0,7}`, `\\{1,7}`, `(?:\\\\){1,4}`
+	c, size := utf8.DecodeRuneInString(form[i:])
+	if !escapable(c) && !quotable(c) {
+		b.WriteString(form[i : i+size])
+		return size
+	}
+	b.WriteString(`(?:`)
+	if c == '\\' {
+		b.WriteString(pairs)
+		if !inBody {
+			b.WriteString(`|\\`)
+		}
+	} else {
+		b.WriteString(r0)
+		b.WriteString(regexp.QuoteMeta(string(c)))
+	}
+	if !escapable(c) {
+		b.WriteString(`)`)
+		return size
+	}
+	if c == utf8.RuneError && size == 1 {
+		b.WriteString(`|` + r1 + `x`)
+		writeHexAnyCase(b, rune(form[i]), 2)
+		b.WriteString(`|` + r1 + `u[dD][cC]`)
+		writeHexAnyCase(b, rune(form[i]), 2)
+	}
+	if c < 0x10000 {
+		b.WriteString(`|` + r1 + `u`)
+		writeHexAnyCase(b, c, 4)
+	} else {
+		hi, lo := utf16.EncodeRune(c)
+		b.WriteString(`|` + r1 + `u`)
+		writeHexAnyCase(b, hi, 4)
+		b.WriteString(r1 + `u`)
+		writeHexAnyCase(b, lo, 4)
+	}
+	b.WriteString(`|` + r1 + `U`)
+	writeHexAnyCase(b, c, 8)
+	if c >= 0x80 {
+		digits := len(strconv.FormatInt(int64(c), 16))
+		b.WriteString(`|` + r1 + `u\{0{0,` + strconv.Itoa(6-digits) + `}`)
+		writeHexAnyCase(b, c, digits)
+		b.WriteString(`\}`)
+		if c != utf8.RuneError || size > 1 {
+			// Each byte of its UTF-8 as \xXX: Python's repr of bytes,
+			// Ruby's inspect of a binary string.
+			b.WriteString(`|`)
+			for _, u := range []byte(form[i : i+size]) {
+				b.WriteString(r1 + `x`)
+				writeHexAnyCase(b, rune(u), 2)
+			}
+		}
+	}
+	if c < 0x100 {
+		b.WriteString(`|` + r1 + `x`)
+		writeHexAnyCase(b, c, 2)
+	}
+	if e, ok := shortEscapes[c]; ok {
+		b.WriteString(`|` + r1)
+		b.WriteByte(e)
+	}
+	b.WriteString(`)`)
+	return size
 }
 
 // writeHexAnyCase writes n as digits hex digits, each letter in either
@@ -710,11 +750,9 @@ const spellingDepth = 3
 
 // spellingBound is the most bytes a spelling of sf takes at up to
 // spellingDepth levels of escaping, each level doubling the backslashes
-// before an escape (7 at the third): a letter or a digit as itself, a
-// quotable character behind that run, an escapable one as its longest
-// escape behind it (a surrogate pair, or each byte of its UTF-8 as
-// \xXX). A run of backslashes is read at any length, so a deeper
-// spelling exceeds it.
+// before an escape (7 at the third, which is as long a run as a pattern
+// reads): a letter or a digit as itself, a quotable character behind
+// that run, an escapable one as its longest escape behind it.
 func spellingBound(sf *secretForm) int {
 	if !sf.escaped {
 		return len(sf.text)
@@ -724,9 +762,12 @@ func spellingBound(sf *secretForm) int {
 	for _, c := range sf.text {
 		switch {
 		case escapable(c) && c >= 0x80:
-			n += max(2*(run+5), utf8.RuneLen(c)*(run+3))
+			// A surrogate pair, \UXXXXXXXX, \u{XXXXXX}, or each byte of
+			// its UTF-8 as \xXX (U+FFFD for a byte that is not UTF-8).
+			n += max(2*(run+5), run+9, utf8.RuneLen(c)*(run+3))
 		case escapable(c):
-			n += run + 5
+			// \UXXXXXXXX; a backslash as eight (run+1) is shorter.
+			n += run + 9
 		case quotable(c):
 			n += run + 1
 		default:

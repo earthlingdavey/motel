@@ -217,7 +217,7 @@ Properties that matter to the model:
   after a restart, read from the file for the filter), in each form
   the filter recognises (as written, base64 standard and URL alphabets
   padded and not, hex, URL-escaped, and a URL value's password on its
-  own), each also in any backslash escaping at any depth (JSON's as
+  own), each also in any backslash escaping up to three levels deep (JSON's as
   every runtime measured writes it, a quoting function's, and either
   escaped again, as a body holds an app's JSON line: 38 encoders of
   seven runtimes, liveswap/testdata/escapes/), becomes
@@ -331,8 +331,10 @@ Properties that matter to the model:
   sent through the heuristics alone. What the filter does **not** promise: an encoding not in
   the list; a known value in an escape other than a backslash escape
   (`\uXXXX` in either case, a surrogate pair, `\UXXXXXXXX`, `\xXX`,
-  `\b \t \n \f \r`, or the character itself behind any run of
-  backslashes, all read at any depth): an HTML entity (`&amp;`, an HTML
+  `\b \t \n \f \r`, or the character itself behind a run of
+  backslashes, all read up to three levels deep): one escaped more than
+  three levels deep (a JSON line inside a JSON line inside a JSON line
+  in a body); an HTML entity (`&amp;`, an HTML
   error page as a probe's body), a percent-escape other than Go's query
   and path escaping (lower-case hex, Python's `quote` keeping `/`),
   `\a \v \e` or octal, or an escape whose backslash is itself

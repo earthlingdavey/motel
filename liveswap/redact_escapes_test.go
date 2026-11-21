@@ -4,8 +4,11 @@
 package liveswap
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -263,5 +266,102 @@ func BenchmarkRedactFailedDeploy(b *testing.B) {
 	b.ReportAllocs()
 	for range b.N {
 		_ = r.redactJSON(raw)
+	}
+}
+
+// TestLayer1ReadsEveryFormMainDid: every form layer 1 listed before its
+// patterns (the value as written and as encoding/json escapes it, its
+// base64, hex and URL escapes) is still replaced, in text, and in a body
+// whose bytes hold it, for the measured values and for values whose
+// own text holds JSON's escapes (a multi-line secret written with a
+// literal \n, printed with real newlines).
+func TestLayer1ReadsEveryFormMainDid(t *testing.T) {
+	data, err := os.ReadFile("testdata/escapes/runtime-escapes.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := []string{`first-line-of-it\nsecond-line-of-it`, `tab\there-and-more`, `quote\"inside-it`, `C:\new\table\x`, `two\\backslashes`, `caf\u00e9-latte-12`}
+	for _, line := range strings.Split(string(data), "\n") {
+		if p := strings.Split(line, "\t"); len(p) == 3 && p[0] == "value" {
+			var v string
+			if err := json.Unmarshal([]byte(p[2]), &v); err != nil {
+				t.Fatal(err)
+			}
+			values = append(values, v)
+		}
+	}
+	for _, v := range values {
+		j, _ := json.Marshal(v)
+		forms := []string{v, string(j[1 : len(j)-1]), base64.StdEncoding.EncodeToString([]byte(v)),
+			base64.RawStdEncoding.EncodeToString([]byte(v)), base64.URLEncoding.EncodeToString([]byte(v)),
+			base64.RawURLEncoding.EncodeToString([]byte(v)), hex.EncodeToString([]byte(v)),
+			url.QueryEscape(v), url.PathEscape(v)}
+		r := NewRedactor([]string{"K=" + v}, nil)
+		for _, f := range forms {
+			if out, _ := r.Redact("x " + f + " y"); strings.Contains(out, f) {
+				t.Errorf("%q: text keeps %q: %q", v, f, out)
+			}
+			raw := []byte(`{"log_tail":["x ` + f + ` y"]}`)
+			if !json.Valid(raw) {
+				continue // no body holds these bytes
+			}
+			if body := r.redactJSON(raw); strings.Contains(strings.Replace(body, `"redacted_env":`, "", 1), f) {
+				t.Errorf("%q: a body keeps %q: %s", v, f, body)
+			}
+		}
+	}
+	// The reproduction: printed with real newlines, in a probe's body.
+	r := NewRedactor([]string{`K=first-line-of-it\nsecond-line-of-it`}, nil)
+	raw, _ := json.Marshal(map[string]any{"probe": map[string]any{"body": "config: first-line-of-it\nsecond-line-of-it end"}})
+	if body := r.redactJSON(raw); !strings.Contains(body, "[redacted:K]") {
+		t.Errorf("a multi-line secret printed with newlines: %s", body)
+	}
+	// And a level down, the app's JSON line holding it.
+	line, _ := json.Marshal(map[string]string{"msg": "first-line-of-it\nsecond-line-of-it"})
+	raw, _ = json.Marshal(map[string]any{"log_tail": []string{string(line)}})
+	if body := r.redactJSON(raw); !strings.Contains(body, "[redacted:K]") {
+		t.Errorf("a level down: %s", body)
+	}
+}
+
+// TestLongestMatchBoundsEverySpelling: no spelling a form's pattern
+// reads is longer than longestMatch, which the logs read's cuts leave
+// room for: each character as the longest escape the pattern reads (\U
+// and eight digits, \u{} with its zeros, a surrogate pair, each UTF-8
+// byte as \xXX) behind seven backslashes. Eight is past the bound and
+// is not read whole.
+func TestLongestMatchBoundsEverySpelling(t *testing.T) {
+	for _, tc := range []struct{ value, longest, deeper string }{
+		{"////////", strings.Repeat(`\\\\\\\U0000002f`, 8), strings.Repeat(`\\\\\\\\U0000002f`, 8)},
+		{"m\u00e4ss-\U0001F600-ab", `m` + `\\\\\\\xc3\\\\\\\xa4` + `ss` + `\\\\\\\-` +
+			`\\\\\\\xf0\\\\\\\x9f\\\\\\\x98\\\\\\\x80` + `\\\\\\\-ab`, ""},
+		{"q\u00e4-\u00f6-\u00fc12", `q\\\\\\\u{0000e4}\\\\\\\-\\\\\\\u{0000f6}\\\\\\\-\\\\\\\u{0000fc}12`, `q\\\\\\\u{00000e4}\\\\\\\-\\\\\\\u{00000f6}\\\\\\\-\\\\\\\u{00000fc}12`},
+	} {
+		r := NewRedactor([]string{"K=" + tc.value}, nil)
+		if out, _ := r.Redact("x " + tc.longest + " y"); out != "x [redacted:K] y" {
+			t.Errorf("%q: the longest spelling is not read: %q", tc.value, out)
+		}
+		if len(tc.longest) > r.longestMatch() {
+			t.Errorf("%q: longestMatch %d, a spelling of %d", tc.value, r.longestMatch(), len(tc.longest))
+		}
+		for _, sec := range r.secrets {
+			for _, inBody := range []bool{false, true} {
+				if !sec.escaped {
+					continue
+				}
+				for _, s := range []string{tc.longest, tc.deeper} {
+					for _, m := range sec.spelling(inBody).FindAllStringIndex(s, -1) {
+						if m[1]-m[0] > r.longestMatch() {
+							t.Errorf("%q: a match of %d past longestMatch %d", tc.value, m[1]-m[0], r.longestMatch())
+						}
+					}
+				}
+			}
+		}
+		if tc.deeper != "" {
+			if out, _ := r.Redact("x " + tc.deeper + " y"); out == "x [redacted:K] y" {
+				t.Errorf("%q: a spelling past the bound read whole: %q", tc.value, out)
+			}
+		}
 	}
 }

@@ -1501,8 +1501,8 @@ What liveswap does for you:
   built the environment from `env_file`), so the first layer is exact:
   every `env_file` value of 8+ characters, as written, base64, hex or
   URL-escaped (and a URL value's password on its own), each also in
-  any backslash escaping (the JSON of every runtime measured, a JSON
-  line inside another; a value or an encoding of it with more than 512
+  any backslash escaping up to three levels deep (the JSON of every
+  runtime measured, a JSON line inside another; a value or an encoding of it with more than 512
   characters that are not letters or digits only as encoding/json
   escapes it), becomes
   `[redacted:KEY]`, and the response gains
