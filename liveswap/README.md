@@ -1502,7 +1502,9 @@ What liveswap does for you:
   every `env_file` value of 8+ characters, as written, base64, hex or
   URL-escaped (and a URL value's password on its own), each also in
   any backslash escaping (the JSON of every runtime measured, a JSON
-  line inside another), becomes `[redacted:KEY]`, and the response gains
+  line inside another; a value with more than 512 characters that are
+  not letters or digits only as encoding/json escapes it), becomes
+  `[redacted:KEY]`, and the response gains
   `"redacted_env": ["KEY", …]` naming what it contained. Then
   credentials with a recognisable shape (JWTs, bearer tokens, URL
   userinfo and query strings, provider key prefixes, PEM blocks,

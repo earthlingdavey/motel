@@ -278,22 +278,31 @@ type secretForm struct {
 	literal bool
 	keys    []string
 	marker  string
-	// pattern is the text in any backslash escaping (escapePattern), ""
-	// when the text holds no character an encoder escapes; anchor, the
-	// longest run of the others, is looked for before the pattern is
-	// run, and the pattern is compiled the first time it is (spelling):
-	// a filter is built for each request, and most of its patterns
-	// never meet their anchor.
-	pattern string
+	// pattern is the text in any backslash escaping (escapePattern),
+	// for text and for a JSON body, "" when the text is letters and
+	// digits alone; anchor, the longest run of those, is looked for
+	// before the pattern is run, and the pattern is compiled the first
+	// time it is (spelling): a filter is built for each request, and
+	// most of its patterns never meet their anchor.
+	pattern [2]string
 	anchor  string
-	once    sync.Once
-	re      *regexp.Regexp
+	once    [2]sync.Once
+	re      [2]*regexp.Regexp
 }
 
-// spelling is the form's pattern, compiled.
-func (sf *secretForm) spelling() *regexp.Regexp {
-	sf.once.Do(func() { sf.re = regexp.MustCompile(sf.pattern) })
-	return sf.re
+// spelling is the form's pattern for text or a body, compiled.
+func (sf *secretForm) spelling(inBody bool) *regexp.Regexp {
+	i := mode(inBody)
+	sf.once[i].Do(func() { sf.re[i] = regexp.MustCompile(sf.pattern[i]) })
+	return sf.re[i]
+}
+
+// mode is the index of a pattern: 0 for text, 1 for a JSON body.
+func mode(inBody bool) int {
+	if inBody {
+		return 1
+	}
+	return 0
 }
 
 // NewRedactor takes env_file KEY=VALUE pairs and the strings that must
@@ -413,7 +422,7 @@ func chooseMarker(keys []string, all []*secretForm) string {
 		// marker holds one only if a key's name does.
 		escaped := strings.Contains(c, `\`)
 		for _, f := range all {
-			if strings.Contains(c, f.text) || escaped && f.at(c, 0) >= 0 {
+			if strings.Contains(c, f.text) || escaped && f.at(c, 0, false) >= 0 {
 				clean = false
 				break
 			}
@@ -562,26 +571,39 @@ const escapeAnchorMin = 4
 // shortEscapes are the one-letter escapes JSON writes.
 var shortEscapes = map[rune]byte{'\b': 'b', '\t': 't', '\n': 'n', '\f': 'f', '\r': 'r'}
 
-// escapePattern is form as a pattern that reads it in any backslash
-// escaping, and its anchor. An escapable character stands for itself
-// behind any run of backslashes, or behind one or more for \uXXXX in
-// either case (a surrogate pair above the BMP, or \UXXXXXXXX), \u{X…}
-// (Ruby's), \xXX, or its short escape; a quotable one for itself behind
+// escapePattern is form as the patterns that read it in any backslash
+// escaping, for text and for a JSON body, and its anchor. An escapable
+// character stands for itself behind any run of backslashes, or behind
+// one or more for \uXXXX in either case (a surrogate pair above the
+// BMP, or \UXXXXXXXX), \u{X…} (Ruby's), \xXX (past ASCII, each byte of
+// its UTF-8 so: a repr of bytes), or its short escape; a quotable one for itself behind
 // any run of backslashes; a letter or a digit for itself alone, and the
 // longest run of those is the anchor. A byte that is not UTF-8 stands
 // for itself (Go's regexp reads it as U+FFFD, which is how it is
 // written here), \ufffd (encoding/json's), \xXX (Go's %q) or \udcXX
 // (Python's surrogateescape). A backslash is read as pairs first, so a
-// run of them before an escaped quote leaves the quote its own. Mixed
+// run of them before an escaped quote leaves the quote its own; a lone
+// one is the value's in text only (escapePatternFor). Mixed
 // escaping (one / escaped and the next not), either case and any depth
 // are read alike. "" for a form of letters and digits alone, whose
 // plain text is its only spelling, and for one with more than
 // escapeMax characters to read. Every piece is quoted, so the pattern
 // always compiles.
-func escapePattern(form string) (string, string) {
+func escapePattern(form string) ([2]string, string) {
 	if n := escapables(form); n == 0 || n > escapeMax {
-		return "", form
+		return [2]string{}, form
 	}
+	text, anchor := escapePatternFor(form, false)
+	body, _ := escapePatternFor(form, true)
+	return [2]string{text, body}, anchor
+}
+
+// escapePatternFor is escapePattern's pattern for text, or for a JSON
+// body. They differ in a backslash of the value alone: in text it may
+// stand by itself, and in a body (JSON, where a lone one begins an
+// escape: \n is a newline, never the value's backslash and an n) it is
+// always escaped, a pair or more.
+func escapePatternFor(form string, inBody bool) (string, string) {
 	var b strings.Builder
 	anchor, run := "", 0
 	for i, c := range form {
@@ -599,7 +621,10 @@ func escapePattern(form string) (string, string) {
 		run = 0
 		b.WriteString(`(?:`)
 		if c == '\\' {
-			b.WriteString(`(?:\\\\)+|\\`)
+			b.WriteString(`(?:\\\\)+`)
+			if !inBody {
+				b.WriteString(`|\\`)
+			}
 		} else {
 			b.WriteString(`\\*`)
 			b.WriteString(regexp.QuoteMeta(string(c)))
@@ -630,6 +655,15 @@ func escapePattern(form string) (string, string) {
 			b.WriteString(`|\\+u\{0*`)
 			writeHexAnyCase(&b, c, len(strconv.FormatInt(int64(c), 16)))
 			b.WriteString(`\}`)
+			if c != utf8.RuneError || size > 1 {
+				// Each byte of its UTF-8 as \xXX: Python's repr of bytes,
+				// Ruby's inspect of a binary string.
+				b.WriteString(`|`)
+				for _, u := range []byte(form[i : i+size]) {
+					b.WriteString(`\\+x`)
+					writeHexAnyCase(&b, rune(u), 2)
+				}
+			}
 		}
 		if c < 0x100 {
 			b.WriteString(`|\\+x`)
@@ -660,9 +694,10 @@ func writeHexAnyCase(b *strings.Builder, n rune, digits int) {
 
 // at is where the first spelling of the form in s at or after from
 // begins, and -1 if none: the text, or for a form with a pattern, a
-// match of it once its anchor is in s.
-func (sf *secretForm) at(s string, from int) int {
-	if sf.pattern == "" {
+// match of its pattern for text or a body (inBody) once its anchor is
+// in s.
+func (sf *secretForm) at(s string, from int, inBody bool) int {
+	if sf.pattern[0] == "" {
 		if i := strings.Index(s[from:], sf.text); i >= 0 {
 			return from + i
 		}
@@ -671,7 +706,7 @@ func (sf *secretForm) at(s string, from int) int {
 	if len(sf.anchor) >= escapeAnchorMin && !strings.Contains(s[from:], sf.anchor) {
 		return -1
 	}
-	if loc := sf.spelling().FindStringIndex(s[from:]); loc != nil {
+	if loc := sf.spelling(inBody).FindStringIndex(s[from:]); loc != nil {
 		return from + loc[0]
 	}
 	return -1
@@ -761,7 +796,7 @@ func (r *Redactor) replaceKnown(s string, seen map[string]bool, inBody bool) str
 		return s
 	}
 	for _, sec := range r.secrets {
-		i := sec.at(s, 0)
+		i := sec.at(s, 0, inBody)
 		if i < 0 {
 			continue
 		}
@@ -771,9 +806,9 @@ func (r *Redactor) replaceKnown(s string, seen map[string]bool, inBody bool) str
 			pattern = sec.inBody
 		}
 		switch {
-		case pattern == nil && sec.pattern != "":
+		case pattern == nil && sec.pattern[0] != "":
 			// From the first match: the part before it holds none.
-			s = s[:i] + sec.spelling().ReplaceAllLiteralString(s[i:], sec.marker)
+			s = s[:i] + sec.spelling(inBody).ReplaceAllLiteralString(s[i:], sec.marker)
 		case pattern == nil:
 			s = strings.ReplaceAll(s, sec.text, sec.marker)
 		default:
@@ -897,7 +932,7 @@ func (r *Redactor) sentence(s string, seen map[string]bool) string {
 func (r *Redactor) filter(s string, seen map[string]bool, inBody bool) string {
 	s = r.replaceKnown(s, seen, inBody)
 	s, restore := r.protectSafe(s)
-	s = r.heuristics(s)
+	s = r.heuristics(s, inBody)
 	return restore(s)
 }
 
@@ -940,8 +975,8 @@ func (r *Redactor) protectSafe(s string) (string, func(string) string) {
 	}
 }
 
-// heuristics is layers 3 and 4.
-func (r *Redactor) heuristics(s string) string {
+// heuristics is layers 3 and 4; inBody is whether s is a JSON body.
+func (r *Redactor) heuristics(s string, inBody bool) string {
 	for _, rule := range shapeRules {
 		s = rule.re.ReplaceAllString(s, rule.repl)
 	}
@@ -960,16 +995,17 @@ func (r *Redactor) heuristics(s string) string {
 		}
 		return m
 	})
-	return r.maskTokens(s)
+	return r.maskTokens(s, inBody)
 }
 
-// maskTokens is layer 4 over s: each token judged by maskGenerated. A
-// token right after an escape's backslash (an odd run of them), which
-// in a body is the \n, \t or \u0026 before it, begins with the
+// maskTokens is layer 4 over s: each token judged by maskGenerated. In
+// a JSON body (inBody), a token right after an escape's backslash (an
+// odd run of them: the \n, \t or \u0026 before it) begins with the
 // escape's letter, or its u and four hex digits: those stay, and the
 // rest is judged on its own, so a mask never takes half an escape and
-// leaves the body unparsable.
-func (r *Redactor) maskTokens(s string) string {
+// leaves the body unparsable. In text a backslash is the text's own,
+// and the token is judged whole.
+func (r *Redactor) maskTokens(s string, inBody bool) string {
 	locs := entropyTokenRe.FindAllStringIndex(s, -1)
 	if locs == nil {
 		return s
@@ -979,7 +1015,7 @@ func (r *Redactor) maskTokens(s string) string {
 	for _, l := range locs {
 		i, j := l[0], l[1]
 		b.WriteString(s[at:i])
-		if n := escapeAt(s, i); n > 0 {
+		if n := escapeAt(s, i); inBody && n > 0 {
 			b.WriteString(s[i : i+n])
 			i += n
 		}
@@ -1176,6 +1212,9 @@ func (r *Redactor) filterWhole(raw string, seen map[string]bool) string {
 		return r.sentence(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, seen)
 	}
 	body, still := r.finalPass(body, seen, true)
+	if !json.Valid([]byte(body)) {
+		return r.sentence(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, seen)
+	}
 	if !still {
 		return r.sentence(`{"error":"response withheld: a marker and the text beside it made another redacted value"}`, seen)
 	}
@@ -1350,13 +1389,13 @@ func (r *Redactor) putBack(out string, held []heldToken, replaced map[string]boo
 		// follow it.
 		first := 0
 		for from := 0; from <= len(s); {
-			start := sec.at(s, from)
+			start := sec.at(s, from, true)
 			if start < 0 {
 				break
 			}
 			end := start + len(sec.text)
-			if sec.pattern != "" {
-				end = start + sec.spelling().FindStringIndex(s[start:])[1]
+			if sec.pattern[0] != "" {
+				end = start + sec.spelling(true).FindStringIndex(s[start:])[1]
 			}
 			for first < len(spans) && spans[first].hi <= start {
 				first++

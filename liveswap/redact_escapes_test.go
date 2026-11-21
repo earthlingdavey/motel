@@ -154,6 +154,7 @@ func TestEscapePatternEdges(t *testing.T) {
 		{"a byte that is not UTF-8, as Python's surrogateescape writes it", "pass\xffword1", `x pass\udcffword1 y`, "x [redacted:K] y"},
 		{"Ruby's inspect", "Pa#@w0rd-x9", `x "Pa\#@w0rd-x9" y`, `x "[redacted:K]" y`},
 		{"a shell's printf %q", "Pa#$w0rd!x9 sp", `x Pa#\$w0rd\!x9\ sp y`, "x [redacted:K] y"},
+		{"UTF-8 bytes as Python's repr of bytes writes them", "p\u00e4ssw\u00f6rd-\u00f1-12", `x b'p\xc3\xa4ssw\xc3\xb6rd-\xc3\xb1-12' y`, "x b'[redacted:K]' y"},
 		{"a rune as Ruby's \\u{}", "key-\U000E0001-river7", `x key-\u{E0001}-river7 y`, "x [redacted:K] y"},
 	} {
 		r := NewRedactor([]string{"K=" + tc.value}, nil)
@@ -189,6 +190,17 @@ func TestEscapePatternEdges(t *testing.T) {
 		if got, _ := r.Redact("x " + in + " y"); got != "x [redacted:K] y" {
 			t.Errorf("a long value: %.40q", got)
 		}
+	}
+	// A value's lone backslash is its own in text, never in a body,
+	// where it begins an escape of the app's: a value ending in one is
+	// not the line's text and its newline.
+	r = NewRedactor([]string{`K=abcdefg\`}, nil)
+	raw, _ := json.Marshal(map[string]any{"log_tail": []string{"abcdefg\nnext"}})
+	if body := r.redactJSON(raw); body != string(raw) {
+		t.Errorf("a lone backslash in a body: %s", body)
+	}
+	if got, _ := r.Redact(`x abcdefg\ y`); got != "x [redacted:K] y" {
+		t.Errorf("a lone backslash in text: %q", got)
 	}
 	// A key whose name holds an escape's letters is no spelling of a
 	// value: the marker is the named one.

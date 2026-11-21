@@ -411,6 +411,9 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		{`password=Xy7#kq\Lm2pQ next`, `password=[redacted:credential] next`},
 		{`see https://x.example/a?key=abc\" there`, `see https://x.example/a?[redacted:query]\" there`},
 		{`--api-key=C:\keys\app.key`, `--api-key=[redacted:credential]`},
+		// A backslash in text is the text's own: a token after it is
+		// masked whole.
+		{`C:\k3J9xQ2mZ8pL0vT7wR4nY6bH1`, `C:\[masked, 25 chars]`}, // gitleaks:allow — made up for this test
 		// A backslash at a line's end is no escape of the line's end.
 		{"see https://x.example/a?key=abc\\\nnext_line_word more", "see https://x.example/a?[redacted:query]\\\nnext_line_word more"},
 	} {
