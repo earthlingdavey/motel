@@ -23,12 +23,11 @@ package door
 // Extended_Pictographic code point (a thumbs-up and a skin tone,
 // U+1F44D U+1F3FD): box text could begin a row of its own, at the
 // row's start, where it reads as the client's. So the door asks
-// tview's own splitter (WordWrap, with no width to wrap at) where it
-// would begin a row inside a text, and writes the last character
+// uniseg, as tview would, where tview would begin a row inside a text,
+// a tag beside a cluster or not (breaks), and writes the last character
 // before each such break as an escape, as termtext writes a character
-// it will not pass: the thumbs-up, then \U0001f3fd; and where tview
-// would begin one with a tag beside a cluster (tagBreaks). TestOneRow
-// holds it, in every widget kind used here, and TestPairsBesideATag and
+// it will not pass: the thumbs-up, then \U0001f3fd. TestOneRow holds
+// it, in every widget kind used here, and TestPairsBesideATag and
 // FuzzLine beside a tag. SetInput alone does not: it puts back the
 // person's own keys, as the field drew them when typed.
 //
@@ -37,7 +36,6 @@ package door
 // reaches a widget only through here.
 
 import (
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -98,38 +96,23 @@ func unbreak(segs []string) []string {
 	}
 }
 
-// breaks is the byte offset in row of the last character before each
-// row tview would begin inside it or at its end, but for one in ASCII,
-// which is left as it is. tview's own splitter says where: "x" stands
-// for what follows the row, and the width is no limit, so only a
-// mandatory break splits. And tagBreaks says where tview would begin
-// one with a tag beside a cluster, where Line may write one.
+// breaks is the byte offset in row of the last character, above ASCII,
+// of each cluster after which tview would begin a row, inside row or at
+// its end ("x" stands for what follows it), with a tag after the cluster
+// or not. tview's step (strings.go, v0.42.0) judges the break after a
+// cluster a tag follows by that cluster and the one character after the
+// tag, as if the text ended there, and Line may write a tag after any
+// cluster: so breaks asks uniseg that of each. Without a tag tview
+// judges the break by the text after it too, and uniseg reads a second
+// character after a cluster only to take a break away (LB25: none
+// before a hyphen a digit follows), so each break tview begins with no
+// tag is found too: TestOneRow, TestClassesOnOneRow and FuzzInert hold
+// that, drawn. So a thumbs-up and skin tone before "-0" is written as
+// an escape, as before any other character, in a Line and in Inert
+// alike, and Width agrees. A break after ASCII is left as it is: no
+// character of ASCII ends a row but the ones termtext escapes.
 func breaks(row string) (at []int) {
-	lines := tview.WordWrap(row+"x", 1<<30)
-	end := 0
-	for _, l := range lines[:len(lines)-1] {
-		end += len(l)
-		if r := []rune(l); len(r) > 0 && r[len(r)-1] >= 0x80 {
-			at = append(at, end-len(string(r[len(r)-1])))
-		}
-	}
-	at = append(at, tagBreaks(row)...)
-	slices.Sort(at)
-	return slices.Compact(at)
-}
-
-// tagBreaks is the byte offset in row of the last character, above
-// ASCII, of each cluster after which tview would begin a row were a
-// tag written after it. tview's step (strings.go, v0.42.0) judges the
-// break after a cluster a tag follows by that cluster and the one
-// character after the tag, as if the text ended there; tagBreaks asks
-// uniseg the same. It matters where uniseg judges a break by a
-// character beyond the next (LB25: no break before a hyphen a digit
-// follows), and a tag after the next character hides that one too, by
-// its [. So a thumbs-up and skin tone before "-0" is written as an
-// escape, as before any other character, in a Line and in Inert alike,
-// and Width agrees.
-func tagBreaks(row string) (at []int) {
+	row += "x"
 	state := -1
 	for i, rest := 0, row; rest != ""; {
 		pre := state
@@ -216,9 +199,13 @@ func tags(c model.Class, colour bool) (string, string) {
 // the line's text (whole: a character that joins the one before it
 // goes with it, into its segment and its style), and a zero-width
 // space between a tag and a Prepend character before it (dressTag).
-// FuzzLine and TestClassesBesideATag hold every line to one row, its
-// styles, its styles closed at its end, and Width; TestPairsBesideATag
-// to one row with two characters beside a tag.
+// A character that joins the one before it across two segments is so
+// drawn in the earlier segment's style: a box's free text directly
+// before a dressed segment can take that segment's first character, and
+// no test holds the screens to that. FuzzLine and TestClassesBesideATag
+// hold every line to one row, its styles, its styles closed at its end,
+// and Width; TestPairsBesideATag to one row with two characters beside
+// a tag.
 func Line(l model.Line, colour bool) Shown {
 	var b strings.Builder
 	segs := make([]string, len(l))
