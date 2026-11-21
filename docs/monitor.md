@@ -706,6 +706,53 @@ warning, `monitor metrics: a person's read of an app's series was
 answered "store":"unanswered"`, with the app, the window and the
 error (at most one per app and window every 30 seconds).
 
+The store's memory is capped at 384 MiB (`MemoryMax=384M` in motel's
+drop-in for its unit, with no swap: at the cap it is killed and told,
+not paged out and slow). What fills it is how many apps and windows
+people read at once, not how long the windows are. Measured with six
+every-app rules running, each reading watched an hour after:
+
+| Box and reading | Peak | At 384 MiB |
+|---|---|---|
+| nobody reading | 186 to 194 MiB | holds |
+| 3 apps, two people reading every window for an hour | 251 to 257 MiB | holds, a third free |
+| 10 apps, one person reading every window for an hour | 342 MiB (at 352) | inferred to hold, about 40 MiB free |
+| 10 apps, two people reading every window for an hour | — | **killed** |
+| 10 apps, every app's four windows at once, then one person reading every window for an hour | — | **killed** |
+
+So 384 MiB does not hold ten apps read by two people, or every app's
+windows read at once on a box of ten and then read on for an hour (the
+burst alone peaked at 277 MiB there). There the kernel kills it, and systemd starts it again by itself, a second later the
+first time (longer after more kills, up to a minute), so the numbers
+are back at once. In its restart motel's push fails (its counts come
+with the next), the store's rules miss an evaluation, and a read says
+the store did not answer. The kill is said three ways:
+
+- under the store's unit, at err: `journalctl -u victoria-metrics -p
+  err` shows `The metrics store was killed by the kernel at its memory
+  limit (MemoryMax=384M)`, with a warning after it that says what was
+  missed and how to give it more;
+- to the operator's channels, `metrics_store_killed` (warning; a
+  one-shot), at most once an hour, with how many kills since the last
+  (a kill while moteld is down is told a push or two after its start);
+- in moteld's journal, `monitor metrics: the metrics store was killed
+  by the kernel; systemd restarted it`, with the alert's summary.
+
+If the kernel killed it because the box as a whole ran out of memory,
+not at the store's own limit, both lines and the alert say so, and a
+higher limit would not help. If it keeps happening at its limit, give
+the store more on that box: read the limit it has (`systemctl show
+victoria-metrics -p MemoryMax`), then `systemctl edit
+victoria-metrics` and under `[Service]` a line with a higher one,
+`MemoryMax=512M` from motel's 384M (your drop-in, `override.conf`, wins
+over motel's `10-motel.conf`, and motel's setup leaves it alone), then
+`systemctl restart victoria-metrics`. The kill line names the limit it
+was killed at and a value 128 MiB above it. To
+see how close it runs: `systemctl show victoria-metrics -p MemoryPeak
+-p MemoryCurrent`, and the store's own caches against their maxima,
+which it does not keep as series: `curl -s --unix-socket
+/run/motel-metrics/vm.sock http://vm/metrics | grep vm_cache_size`.
+
 ### PromQL over the socket, as root
 
 The store answers Prometheus's query API on its socket:
@@ -1020,7 +1067,10 @@ app whose `observe` line is taken out drops out at the next push, and
 every app does while no push reaches the store for over 75 s, so an
 alert firing then resolves. That is moteld down, or the store refusing
 the pushes: `metrics_store_read_only` says so for a read-only store,
-and `metrics_store_down` once they have failed for five minutes.
+`metrics_store_down` once they have failed for five minutes, and
+`metrics_store_killed` when the kernel killed the store at its memory
+limit, which it is back from within a minute ([An app's numbers over
+time](#an-apps-numbers-over-time-from-a-laptop)).
 `request_rate` is over the time the store's samples cover, so a moteld
 restart in the window barely moves it. It has no value until the
 store holds a push from the five minutes before its window, and for an

@@ -11,6 +11,7 @@
 #   the store's TCP in its namespace only; its socket's mode and reach
 #   its socket listening on through a namespace or a store that cannot start
 #   a store that fails at its start: its restarts backed off
+#   a store killed at its memory limit: named in its journal, told once
 #   Alertmanager's own listener there: a SIGKILL, the namespace restarted,
 #   stopped and back, failing once, stopped and started by hand with moteld
 #   down; an upgrade from the proxy shape
@@ -87,8 +88,8 @@ RELOAD_WAIT=15
 # so a part that moves the store, Alertmanager or the Caddyfile moves
 # them for its own split alone. The shared sink answers each box with
 # its own deliveries (sinklog).
-split_all="vm 2b 3 3a 4 4a 4b 4c 4d 4e 4f 5 6 7 8 9 10 11"
-split_view="vm 2b 3 3a" split_vmalert="4 4a" split_store="4b 4c 4d 4e 4f 5 6" split_rules="5 7 8 9 10 11"
+split_all="vm 2b 3 3a 4 4a 4b 4c 4d 4e 4f 4g 5 6 7 8 9 10 11"
+split_view="vm 2b 3 3a" split_vmalert="4 4a" split_store="4b 4c 4d 4e 4f 4g 5 6" split_rules="5 7 8 9 10 11"
 case "${SPLIT:=all}" in
 all) parts=$split_all ;;
 view) parts=$split_view ;;
@@ -200,7 +201,7 @@ else
 fi
 curl -s -o /dev/null --max-time 3 http://127.0.0.1:8428/health && fail "the store answers on the host's 127.0.0.1:8428" \
 	|| pass "the host's 127.0.0.1:8428 is refused"
-[ "$(systemctl show -p MemoryMax --value victoria-metrics)" = 268435456 ] && pass "the store's MemoryMax is 256M" \
+[ "$(systemctl show -p MemoryMax --value victoria-metrics)" = 402653184 ] && pass "the store's MemoryMax is 384M" \
 	|| fail "the store's MemoryMax is $(systemctl show -p MemoryMax --value victoria-metrics)"
 [ "$(systemctl show -p MemoryMax --value motel-vmalert)" = 134217728 ] && pass "vmalert's MemoryMax is 128M" \
 	|| fail "vmalert's MemoryMax is $(systemctl show -p MemoryMax --value motel-vmalert)"
@@ -876,6 +877,77 @@ i=0
 until systemctl is-active -q moteld && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
 systemctl is-active -q moteld || fail "moteld did not start again: $(systemctl is-active moteld)"
 
+}
+
+case_4g() {
+echo "=== metrics 4g: a store killed at its memory limit is named and told once ==="
+# The parts before restarted the store by hand, failed its start and
+# stopped it: none of those is a kill, and none was told as one.
+sinklog | grep -q ' metrics_store_killed ' && fail "a stop that was no kill was told as metrics_store_killed: $(sinklog | grep metrics_store_killed)" \
+	|| pass "no metrics_store_killed for the stops, restarts and failed starts before"
+cap=$(systemctl show -p MemoryMax --value victoria-metrics)
+swap=$(systemctl show -p MemorySwapMax --value victoria-metrics)
+# kill_store <since>: a real kill by the kernel: the store's limit
+# lowered under what it holds (and no swap, which a runner may have and
+# would take instead), put back once the stop's ExecStopPost= has
+# written its line (it reads the limit first), within the second before
+# the restart, so that the restart runs under the drop-in's.
+# 0 when the store was killed and answers again.
+kill_store() {
+	n0=$(systemctl show -p NRestarts --value victoria-metrics)
+	ks=$(date '+%Y-%m-%d %H:%M:%S')
+	systemctl set-property --runtime victoria-metrics MemorySwapMax=0 MemoryMax=20M
+	end=$(( $(date +%s) + 30 )) killed=1
+	until journalctl -u victoria-metrics --since "$ks" -o cat --no-pager -p err | grep -q 'killed by the kernel' \
+		|| [ "$(systemctl show -p NRestarts --value victoria-metrics)" != "$n0" ]; do
+		[ "$(date +%s)" -ge "$end" ] && { killed=0; break; }
+		sleep 0.1
+	done
+	systemctl set-property --runtime victoria-metrics MemoryMax="$cap" MemorySwapMax="$swap"
+	[ "$killed" = 1 ] || return 1
+	end=$(( $(date +%s) + 60 ))
+	until vm http://vm/health | grep -q OK; do [ "$(date +%s)" -ge "$end" ] && return 1; sleep 0.5; done
+}
+# kill_cleanup: nothing of this part for the parts after it: the
+# runtime limits (not `systemctl revert`, which would take motel's
+# drop-in too), the held line and the hold.
+kill_cleanup() {
+	rm -f /run/systemd/system.control/victoria-metrics.service.d/50-MemoryMax.conf /run/systemd/system.control/victoria-metrics.service.d/50-MemorySwapMax.conf
+	systemctl daemon-reload
+	rm -f "$STATE"/store-killed "$STATE"/store-killed.*
+}
+since=$(date '+%Y-%m-%d %H:%M:%S')
+if ! kill_store; then
+	kill_cleanup
+	fail "the store was not killed at MemoryMax=20M, or did not answer again, in 90 s (memory.current $(cat /sys/fs/cgroup/system.slice/victoria-metrics.service/memory.current 2>/dev/null), controllers $(cat /sys/fs/cgroup/cgroup.controllers 2>/dev/null), $(systemctl show -p Result -p SubState victoria-metrics | tr '\n' ' '))"
+	return
+fi
+journalctl -u victoria-metrics --since "$since" -o cat --no-pager | grep -q "Failed with result 'oom-kill'" \
+	&& pass "the kernel killed the store at its limit (systemd: Failed with result 'oom-kill')" \
+	|| fail "no oom-kill result for the store: $(journalctl -u victoria-metrics --since "$since" -o cat --no-pager | grep -v VictoriaMetrics/ | tail -5)"
+line=$(journalctl -u victoria-metrics --since "$since" -o cat --no-pager -p err | grep 'The metrics store was killed by the kernel at its memory limit (MemoryMax=20M)')
+[ -n "$line" ] && pass "the store's own journal names the kill and the limit, at err: $line" \
+	|| fail "no err line naming the kill at its limit under the store's unit: $(journalctl -u victoria-metrics --since "$since" -o cat --no-pager | grep -v VictoriaMetrics/ | tail -5)"
+journalctl -u victoria-metrics --since "$since" -o cat --no-pager -p warning | grep -q 'systemctl edit victoria-metrics' \
+	&& pass "and says how to give it more" || fail "no remedy line under the store's unit"
+end=$(( $(date +%s) + 120 )) told=1
+until sinklog | grep -q '/ops firing metrics_store_killed - '; do [ "$(date +%s)" -ge "$end" ] && { told=0; break; }; sleep 2; done
+[ "$told" = 1 ] && pass "motel told the operator: $(sinklog | grep metrics_store_killed | head -1)" \
+	|| fail "no metrics_store_killed at the operator's channel in 120 s: moteld says $(journalctl -u moteld --since "$since" -o cat --no-pager | grep -i 'killed' | tail -2)"
+journalctl -u moteld --since "$since" -o cat --no-pager | grep -q 'the metrics store was killed by the kernel; systemd restarted it' \
+	&& pass "and its own journal says so" || fail "no kill line in moteld's journal"
+# A second kill within the hour waits in the file: one alert an hour.
+if kill_store; then
+	sleep 65
+	[ "$(sinklog | grep -c '/ops firing metrics_store_killed - ')" = 1 ] && [ -s "$STATE/store-killed" ] \
+		&& pass "a second kill within the hour is held, its line kept for the next: $(cat "$STATE/store-killed")" \
+		|| fail "the second kill: $(sinklog | grep -c '/ops firing metrics_store_killed - ') deliveries, store-killed '$(cat "$STATE/store-killed" 2>&1)'"
+else
+	fail "the second kill did not come, or the store did not answer after it"
+fi
+kill_cleanup
+[ "$(systemctl show -p MemoryMax --value victoria-metrics)" = "$cap" ] && pass "the store's limit is the drop-in's again" \
+	|| fail "the store's limit is $(systemctl show -p MemoryMax --value victoria-metrics), not $cap"
 }
 
 case_5() {

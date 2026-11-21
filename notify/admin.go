@@ -84,7 +84,7 @@ var reservedNames = []string{
 	// A person's key (liveswap/people_networks.go).
 	liveswap.EventPersonNewNetwork, liveswap.EventPersonOutsideList,
 	// The metrics store's chain and rules (DESIGN-metrics.md).
-	eventStoreDown, eventRulesDown, eventStoreReadOnly, ruleStoreDiskFill, ruleAppMemoryHigh,
+	eventStoreDown, eventRulesDown, eventStoreReadOnly, eventStoreKilled, ruleStoreDiskFill, ruleAppMemoryHigh,
 	// The operator's rules' own event (postdeploy.go).
 	eventPostDeployRegressed,
 }

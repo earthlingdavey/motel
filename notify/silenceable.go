@@ -41,6 +41,7 @@ var (
 	}
 	storeRaised = []motelAlert{
 		{eventStoreDown, SeverityWarning, true}, {eventRulesDown, SeverityWarning, true}, {eventStoreReadOnly, SeverityCritical, false},
+		{eventStoreKilled, SeverityWarning, false},
 	}
 	postDeployRaised = motelAlert{eventPostDeployRegressed, SeverityWarning, false}
 )
