@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -385,26 +386,19 @@ func (p *pusher) run(ctx context.Context) {
 	}
 }
 
-// killSettle is how long a taken store-killed waits before it is read:
-// a kill's line written through a descriptor opened just before the
-// rename lands in it within milliseconds, and a read before then would
-// lose it with the file.
-const killSettle = 5 * time.Second
-
 // checkKilled tells of the store's kills that its ExecStopPost= left in
 // the state directory (storeKilledName): one one-shot for all the lines
 // there, at most one a killHold (the time of the last kept beside them,
 // storeKilledName+".told", so that a moteld restart keeps it), and the
 // lines taken, so that each kill is told once. The file waits while
-// nothing can tell it (moteld down, no config running notify: canTell
-// says so, and nothing is taken; tellKill's false keeps what a config
-// gone within the tick left taken) and through the hold, so what the next
-// one-shot says is every kill since the last. Taken by a rename to a
-// name of its own, so a kill that adds its line later starts a new
-// file, and read a tick later (killSettle), so one that opened it just
-// before is in it: a file taken this tick waits for the next tell, and
-// those taken before are told now, so a store killed at every start is
-// still told. A taken file a read failed on is read with the next.
+// nothing would take the event (moteld down; no config running notify,
+// or none of its operator's channels kept: canTell says so, and nothing
+// is taken; tellKill's false keeps what a config gone within the tick
+// left taken), through the hold, and when the hold cannot be read, so
+// what the next one-shot says is every kill since the last. It is taken
+// by a rename to a name of its own under the lock the hook appends
+// under (storeKilledName+".lock", flock), so a line is in the file read
+// or in the next; a taken file a read failed on is read with the next.
 func (p *pusher) checkKilled() {
 	p.mu.Lock()
 	a, log, now, tell, canTell := p.active, p.logger, p.now(), p.tellKill, p.canTell
@@ -414,7 +408,12 @@ func (p *pusher) checkKilled() {
 		return
 	}
 	path := filepath.Join(a.stateDir(), storeKilledName)
-	if b, err := os.ReadFile(path + ".told"); err == nil { //nolint:gosec // the state directory's own file
+	switch b, err := os.ReadFile(path + ".told"); { //nolint:gosec // the state directory's own file
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		log.Warn("monitor metrics: could not read when the store's kills were last told: they wait", zap.Error(err))
+		return
+	default:
 		if t, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil {
 			// A time ahead of now (the clock stepped back) holds nothing.
 			if d := now.Sub(time.Unix(t, 0)); d >= 0 && d < killHold {
@@ -422,17 +421,13 @@ func (p *pusher) checkKilled() {
 			}
 		}
 	}
-	if err := os.Rename(path, path+".taken."+strconv.FormatInt(now.UnixNano(), 10)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		log.Warn("monitor metrics: could not read the store's kills", zap.String("file", path), zap.Error(err))
+	if err := takeKilled(path, path+".taken."+strconv.FormatInt(now.UnixNano(), 10)); err != nil {
+		log.Warn("monitor metrics: could not take the store's kills", zap.String("file", path), zap.Error(err))
 	}
 	taken, _ := filepath.Glob(path + ".taken.*")
 	var lines []byte
 	var read []string
 	for _, f := range taken {
-		at, err := strconv.ParseInt(strings.TrimPrefix(f, path+".taken."), 10, 64)
-		if d := now.Sub(time.Unix(0, at)); err == nil && d >= 0 && d < killSettle {
-			continue // taken this tick: read with the next tell
-		}
 		b, err := os.ReadFile(f) //nolint:gosec // the state directory's own file
 		if err != nil {
 			log.Warn("monitor metrics: could not read the store's kills", zap.String("file", f), zap.Error(err))
@@ -456,6 +451,29 @@ func (p *pusher) checkKilled() {
 			log.Warn("monitor metrics: could not remove the store's kills told: they will be told again", zap.String("file", f), zap.Error(err))
 		}
 	}
+}
+
+// takeKilled renames the store's kill file to taken under the lock its
+// hook appends under (flock(1) on path+".lock"): a line is appended
+// before the rename, so it is read, or after, to a new file. No file is
+// nothing.
+func takeKilled(path, taken string) error {
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil // nothing to take; one written now is taken next tick
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // the state directory's own file
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
+	if err := os.Rename(path, taken); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // killedEvent is metrics_store_killed for the store-killed lines b, and

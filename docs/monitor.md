@@ -718,10 +718,11 @@ every-app rules running, each reading watched an hour after:
 | 3 apps, two people reading every window for an hour | 251 to 257 MiB | holds, a third free |
 | 10 apps, one person reading every window for an hour | 342 MiB (at 352) | inferred to hold, about 40 MiB free |
 | 10 apps, two people reading every window for an hour | — | **killed** |
-| 10 apps, every app's four windows at once | — | **killed** |
+| 10 apps, every app's four windows at once, then one person reading every window for an hour | — | **killed** |
 
 So 384 MiB does not hold ten apps read by two people, or every app's
-windows read at once on a box of ten. There the kernel kills it, and systemd starts it again by itself, a second later the
+windows read at once on a box of ten and then read on for an hour (the
+burst alone peaked at 277 MiB there). There the kernel kills it, and systemd starts it again by itself, a second later the
 first time (longer after more kills, up to a minute), so the numbers
 are back at once. In its restart motel's push fails (its counts come
 with the next), the store's rules miss an evaluation, and a read says

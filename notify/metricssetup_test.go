@@ -723,9 +723,9 @@ func TestStoreKillIsNamed(t *testing.T) {
 	}
 	events := filepath.Join(dir, "memory.events")
 	for from, to := range map[string]string{
-		"systemctl show -p MemoryMax --value victoria-metrics.service":                                    "echo " + strconv.Itoa(mib<<20),
-		"/usr/sbin/runuser -u motel -- /usr/bin/tee -a " + DefaultMetricsStateDir + "/" + storeKilledName: "tee -a " + killed,
-		`"/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.events"`:                                  events,
+		"systemctl show -p MemoryMax --value victoria-metrics.service": "echo " + strconv.Itoa(mib<<20),
+		"/usr/sbin/runuser -u motel -- /usr/bin/flock " + DefaultMetricsStateDir + "/" + storeKilledName + ".lock /usr/bin/tee -a " + DefaultMetricsStateDir + "/" + storeKilledName: "tee -a " + killed,
+		`"/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.events"`: events,
 	} {
 		if !strings.Contains(script, from) {
 			t.Fatalf("the script lacks %q: %s", from, script)

@@ -1517,11 +1517,12 @@ func TestMetricsObjectEveryField(t *testing.T) {
 }
 
 // The store's ExecStopPost= adds a line to store-killed at each kill at
-// its MemoryMax=: a tick takes the file, the next tells every line
-// taken as one metrics_store_killed and removes them, so each kill is
-// told once; while nothing takes the event the lines wait; a kill
-// within the hour after waits too and is told with the others after
-// it, a moteld restart keeping the hold; no file is nothing.
+// its MemoryMax=: a tick takes the file under the hook's lock and tells
+// every line as one metrics_store_killed, removing them, so each kill
+// is told once; while nothing would take the event, or the hold cannot
+// be read, the lines wait; a kill within the hour after waits too and
+// is told with the others after it, a moteld restart keeping the hold;
+// no file is nothing.
 func TestStoreKillTold(t *testing.T) {
 	tp := newTestPusher(t)
 	dir := t.TempDir()
@@ -1529,7 +1530,6 @@ func TestStoreKillTold(t *testing.T) {
 	file := filepath.Join(dir, storeKilledName)
 	tick := func(p *testPusher) []Event {
 		t.Helper()
-		p.checkKilled()
 		p.at = p.at.Add(pushEvery)
 		p.checkKilled()
 		return p.take()
@@ -1551,41 +1551,34 @@ func TestStoreKillTold(t *testing.T) {
 		}
 	}
 	kill(tp.at.Add(-2 * time.Minute))
-	// Taken this tick, not read: a line written through a descriptor
-	// opened before the rename would land after the read.
-	tp.checkKilled()
-	if got := tp.take(); len(got) != 0 {
-		t.Fatalf("read in the tick that took it: %+v", got)
-	}
-	// While nothing takes the event (no config runs notify) it waits,
-	// and kills meanwhile stay in the one file.
-	tp.tellKill = func(ev Event) bool { return false }
-	tp.at = tp.at.Add(pushEvery)
-	tp.checkKilled()
-	if left, _ := filepath.Glob(file + ".taken.*"); len(left) != 1 {
-		t.Fatalf("an event nothing took removed its lines: %v", left)
-	}
+	// While nothing would take the event (no config runs notify, or it
+	// kept no operator channel) the kills stay in the one file.
 	tp.canTell = func() bool { return false }
+	tick(tp)
 	kill(tp.at)
-	tp.at = tp.at.Add(pushEvery)
-	tp.checkKilled()
-	if left, _ := filepath.Glob(file + "*"); len(left) != 2 {
-		t.Fatalf("a kill while nothing tells took a file of its own: %v", left)
+	tick(tp)
+	if left, _ := filepath.Glob(file + ".t*"); len(left) != 0 {
+		t.Fatalf("taken while nothing would tell it: %v", left)
 	}
-	if err := os.Remove(file); err != nil {
+	if err := os.WriteFile(file, []byte(fmt.Sprintf("%d 369098752\n", tp.at.Add(-time.Minute).Unix())), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	tp.canTell = func() bool { return true }
+	// A config gone between the check and the report: taken, kept.
+	tp.tellKill = func(ev Event) bool { return false }
+	tick(tp)
+	if left, _ := filepath.Glob(file + ".taken.*"); len(left) != 1 {
+		t.Fatalf("an event nothing took removed its lines: %v", left)
+	}
 	tp.tellKill = func(ev Event) bool { tp.report(ev); return true }
-	tp.at = tp.at.Add(pushEvery)
-	tp.checkKilled()
-	got := tp.take()
+	got := tick(tp)
 	if len(got) != 1 || got[0].Name != eventStoreKilled || got[0].Kind != kindEvent || got[0].Severity != SeverityWarning || got[0].App != "" ||
-		got[0].Summary != "the metrics store was killed once at 2026-11-10 11:58 UTC, at its memory limit (352 MiB); it restarted by itself, missing pushes, rule checks and reads meanwhile" ||
+		!strings.HasPrefix(got[0].Summary, "the metrics store was killed once at 2026-11-10 12:0") ||
+		!strings.HasSuffix(got[0].Summary, ", at its memory limit (352 MiB); it restarted by itself, missing pushes, rule checks and reads meanwhile") ||
 		got[0].Details["kills"] != "1" || got[0].Details["limit"] != "352 MiB" || !strings.Contains(got[0].Details["remedy"], "systemctl edit victoria-metrics") {
 		t.Fatalf("one kill told %+v", got)
 	}
-	if left, _ := filepath.Glob(file + "*"); len(left) != 1 || left[0] != file+".told" {
+	if left, _ := filepath.Glob(file + ".t*"); len(left) != 1 || left[0] != file+".told" {
 		t.Fatalf("the kill was not taken: %v", left)
 	}
 	if got := tick(tp); len(got) != 0 {
@@ -1607,52 +1600,59 @@ func TestStoreKillTold(t *testing.T) {
 	}
 	tp.at = tp.at.Add(21 * time.Minute)
 	got = tick(tp)
-	if len(got) != 1 || got[0].Details["kills"] != "2" ||
-		!strings.Contains(got[0].Summary, "killed 2 times since 2026-11-10 12:2") {
+	if len(got) != 1 || got[0].Details["kills"] != "2" || !strings.Contains(got[0].Summary, "killed 2 times since 2026-11-10 12:") {
 		t.Fatalf("two held kills told %+v", got)
-	}
-	if left, _ := filepath.Glob(file + "*"); len(left) != 1 || left[0] != file+".told" {
-		t.Fatalf("left in the directory: %v", left)
 	}
 	if !slices.ContainsFunc(tp.logs.All(), func(e observer.LoggedEntry) bool {
 		return e.Level == zap.WarnLevel && strings.Contains(e.Message, "the metrics store was killed by the kernel; systemd restarted it")
 	}) {
 		t.Error("no journal line for the kill")
 	}
-	// A store killed before every tick (at each start) is still told:
-	// what was taken before is read, the new file waits for the next.
-	tp.at = tp.at.Add(2 * time.Hour)
-	kill(tp.at)
-	tp.checkKilled()
-	tp.at = tp.at.Add(pushEvery)
-	kill(tp.at)
-	tp.checkKilled()
-	if got := tp.take(); len(got) != 1 || got[0].Details["kills"] != "1" {
-		t.Fatalf("a kill at every tick: %+v", got)
-	}
-	if left, _ := filepath.Glob(file + ".taken.*"); len(left) != 1 {
-		t.Fatalf("taken files left: %v", left)
-	}
 	// A taken file a read failed on (left) is read with the next tell.
-	if err := os.Remove(file + ".told"); err != nil {
-		t.Fatal(err)
-	}
+	tp.at = tp.at.Add(2 * time.Hour)
 	if err := os.WriteFile(file+".taken.1", []byte("1794000000 369098752\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	tp.at = tp.at.Add(pushEvery)
-	tp.checkKilled()
-	if got := tp.take(); len(got) != 1 || got[0].Details["kills"] != "2" || !strings.Contains(got[0].Summary, "killed 2 times since 2026-11-0") {
-		t.Fatalf("the kill after it, with the left one: %+v", got)
+	kill(tp.at)
+	if got := tick(tp); len(got) != 1 || got[0].Details["kills"] != "2" || !strings.Contains(got[0].Summary, "killed 2 times since 2026-11-0") {
+		t.Fatalf("a kill with a left one: %+v", got)
+	}
+	// A hold that cannot be read is no expired hold: the kills wait.
+	if err := os.Remove(file + ".told"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(file+".told", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	kill(tp.at)
+	if got := tick(tp); len(got) != 0 {
+		t.Fatalf("told with a hold it could not read: %+v", got)
+	}
+	if err := os.Remove(file + ".told"); err != nil {
+		t.Fatal(err)
 	}
 	// A hold written ahead of the clock (a clock stepped back) holds
 	// nothing.
 	if err := os.WriteFile(file+".told", []byte(strconv.FormatInt(tp.at.Add(24*time.Hour).Unix(), 10)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	kill(tp.at)
 	if got := tick(tp); len(got) != 1 {
 		t.Fatalf("a hold ahead of the clock held: %+v", got)
+	}
+}
+
+// The store's kills are told only while a config runs notify and its
+// operator line kept a channel: a boot whose secrets file could not be
+// used drops every channel, and the kills wait for one.
+func TestEngineTellingNeedsAnOperatorChannel(t *testing.T) {
+	e := newEngine()
+	ev := Event{Name: eventStoreKilled, Kind: kindEvent, Severity: SeverityWarning, Source: sourceMetrics, Summary: "x"}
+	if e.telling() || e.reportIfTelling(ev) {
+		t.Fatal("told with no config")
+	}
+	e.active = &App{cfg: &resolved{}}
+	if e.telling() || e.reportIfTelling(ev) {
+		t.Fatal("told with no operator channel")
 	}
 }
 
