@@ -28,8 +28,9 @@ package door
 // before each such break as an escape, as termtext writes a character
 // it will not pass: the thumbs-up, then \U0001f3fd; and where tview
 // would begin one with a tag beside a cluster (tagBreaks). TestOneRow
-// holds it, in every widget kind used here. SetInput alone does not: it puts
-// back the person's own keys, as the field drew them when typed.
+// holds it, in every widget kind used here, and TestPairsBesideATag and
+// FuzzLine beside a tag. SetInput alone does not: it puts back the
+// person's own keys, as the field drew them when typed.
 //
 // TestOneDoor holds the rest: no file of the screens' package calls a
 // method that hands tview text, calls String, or imports fmt, so text
@@ -216,7 +217,8 @@ func tags(c model.Class, colour bool) (string, string) {
 // goes with it, into its segment and its style), and a zero-width
 // space between a tag and a Prepend character before it (dressTag).
 // FuzzLine and TestClassesBesideATag hold every line to one row, its
-// styles, its styles closed at its end, and Width.
+// styles, its styles closed at its end, and Width; TestPairsBesideATag
+// to one row with two characters beside a tag.
 func Line(l model.Line, colour bool) Shown {
 	var b strings.Builder
 	segs := make([]string, len(l))
