@@ -72,7 +72,7 @@ host's `box_webhook` line as they are. Without those two, the file is:
 			# the lines from motel.caddy go here
 
 			deploy_trust github {
-				audience motel
+				audience deploy.example.com
 				claim repository   your-org/example
 				claim ref          refs/heads/main
 				claim workflow_ref your-org/example/.github/workflows/deploy.yml@refs/heads/main
@@ -123,8 +123,9 @@ serving. A 401 means the box's `deploy_trust` for this app does not
 accept the run — most often `claim repository`, `claim ref` or
 `claim workflow_ref` names another repository, branch or workflow
 file, or its `audience` is not what the job
-asks for (`motel`, unless the job's `env:` sets `MOTEL_AUDIENCE`
-beside `MOTEL_URL`, where the rollback step gets it too) — or that
+asks for (the host of `MOTEL_URL`, `deploy.example.com`, unless the
+job's `env:` sets `MOTEL_AUDIENCE` beside `MOTEL_URL`, where the
+rollback step gets it too) — or that
 `MOTEL_URL` names an app
 the box does not know, which answers the same 401. The step prints
 the values this run minted its token with; the box's journal

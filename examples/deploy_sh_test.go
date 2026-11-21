@@ -305,6 +305,40 @@ func TestDeployShPinsTheArtifactDigest(t *testing.T) {
 	}
 }
 
+// In Actions the run's token names the box: its audience is
+// MOTEL_URL's host, lowercase, without a port or a trailing dot (the
+// aud a person's token names the box by), unless MOTEL_AUDIENCE names
+// another, which is sent encoded. A host that is not the stand-in's
+// (.invalid, so nothing resolves it) shows the mint alone: its deploy
+// fails.
+func TestDeployShAsksForTheBoxsDeployHost(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Fatal("deploy.sh needs curl; install it to run this test")
+	}
+	srv := box(t, "stream")
+	defer srv.Close()
+	_, port, _ := strings.Cut(srv.URL, "://127.0.0.1:")
+	for _, tc := range []struct {
+		url, audience, want string
+		exit                int
+	}{
+		{"http://LocalHost:" + port + "/demo", "", "localhost", 0},
+		{srv.URL + "/demo/", "", "127.0.0.1", 0},
+		{srv.URL + "/demo", "blog", "blog", 0},
+		{srv.URL + "/demo", "a&b c#d", `a\u0026b c#d`, 0}, // the stand-in's JSON escapes &
+		{"http://u:p@Box.Invalid.:8443/demo", "", "box.invalid", 1},
+		{"http://box.invalid?x=1", "", "box.invalid", 1},
+		{"http://box.invalid#x", "", "box.invalid", 1},
+	} {
+		out, code := deploySh(t, srv, "GITHUB_ACTIONS=true", "MOTEL_URL="+tc.url, "MOTEL_AUDIENCE="+tc.audience,
+			"ACTIONS_ID_TOKEN_REQUEST_URL="+srv.URL+"/token?api-version=1", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=run", "MOTEL_TOKEN=")
+		if code != tc.exit || !strings.Contains(out, "::add-mask::minted-"+tc.want+"\n") {
+			t.Errorf("MOTEL_URL %s, MOTEL_AUDIENCE %q: exit %d (want %d), want the token minted for %s:\n%s", tc.url, tc.audience, code, tc.exit, tc.want, out)
+		}
+	}
+}
+
 // In Actions a refused OIDC token is followed by the claims the run
 // minted it with — every value the run's own, so the box gives nothing
 // away — in the log, the error annotation and the job summary.
@@ -325,8 +359,8 @@ func TestDeployShSaysWhatARefusedRunMustBeTrustedFor(t *testing.T) {
 		t.Fatalf("exit %d, want 1:\n%s", code, out)
 	}
 	for _, want := range []string{
-		"::add-mask::minted-motel",
-		"audience           motel",
+		"::add-mask::minted-127.0.0.1",
+		"audience           127.0.0.1",
 		"claim repository   org/blog",
 		"claim ref          refs/heads/main",
 		"claim workflow_ref org/blog/.github/workflows/deploy.yml@refs/heads/main",

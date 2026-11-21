@@ -21,7 +21,9 @@
 #                         by --rollback: that names its version itself
 #   MOTEL_TOKEN        a deploy token. Not needed in GitHub Actions: with
 #                         `permissions: id-token: write` one is minted per run.
-#   MOTEL_AUDIENCE     the audience the box's deploy_trust expects (default: motel)
+#   MOTEL_AUDIENCE     the audience the box's deploy_trust expects (default:
+#                         MOTEL_URL's host, the box's deploy host, lowercase,
+#                         without a port or a trailing dot: deploy.example.com)
 #   ARTIFACT_AUTH_HEADER  sent by the box as Authorization when it fetches the
 #                         URL: "token <github token>" reads a release asset by
 #                         its API URL, private repo or not (the workflow sends
@@ -153,9 +155,19 @@ fi
 if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
 	# GitHub Actions OIDC. The token stays in this process: handing it
 	# to another step as an output would print it in the job log, and it
-	# can deploy until it expires.
+	# can deploy until it expires. Its audience names the box: MOTEL_URL's
+	# host, lowercase, without a port or a trailing dot, as a person's
+	# token names it (its aud), so a token sent to one box is refused by
+	# another that trusts the same repository. -G appends it to the
+	# URL's own query, encoded.
+	host=${url#*://}
+	host=${host%%[/?#]*}
+	host=${host##*@}
+	case ${host##*:} in *[!0-9]*) ;; *) host=${host%:*} ;; esac
+	host=${host%.}
+	audience=${MOTEL_AUDIENCE:-$(printf '%s' "$host" | tr 'A-Z' 'a-z')}
 	token=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-		"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=${MOTEL_AUDIENCE:-motel}" |
+		-G --data-urlencode "audience=$audience" "$ACTIONS_ID_TOKEN_REQUEST_URL" |
 		sed -n 's/.*"value" *: *"\([^"]*\)".*/\1/p')
 	[ -n "$token" ] || { echo "deploy.sh: could not mint an OIDC token" >&2; exit 1; }
 	printf '::add-mask::%s\n' "$token"
@@ -315,7 +327,7 @@ outcome() { # the http_status of a complete last line; else 200 for a whole sing
 refused() {
 	echo "the box refused this token. Most often its deploy_trust for this app does not accept:"
 	if [ -n "$minted" ]; then
-		printf '  %-19s%s\n' 'audience' "${MOTEL_AUDIENCE:-motel}" 'claim repository' "${GITHUB_REPOSITORY:-?}" 'claim ref' "${GITHUB_REF:-?}" 'claim workflow_ref' "${GITHUB_WORKFLOW_REF:-?}"
+		printf '  %-19s%s\n' 'audience' "$audience" 'claim repository' "${GITHUB_REPOSITORY:-?}" 'claim ref' "${GITHUB_REF:-?}" 'claim workflow_ref' "${GITHUB_WORKFLOW_REF:-?}"
 	else
 		echo "  the key this token was minted with (deploy_trust local { public_key ... })"
 		echo "  the audience, subject or claim it pins, against what moteld deploy-token was given"

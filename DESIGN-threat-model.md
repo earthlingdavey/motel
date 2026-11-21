@@ -1211,8 +1211,17 @@ scope for the runtime model, in scope for release signing (roadmap).
   shipped mechanism"). It holds the people's public keys and grants and
   could answer any person's request with anything, as it answers any
   deploy's; it holds no private key and so can mint no person's token
-  for another box. It can rewrite the record of the networks each person's
-  key was used from (`/var/lib/motel/people-networks.json`, motel's
+  for another box. It reads each deploy token sent to this box, live
+  until its `exp`. On the paved road an app's names this box (the
+  template's app block has `audience <deploy host>`, and its
+  `scripts/deploy.sh` asks for the host of `MOTEL_URL`), so another
+  box that trusts the same repository refuses it. A `box` block's
+  token names no box (`audience motel`: `bin/apply` asks for that one
+  name for every box of the repository), and sent to a sibling it gets only
+  what `bin/apply` sends that box: its `sha` binds the bundle to one
+  commit, and the sibling applies it only if every commit is signed
+  (T6's replay of `HEAD`). It can rewrite the record of the networks
+  each person's key was used from (`/var/lib/motel/people-networks.json`, motel's
   own) to hold any network, which silences `person_new_network` for it
   on this box only (deleting it has every key told again):
   nothing it could not already do, since it answers every request and
@@ -1560,8 +1569,13 @@ only public material:
   provider's public JWKS and a claim allowlist (`deploy_trust github |
   gitlab | oidc`). Nothing high-value on the box, nothing stored in CI;
   the token is minted per run, short-lived, and scoped to the claims
-  the block pins. An identity claim (`repository`, `project_path`,
-  `sub`, …) is required at config load; a branch binding (`ref` —
+  the block pins and to its audience: an app's, on the paved road,
+  is the box's deploy host, which the templates' `scripts/deploy.sh`
+  asks for, so a token sent to one box is refused by another that
+  trusts the same repository (a block's audience is the operator's,
+  and two blocks that share one share their tokens). An identity
+  claim (`repository`, `project_path`, `sub`, …) is required at config
+  load; a branch binding (`ref` —
   `ref_path` on GitLab — `sha`, `workflow_ref`, a `ref_protected` not
   pinned false, or a default-form `subject`, which carries one) is the
   operator's to add, and a `github` or `gitlab` block some app

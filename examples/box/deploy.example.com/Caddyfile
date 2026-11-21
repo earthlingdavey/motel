@@ -12,6 +12,7 @@
 	# repo: workflow_ref names the file), and the box applies it only if
 	# every commit since the one it runs is signed by a key listed here.
 	# `make signer` adds yours under the marker; keep the marker.
+	# One audience for all the boxes: bin/apply asks it for each.
 	box {
 		deploy_trust github {
 			audience motel
@@ -49,9 +50,10 @@
 
 			# Who may deploy it: the app repo's deploy workflow on its
 			# main branch, by the OIDC token it mints; no other workflow
-			# in that repo. Nothing secret is stored here.
+			# in that repo. Nothing secret is stored here. The audience
+			# is this box's deploy host, so no other box takes the token.
 			deploy_trust github {
-				audience motel
+				audience deploy.example.com
 				claim repository your-org/example
 				claim ref refs/heads/main
 				claim workflow_ref your-org/example/.github/workflows/deploy.yml@refs/heads/main

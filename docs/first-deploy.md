@@ -248,8 +248,10 @@ name this repository and its workflow (the box takes config from that
 workflow alone, so a placeholder left there refuses the first push),
 `artifact_allowlist` pins the organization or account, and the app's
 `deploy_trust` its repository and its workflow, in the same two
-lines. This lists the seven lines, comments aside, and prints nothing
-once all seven are changed:
+lines. The app's `deploy_trust` names the box by its `audience`, the
+deploy host, so that line changes with the host: a token the app's
+run mints for this box is refused by any other. This lists the eight
+lines, comments aside, and prints nothing once all eight are changed:
 
 ```sh
 grep -En '^([^#]*[^#A-Za-z0-9-])?(your-org|example\.com)([^A-Za-z0-9.-]|$)' */Caddyfile
@@ -520,11 +522,12 @@ health check that never passed. A 401 means the box's `deploy_trust`
 for this app does not accept the run: most often the `claim
 repository`, `claim ref` or `claim workflow_ref` names another
 repository, branch or workflow file, or the audience differs: the
-job asks for `motel`, so a block with another `audience` needs the
-same name as `MOTEL_AUDIENCE` in the job's `env:`, beside
-`MOTEL_URL`, so the rollback step gets it too (a repository variable
-alone does not reach the script). A `box` block's goes in the `env:`
-at the top of `apply.yml`.
+job asks for the host of `MOTEL_URL`, `deploy.example.com`, so a
+block with another `audience` needs the same name as
+`MOTEL_AUDIENCE` in the job's `env:`, beside `MOTEL_URL`, so the
+rollback step gets it too (a repository variable alone does not
+reach the script). A `box` block's is `motel`, which `bin/apply`
+asks for; another goes in the `env:` at the top of `apply.yml`.
 It also means an app the box does not know — a
 typo in `MOTEL_URL` — since an unknown app answers the same 401
 unless a global `deploy_trust` accepts the token. The step prints the

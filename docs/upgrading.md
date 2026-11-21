@@ -108,23 +108,26 @@ fetches them in the background as it starts and no token waits on that,
 so the first issuer's token after a restart (a GitHub Actions deploy's)
 can still be answered 401 once; the script sends it again 3 seconds
 later, which goes through once the keys are in.
-That is this release's script. A `scripts/deploy.sh` copied from a
-template of v0.4.0 to v0.7.0 sends a request once more only after a
-401, and one from an earlier template never, so after the 503 that
-run fails. `diff` the copy against this release's
+That is this release's script, which also asks for a new audience:
+before it goes in over a copy from an earlier template, give the box
+the block [An app's deploy token names its
+box](#an-apps-deploy-token-names-its-box) says to add first. A
+`scripts/deploy.sh` copied from a template of v0.4.0 to v0.7.0 sends
+a request once more only after a 401, and one from an earlier
+template never, so after the 503 that run fails. `diff` the copy against this release's
 `examples/node/scripts/deploy.sh` (or `examples/deno/`'s): with no
 change of your own in it, copy the template's over it; with some,
 carry across `boxstarting()` and the `elif` branch of `send()` that
 calls it, or, in a copy with no `send()` (before v0.4.0), make your
 changes again in the template's. The template reads `MOTEL_` where a
 copy from before v0.6.0 reads `HOTSERVE_` (`MOTEL_URL` for
-`HOTSERVE_URL`, and so on), and its audience defaults to `motel`, not
-`hotserve`: before the template's goes in over such a copy, rename
-each `HOTSERVE_` to `MOTEL_` in the workflow file and in the
-repository variables (`HOTSERVE_URL`, and `HOTSERVE_RUNS_ON` if set)
-and anywhere else you set one, and unless the app's `deploy_trust`
-says `audience motel`, add `MOTEL_AUDIENCE: <its audience>` to the
-workflow's `env:`.
+`HOTSERVE_URL`, and so on), and its audience defaults to the host of
+`MOTEL_URL`, not `hotserve`: before the template's goes in over such
+a copy, rename each `HOTSERVE_` to `MOTEL_` in the workflow file and
+in the repository variables (`HOTSERVE_URL`, and `HOTSERVE_RUNS_ON`
+if set) and anywhere else you set one, and give the app's
+`deploy_trust` that audience as [An app's deploy token names its
+box](#an-apps-deploy-token-names-its-box) says.
 A crash has a window of its own: whatever was in flight is cut off,
 systemd waits a second
 (`RestartSec=1s`) and starts moteld again, and the apps are picked
@@ -373,6 +376,49 @@ skips that release and `make check` refuses that box.
 There is no APT repository yet, so nothing upgrades moteld behind
 your back; the hosted repository on the [roadmap](../README.md#roadmap) is what
 will change that.
+
+## An app's deploy token names its box
+
+An app set up from a template of v0.8.0 or earlier has `audience
+motel` in its `deploy_trust github` block on the box (`hotserve` from
+a template before v0.6.0), and its `scripts/deploy.sh` asks GitHub
+for that name. Every box shares that
+name, so a token sent to one box is accepted by any other that trusts
+the same repository and branch, a second box or a staging one, for as
+long as the token lives. This release's template names the box: the
+app's block says `audience deploy.example.com`, the box's deploy host,
+and `scripts/deploy.sh` asks for the host of `MOTEL_URL`, lowercase
+and without a port. The box's own code is unchanged, and so is the
+`box` block's `audience motel`: `bin/apply` asks for that one name
+for every box of the repository.
+
+With the box and the app repository out of step, a deploy is answered
+401 and the running version keeps serving; the step's output names
+the audience it asked for. So move each app in three steps, in this
+order. An app whose workflow sets `MOTEL_AUDIENCE` to a name no other
+box's block has already names its box, and needs none of them.
+
+1. **Add a block on the box.** In the app's block, add a copy of its
+   `deploy_trust github` block with the box's deploy host as its
+   `audience`, beside the old one: a deploy is accepted when any of
+   the app's blocks accepts it. Commit it signed and push (on a box
+   without a repository, edit `/etc/motel/Caddyfile`, `moteld validate
+   --config` it and `systemctl reload moteld`).
+2. **Take this release's `scripts/deploy.sh`** in the app
+   repository: with no change of your own in it, copy the template's
+   over it; with some, carry across the mint in the `if` on
+   `ACTIONS_ID_TOKEN_REQUEST_URL` whole (the lines that set
+   `audience` and the `curl` that asks for it) and the `"$audience"`
+   in `refused()`. A workflow `env:` that sets `MOTEL_AUDIENCE` keeps
+   asking for that name: remove it. Push; the deploy goes through the
+   new block.
+3. **Remove the old block**, the one with the audience the old
+   script asked for (`motel`, `hotserve` before v0.6.0, or the
+   workflow's `MOTEL_AUDIENCE`), signed and pushed. A token for
+   another box is now refused here.
+
+None of this is the `.deb`'s: going back to an earlier `moteld`
+changes neither side, and deploys still go through.
 
 ## A backup credential file written by hand
 
