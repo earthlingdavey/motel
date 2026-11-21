@@ -352,12 +352,13 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 }
 
 // unsent is s, a body that sends no line (a sentence of the filter's or
-// the route's), if one more known-value pass leaves it as it is; the
-// body that can hold nothing otherwise. A single pass replaces longest
-// first, so a marker and the words after it can make a longer value
-// that pass had looked for already.
+// the route's), if it is JSON and one more known-value pass leaves it as
+// it is; the body that can hold nothing otherwise. A single pass
+// replaces longest first, so a marker and the words after it can make a
+// longer value that pass had looked for already; and a value of JSON's
+// punctuation replaced in the sentence leaves no JSON.
 func unsent(f *Redactor, s string) string {
-	if f.replaceKnown(s, map[string]bool{}, true) != s {
+	if !json.Valid([]byte(s)) || f.replaceKnown(s, map[string]bool{}, true) != s {
 		return `{"error":"[#0]"}`
 	}
 	return s
@@ -466,7 +467,7 @@ func cutText(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	for i := n; i > 0 && i > n-utf8.UTFMax; i-- {
+	for i := n; i >= 0 && i > n-utf8.UTFMax; i-- {
 		if utf8.RuneStart(s[i]) {
 			return s[:i]
 		}

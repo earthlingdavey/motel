@@ -534,6 +534,21 @@ func TestLogsWithheldHoldsNoValue(t *testing.T) {
 	}
 }
 
+// TestLogsWithheldIsJSON: a withheld sentence a value of JSON's
+// punctuation was replaced in is no JSON, and is then the body that can
+// hold nothing; never a 200 a client cannot parse.
+func TestLogsWithheldIsJSON(t *testing.T) {
+	h, people, _, _ := logsRig(t, demoJournal(1, lineN))
+	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte(`K0=\u0000;0`+"\n"+`K1=error":"`+"\n"), 0o600))
+	w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
+	if !json.Valid(w.Body.Bytes()) || w.Body.String() != `{"error":"[#0]"}`+"\n" {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+	if got := unsent(NewRedactor([]string{`K1=error":"`}, nil), `{"error":"response withheld"}`); got != `{"error":"[#0]"}` {
+		t.Errorf("unsent: %s", got)
+	}
+}
+
 // TestLogsCursorPassesNoFilterInTheCheck: the check that one more pass
 // changes nothing is of the body without its cursor, which passes no
 // filter: an env_file value inside a cursor's id withholds nothing.
@@ -678,6 +693,9 @@ func TestLogsCutRandom(t *testing.T) {
 func TestCutTextBound(t *testing.T) {
 	if got := cutText(strings.Repeat("\x80", 6000), 4093); len(got) != 4093 {
 		t.Errorf("a run of continuation bytes: %d bytes", len(got))
+	}
+	if got := cutText("😀abc", 3); got != "" {
+		t.Errorf("a four-byte rune at the start: %q", got)
 	}
 	if got := cutText("ab"+strings.Repeat("é", 3000), 4093); len(got) != 4092 || !utf8.ValidString(got) {
 		t.Errorf("a two-byte rune at the cut: %d bytes, valid %v", len(got), utf8.ValidString(got))
