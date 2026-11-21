@@ -35,11 +35,7 @@ DISTRO ?= debian:13
 
 .PHONY: test help test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-dist install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
 
-# -timeout 20m, twice go test's default of 10 m a test binary, which
-# client/internal/tui met on CI's x86 runner (596 s passing, then 600 s
-# timed out): a runner nearly twice as slow still passes, and a hung
-# binary still fails in 20 m. A stopgap, to go once that package is
-# quicker; no issue tracks it yet.
+# -timeout 20m: a stopgap, client/internal/tui reaches go test's default 10 m on CI's x86 (#642).
 test: ## unit tests, all modules (race + coverage); PKGS= some packages, RUN= a go test -run pattern
 	$(if $(strip $(PKGS)),,$(error PKGS is empty: name packages, or leave it unset))
 	$(COMPOSE) run --rm dev go test -race -cover -timeout 20m $(if $(value RUN),-run '$(subst ','\'',$(value RUN))') $(PKGS)
