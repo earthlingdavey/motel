@@ -871,12 +871,12 @@ func TestWantsStreamReadsAcceptExactly(t *testing.T) {
 	}
 }
 
-// With the app's env_file unreadable, its values are unknown to the
-// filter: the last line is the failure with its status whole, moteld's
-// own, and an error whose text is the filter's sentence (the error may
-// quote the file); the phase lines are moteld's own words. An older
-// moteld withheld the whole body of each line.
-func TestWebhookStreamLastLineWithAnUnreadableEnvFile(t *testing.T) {
+// With the app's env_file not there, the last line is the failure with
+// its status whole, moteld's own, and the error that names the missing
+// file (a file not there holds no values to know); the phase lines are
+// moteld's own words. An older moteld withheld the whole body of each
+// line.
+func TestWebhookStreamLastLineWithAMissingEnvFile(t *testing.T) {
 	h, rig := newTestHandler(t)
 	rig.spec.envFile = filepath.Join(t.TempDir(), "missing.env")
 	w, lines := streamLines(t, h)
@@ -887,7 +887,7 @@ func TestWebhookStreamLastLineWithAnUnreadableEnvFile(t *testing.T) {
 	if st, ok := last["status"].(map[string]any); !ok || st["app"] != "demo" {
 		t.Fatalf("the status is moteld's own and is sent: %v", last)
 	}
-	if e, _ := last["error"].(string); !strings.HasPrefix(e, "[withheld: the app's env_file could not be read") {
+	if e, _ := last["error"].(string); e != "env_file: open "+rig.spec.envFile+": no such file or directory" {
 		t.Fatalf("error = %q", e)
 	}
 	for _, l := range lines[:len(lines)-1] {

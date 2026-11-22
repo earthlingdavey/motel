@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"math"
 	"net/url"
 	"regexp"
@@ -425,8 +427,19 @@ func (ma *managedApp) errText(s string, read bool, names ...string) (wire.ErrTex
 // not read the env_file, the text is the filter's sentence, saying that
 // the error is in moteld's journal, and the journal line names the
 // error and the env_file's own read error beside it (logFields).
-func (ma *managedApp) netError(err error, read bool, names ...string) *doorError {
+//
+// beforeLaunch is a deploy's error from before its launch rendered the
+// env_file (a download, an extraction, the file's own parse): then an
+// env_file that is not there holds no values to know, as no launch of
+// that file put any in a process, and the error passes the filter with
+// the values remembered (main's record filter held the same). Anywhere
+// else (a probe of a running app after a restart) a file gone is values
+// unknown, and the text is withheld.
+func (ma *managedApp) netError(err error, read, beforeLaunch bool, names ...string) *doorError {
 	d := ma.door(read, names...)
+	if beforeLaunch && errors.Is(d.unreadErr, fs.ErrNotExist) {
+		d.unread, d.unreadErr = "", nil
+	}
 	de := &doorError{err: err, msg: d.errText(err.Error()), keys: d.keys(), unread: d.unreadErr}
 	if de.unread != nil {
 		de.msg = "[withheld: " + wire.ErrText(d.unread) + "; moteld's journal has this error]"

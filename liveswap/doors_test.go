@@ -736,3 +736,29 @@ func TestDeployFailedJournalNamesTheEnvFilesError(t *testing.T) {
 		t.Errorf("the journal line: %v", lines)
 	}
 }
+
+// A deploy that fails before its launch, with the app's env_file not
+// there (a mistyped path), says why: a file that is not there holds no
+// values to know, so its error passes the filter with what the process
+// remembers, as main's record filter let it. A failed probe of a
+// running app with the file gone is withheld: its values are unknown.
+func TestMissingEnvFileBeforeALaunch(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	ma := b.rig.ma
+	must(t, os.Remove(b.rig.spec.envFile))
+	ma.secretsMu.Lock()
+	ma.secretsLoaded = false
+	ma.secretsMu.Unlock()
+	b.rig.fetch.err = errors.New("downloading https://example.test/v2.tgz: HTTP 404 some-value-of-the-app-01")
+	code, body := b.post(t, "v2", false)
+	if code != http.StatusInternalServerError || !strings.Contains(body, `"error":"downloading https://example.test/v2.tgz: HTTP 404 [redacted:TOKEN]"`) {
+		t.Fatalf("%d %s", code, body)
+	}
+	if rec := b.sinks(t)["record of v2"]; !strings.Contains(rec, "HTTP 404 [redacted:TOKEN]") {
+		t.Errorf("the record: %s", rec)
+	}
+	_, err := ma.probeFailed("v1", errors.New("net/http: malformed HTTP response \"x\""))
+	if !strings.HasPrefix(err.Error(), "[withheld:") {
+		t.Errorf("a probe's error with the file gone: %v", err)
+	}
+}

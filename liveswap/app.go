@@ -365,7 +365,7 @@ func (ma *managedApp) doorKnowing(also []string, read bool, names ...string) *do
 	ma.secretsMu.Unlock()
 	safe := append([]string{ma.name}, names...)
 	if spec != nil {
-		safe = append(safe, spec.dirs.root, spec.dirs.app, spec.dirs.releases, spec.dirs.shared, spec.dirs.run)
+		safe = append(safe, spec.dirs.root, spec.dirs.app, spec.dirs.releases, spec.dirs.shared, spec.dirs.run, spec.envFile)
 		onDisk, _ := listReleases(spec.dirs) // names only
 		safe = append(safe, onDisk...)
 		safe = append(safe, recordNames(spec.dirs)...)
@@ -907,7 +907,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 			// of a refused pin are names the heuristics leave alone.
 			var dm digestMismatch
 			_ = errors.As(err, &dm)
-			de := ma.netError(err, !rendered, append([]string{req.version, pin}, dm.names()...)...)
+			de := ma.netError(err, !rendered, !rendered, append([]string{req.version, pin}, dm.names()...)...)
 			err = de
 			redacted = union(redacted, de.keys)
 			result.Error = de.msg

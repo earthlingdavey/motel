@@ -401,7 +401,7 @@ func (w *watchdogState) setLastFailure(desc wire.ErrText, keys ...string) {
 // says the filtered text, for the journal's line; the count is the
 // consecutive failures.
 func (ma *managedApp) probeFailed(version string, err error) (int, error) {
-	de := ma.netError(err, true, version)
+	de := ma.netError(err, true, false, version)
 	return ma.wd.recordFailure(de.msg, de.keys), de
 }
 
