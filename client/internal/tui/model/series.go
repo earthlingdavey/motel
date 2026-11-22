@@ -387,11 +387,14 @@ func (s *Session) MetricsViewFit(app, rng string, now time.Time, width, height i
 	}
 	// The requests panel's rate at each step the store had: 0 where no
 	// request came. The 5xx share and the p95 have no point at a step of
-	// none, which is no gap in what the store had.
+	// none, which is no gap in what the store had. With no requests point
+	// in the window, none is known.
 	var rates map[int64]float64
 	if rq := findPanel(v.Panels, seriesPanel{name: wire.PanelRequests, unit: wire.UnitPerSecond}); rq != nil {
-		rates = map[int64]float64{}
 		for _, pt := range inWindow(rq.Points, start, end) {
+			if rates == nil {
+				rates = map[int64]float64{}
+			}
 			rates[int64(pt[0])] = pt[1]
 		}
 	}
@@ -495,8 +498,8 @@ func extremes(in [][2]float64) (lo, hi [2]float64) {
 }
 
 // panelPlot is a panel's plot, its highest and lowest at the top and
-// the bottom of its axis (every point of one value: that value once, on
-// the row of its line); then the time axis, broken (a space) in each
+// the bottom of its axis (every point of one value, or of values no
+// label tells apart: that value once, on the row of its flat line); then the time axis, broken (a space) in each
 // column whose span holds a step with no point and marked ^ at each
 // deploy; and the window's two ends under it, with how many of its
 // steps have a point. rates, when not nil, is the requests panel's rate
@@ -527,10 +530,17 @@ func panelPlot(p seriesPanel, in [][2]float64, rates map[int64]float64, start, e
 	}
 	lo, hi := extremes(in)
 	var out []Line
-	plot := Plot(in, quiet, start, end, step, lo[1], hi[1], plotW, rows)
 	hiS, loS := SeriesExtremes(p.name, hi[1], lo[1], true)
+	// Highest and lowest no label tells apart (a page of memory in an
+	// hour) are drawn as one value, flat, as their labels read.
+	same := hiS == loS
+	bottom := lo[1]
+	if same {
+		bottom = hi[1]
+	}
+	plot := Plot(in, quiet, start, end, step, bottom, hi[1], plotW, rows)
 	flat := -1
-	if hi[1] == lo[1] {
+	if same {
 		for i, r := range plot {
 			if strings.TrimSpace(r) != "" {
 				flat = i
@@ -541,7 +551,7 @@ func panelPlot(p seriesPanel, in [][2]float64, rates map[int64]float64, start, e
 	for i, r := range plot {
 		label := ""
 		switch {
-		case hi[1] == lo[1]:
+		case same:
 			if i == flat {
 				label = hiS
 			}

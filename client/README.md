@@ -195,7 +195,7 @@ and newest value, each with its time (the lowest and highest written
 alike until they differ), and how many of the window's steps have a
 point; for the 5xx share and the p95, beside a requests panel, how
 many had requests (a rate above 0), since a step with none has no
-point of theirs.
+point of theirs, and how many have a point when the two differ.
 Every word and number is the client's own, written from the box's
 numbers. A panel it does not know is named as the box's,
 a word of its grammar, and not drawn; the request panels' absence says
@@ -627,7 +627,8 @@ the bottom of its axis, written alike to more places until they differ
 (cores too small for the label's seven cells in millicores, `0.04m`,
 and rates in thousandths a second, `0.3m/s`);
 every point of one value is said once (`every point 0%`) and labelled
-once, on its line's row, the bottom one at zero; and under it the time axis with a `^` in each column that holds a
+once, on its line's row, the bottom one at zero (values no label tells
+apart, a page of memory, are drawn so too); and under it the time axis with a `^` in each column that holds a
 version's latest deploy that succeeded (from the app's status, which
 the screen goes on reading), broken (a space) in each column whose span
 holds part of a step with no point (a deploy's `^` stands over a

@@ -920,9 +920,9 @@ func TestSeriesExtremes(t *testing.T) {
 // quietHour is a 1 h body of shop's ending at end: CPU at every step;
 // requests at every step but a store gap from minute 35 to 40, none but
 // at minutes 5, 12, 20, 21 and 50; and there alone, but at 12, where
-// every request was aborted, the 5xx share, all 0, and the p95 (with no
-// requests panel when requests is false).
-func quietHour(end time.Time, requests bool) string {
+// every request was aborted, the 5xx share, all 0, and the p95; with
+// requests "none", no requests panel, "empty", one with no point.
+func quietHour(end time.Time, requests string) string {
 	start := end.Add(-time.Hour)
 	busy := map[int]float64{5: 0.05, 12: 0.02, 20: 0.4, 21: 0.15, 50: 0.03}
 	var cpu, rps, share, p95 [][2]float64
@@ -944,8 +944,11 @@ func quietHour(end time.Time, requests bool) string {
 		{Name: wire.Panel5xx, Unit: wire.UnitShare, Points: share},
 		{Name: wire.PanelP95, Unit: wire.UnitMs, Points: p95},
 	}}
-	if !requests {
+	switch requests {
+	case "none":
 		s.Panels = append(s.Panels[:1], s.Panels[2:]...)
+	case "empty":
+		s.Panels[1].Points = nil
 	}
 	b, _ := json.Marshal(s)
 	return string(b)
@@ -985,7 +988,7 @@ func TestMetricsQuiet(t *testing.T) {
 	f := &demo.Fake{Now: func() time.Time { return now }}
 	f.Body("apps.json", `{"apps": [{"name": "shop"}]}`)
 	end := now.Truncate(time.Minute)
-	f.Body("series/shop/1h.json", quietHour(end, true))
+	f.Body("series/shop/1h.json", quietHour(end, "full"))
 	s := seriesSession(t, "shop", "1h", f, &now)
 	ls := s.MetricsViewFit("shop", "1h", now, 100, 30, runes)
 	got := text(ls)
@@ -1034,18 +1037,56 @@ func TestMetricsQuiet(t *testing.T) {
 		t.Errorf("cpu's head:\n%s", got)
 	}
 
-	// No requests panel: each step with no point is a gap.
-	f.Body("series/shop/1h.json", quietHour(end, false))
-	s.Engine.Again(now.Add(time.Minute), seriesJob("shop", "1h"))
-	now = now.Add(time.Minute)
-	for range 6 {
-		if j := step(t, s, f, &now); j.Kind == model.KSeries {
-			break
+	// No requests panel, or one with no point: each step with no point
+	// is a gap.
+	for _, kind := range []string{"none", "empty"} {
+		f.Body("series/shop/1h.json", quietHour(end, kind))
+		s.Engine.Again(now.Add(time.Minute), seriesJob("shop", "1h"))
+		now = now.Add(time.Minute)
+		for range 6 {
+			if j := step(t, s, f, &now); j.Kind == model.KSeries {
+				break
+			}
+		}
+		ls = s.MetricsViewFit("shop", "1h", now, 100, 30, runes)
+		_, axis, times := plotOf(ls, "5xx share")
+		if strings.Count(axis, "-") > 12 || !strings.Contains(times, "4 of 61 steps ") || strings.Contains(times, "had requests") {
+			t.Errorf("requests %s: axis %q, times %q", kind, axis, times)
 		}
 	}
-	ls = s.MetricsViewFit("shop", "1h", now, 100, 30, runes)
-	_, axis, times := plotOf(ls, "5xx share")
-	if strings.Count(axis, "-") > 12 || !strings.Contains(times, "4 of 61 steps ") || strings.Contains(times, "had requests") {
-		t.Errorf("no requests panel: axis %q, times %q", axis, times)
+}
+
+// TestMetricsLabelsAlike: a highest and lowest no label tells apart (a
+// page of memory over the hour) are drawn flat, mid-plot, and labelled
+// once on that row, as one value is.
+func TestMetricsLabelsAlike(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	f.Body("apps.json", `{"apps": [{"name": "shop"}]}`)
+	end := now.Truncate(time.Minute)
+	var pts [][2]float64
+	for m := 60; m >= 0; m-- {
+		pts = append(pts, [2]float64{float64(end.Add(-time.Duration(m) * time.Minute).Unix()), 150<<20 + float64(m%2*4096)})
+	}
+	b, _ := json.Marshal(wire.Series{Store: wire.StoreOn, Window: "1h", StepSeconds: 60, End: &end, Panels: []wire.Panel{{Name: wire.PanelMemory, Unit: wire.UnitBytes, Points: pts}}})
+	f.Body("series/shop/1h.json", string(b))
+	s := seriesSession(t, "shop", "1h", f, &now)
+	rows, _, _ := plotOf(s.MetricsViewFit("shop", "1h", now, 100, 30, runes), "memory")
+	drawn := 0
+	for _, r := range rows {
+		label, plot, _ := strings.Cut(r, " |")
+		if strings.TrimSpace(plot) == "" {
+			if strings.TrimSpace(label) != "" {
+				t.Errorf("a label on an empty row: %q", r)
+			}
+			continue
+		}
+		drawn++
+		if strings.TrimSpace(label) != "150M" {
+			t.Errorf("the line's row is labelled %q", label)
+		}
+	}
+	if len(rows) < 4 || drawn != 1 {
+		t.Errorf("values the labels do not tell apart drawn on %d rows:\n%s", drawn, strings.Join(rows, "\n"))
 	}
 }

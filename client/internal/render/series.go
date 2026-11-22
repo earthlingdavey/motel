@@ -39,7 +39,8 @@ type SeriesPanel struct {
 	// is how many of the window's Steps have one. HadRequests says the
 	// count is instead Requested, the steps the requests panel has a rate
 	// above 0 at (the 5xx share's and the p95's, beside it): a step with
-	// no request has no point of theirs.
+	// no request has no point of theirs. Points is said beside it when
+	// the two differ.
 	Min, Max, Newest SeriesPoint
 	Points, Steps    int
 	HadRequests      bool
@@ -85,6 +86,11 @@ func WriteSeries(w io.Writer, s Series) error {
 		count := fmt.Sprintf("%d of %d steps", pn.Points, pn.Steps)
 		if pn.HadRequests {
 			count = fmt.Sprintf("%d of %d steps had requests", pn.Requested, pn.Steps)
+			if pn.Points != pn.Requested {
+				// A step with requests and no point here (every one aborted,
+				// or a gap in the store) is said, as the screen's axis breaks.
+				count += fmt.Sprintf(", %d with a point", pn.Points)
+			}
 		}
 		p.line("%-10s min %s (%s)  max %s (%s)  newest %s (%s)  %s", pn.Label, pn.Min.V, at(pn.Min.T), pn.Max.V, at(pn.Max.T),
 			pn.Newest.V, at(pn.Newest.T), count)
