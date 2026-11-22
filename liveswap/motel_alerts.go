@@ -123,8 +123,8 @@ func (h *Handler) alerts(w http.ResponseWriter, r *http.Request, p *Person) erro
 		if app, named := apps[a.App]; named && app.ma == nil {
 			// The row of an app the box did not allow: the words of
 			// motel's and Alertmanager's that say what holds it, and its
-			// times.
-			kept := wire.BoxAlert{Alert: wire.Alert{Summary: "the box did not allow this app's alerts to be read", StartsAt: a.StartsAt,
+			// times; its summary opens as a client reads a withheld one.
+			kept := wire.BoxAlert{Alert: wire.Alert{Summary: "response withheld: the box did not allow this app's alerts to be read", StartsAt: a.StartsAt,
 				SilencedUntil: a.SilencedUntil, Inhibited: a.Inhibited}, App: a.App}
 			if slices.Contains(alertStates, a.State) {
 				kept.State = a.State

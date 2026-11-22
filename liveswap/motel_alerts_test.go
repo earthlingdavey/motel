@@ -3,6 +3,7 @@ package liveswap
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
@@ -239,5 +241,35 @@ func TestBoxAlertsCaps(t *testing.T) {
 		if got.Alerts[0].Instance != fmt.Sprintf("/d/%d", c.alerts-1) || got.Silences[0].ID != fmt.Sprintf("%08d-1111-4111-8111-111111111111", c.silences-1) {
 			t.Errorf("%d alerts, %d silences held: the first sent are %q and %q", c.alerts, c.silences, got.Alerts[0].Instance, got.Silences[0].ID)
 		}
+	}
+}
+
+// TestBoxAlertsRowOfAnAppTheBoxDidNotAllow: an alert of an app the box
+// viewer's grant covers but Decide refused (the table and the grants
+// falling apart) is the row's state, severity and times and a summary
+// that opens "response withheld", which the client reads as a withheld
+// answer; nothing of the alert's own summary, name or instance.
+func TestBoxAlertsRowOfAnAppTheBoxDidNotAllow(t *testing.T) {
+	h, people := alertsRig(t)
+	saved := decide
+	t.Cleanup(func() { decide = saved })
+	decide = func(p access.Principal, a access.Action, resource string) error {
+		if a == access.AppAlerts && resource == "demo" {
+			return errors.New("refused")
+		}
+		return saved(p, a, resource)
+	}
+	t0 := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
+	h.app.SetAlertsSource(&fakeHeld{ok: true, held: HeldAlerts{Alerts: []AppAlert{
+		{App: "demo", Alert: wire.Alert{Name: "deploy_failed", Severity: "warning", Summary: "deploy of v2 failed: a secret", StartsAt: t0, State: "active"}},
+	}}})
+	w := sendTo(t, h, "GET", "/_motel/alerts", token(people.carol))
+	var got wire.BoxAlerts
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || len(got.Alerts) != 1 {
+		t.Fatalf("%v: %d %s", err, w.Code, w.Body)
+	}
+	a := got.Alerts[0]
+	if a.Summary != "response withheld: the box did not allow this app's alerts to be read" || a.Name != "" || a.State != "active" || a.Severity != "warning" || !a.StartsAt.Equal(t0) || a.App != "demo" {
+		t.Errorf("the row: %s", w.Body)
 	}
 }
