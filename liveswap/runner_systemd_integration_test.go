@@ -489,9 +489,13 @@ func TestIntegrationSystemdReattachAdoptsLiveUnit(t *testing.T) {
 	r1 := integrationRunner(t)
 	spec := scriptApp(t, workerTree)
 	// What an env_file can put there: a value (made up), an empty one,
-	// one that holds =. A key twice is no case: the manager refuses
-	// such a block at the start ("Invalid environment block").
-	spec.env = append(spec.env, "API_TOKEN=old-token-0123456789", "EMPTY=", "DSN=user=app password=p=q") // gitleaks:allow
+	// one that holds =, and the bytes a unit file must escape: spaces,
+	// both quotes, a backslash, the specifier and variable signs, and
+	// non-ASCII. A key twice is no case: the manager refuses such a
+	// block at the start ("Invalid environment block").
+	spec.env = append(spec.env, "API_TOKEN=old-token-0123456789", "EMPTY=", "DSN=user=app password=p=q", // gitleaks:allow
+		`SPACED=a value  with spaces `, `QUOTED=say "hi" and 'bye'`, `BACKSLASH=C:\path\n\x41\`,
+		`PERCENT=100%n %i %%`, `DOLLAR=$HOME ${PATH} $$ $`, "UTF8=café ü 日本 \u00e9")
 	h1, err := r1.Start(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -533,6 +537,20 @@ func TestIntegrationSystemdReattachAdoptsLiveUnit(t *testing.T) {
 	// restart (#657). A shape the decoder does not read would be none.
 	if got := h2.launchEnv(); !slices.Equal(got, spec.env) {
 		t.Fatalf("adopted handle reports environment %q, want the launch's %q", got, spec.env)
+	}
+	// And after a daemon-reload, which writes the unit's file out and
+	// reads it back (#380): byte for byte still, or the filter would
+	// learn a value the app does not hold.
+	run(t, "systemctl", "--user", "daemon-reload")
+	r3 := newSystemdRunner(userManager, zap.NewNop())
+	r3.poll = 50 * time.Millisecond
+	t.Cleanup(r3.close)
+	h3, ok, err := r3.Reattach(st)
+	if !ok || err != nil {
+		t.Fatalf("live unit must be adopted after a daemon-reload: ok=%v err=%v", ok, err)
+	}
+	if got := h3.launchEnv(); !slices.Equal(got, spec.env) {
+		t.Fatalf("after a daemon-reload the adopted handle reports environment %q, want the launch's %q", got, spec.env)
 	}
 	if h1.launchEnv() != nil {
 		t.Fatalf("a handle this runner started reports a launch environment %q", h1.launchEnv())

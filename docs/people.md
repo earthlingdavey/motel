@@ -267,7 +267,7 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   filter knows the values the running app was launched with for as
   long as it runs, after a moteld restart too (read back from
   systemd), though the file was changed since: an old value still in
-  use stays hidden until the app is launched with the new one. Not a value no running instance was
+  use stays hidden while the app uses it. Not a value no running instance was
   launched with and the app's `env_file` no longer holds, in a line
   written while it did (a logs read reaches lines of any age, and the
   filter knows the file's values now, those moteld has read since it

@@ -1541,10 +1541,7 @@ What liveswap does for you:
   not known values. Until that reattach (moteld just started, or its
   user manager not answering), the filter knows the file only as it
   is now. While an app's `env_file` cannot be read (a rewrite
-  mid-flight, a mode not yet fixed) and moteld has not read a running
-  instance's environment back since the app's last launch (or the
-  file is one the box writes, whose `NOTIFY_` values no unit holds),
-  every response about that app is
+  mid-flight, a mode not yet fixed), every response about that app is
   withheld, since its values are unknown to the filter; the body says
   so, and the next response after the file reads is normal. Past the
   first layer it is best effort, and the limits are in

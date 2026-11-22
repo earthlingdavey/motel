@@ -94,7 +94,15 @@ type systemdConn interface {
 	// UnitStatus reads the unit's load/active state and, for a loaded
 	// service, its main PID and exit facts. A unit the manager no
 	// longer knows is reported with LoadState "not-found", not an error.
+	// Never its environment, which holds env_file values: a status is
+	// read on every poll, stop and sweep, and kept (systemdHandle.exit).
 	UnitStatus(ctx context.Context, name string) (unitStatus, error)
+	// UnitEnvironment reads the unit's own Environment=, KEY=VALUE
+	// pairs as the manager holds them (not its defaults, which apply at
+	// exec): the environment the caller built for the launch. Reattach
+	// alone reads it, for the response filter (handle.launchEnv); it
+	// holds env_file values, so it is never logged nor kept elsewhere.
+	UnitEnvironment(ctx context.Context, name string) ([]string, error)
 	// ResetFailedUnit clears a failed unit so the manager unloads it.
 	ResetFailedUnit(ctx context.Context, name string) error
 	// ListUnits returns the loaded units whose names match the glob.
@@ -144,12 +152,6 @@ type unitStatus struct {
 	// ExecStart is the argv the manager runs, read back rather than
 	// remembered — which is also what makes it right after a Reattach.
 	ExecStart []string
-	// Environment is the unit's own Environment=, KEY=VALUE pairs as
-	// the manager holds them (not its defaults, which apply at exec):
-	// the environment the caller built for the launch. Reattach hands
-	// it to the app for the response filter (handle.launchEnv). It
-	// holds env_file values: never logged, never in handleState.
-	Environment []string
 	// ExecMainCode/Status describe how the main process ended, with
 	// waitid semantics: code 1 = exited (status is the exit code),
 	// 2 = killed and 3 = dumped (status is the signal number).
@@ -311,9 +313,9 @@ type systemdHandle struct {
 	capsLock    sync.Mutex
 	done        chan struct{}
 	exit        atomic.Pointer[unitStatus] // final status, set before done closes
-	// env is the unit's environment as read at reattach (launchEnv);
-	// nil for a unit this process started. Written once, before the
-	// handle is shared.
+	// env is the unit's environment as read at reattach (launchEnv),
+	// the one place it is kept; nil for a unit this process started, or
+	// when the read failed. Written once, before the handle is shared.
 	env []string
 }
 
@@ -1239,8 +1241,15 @@ func (r *systemdRunner) Reattach(st handleState) (handle, bool, error) {
 		}
 		// env: what the instance was launched with, which a moteld
 		// that did not launch it knows from nowhere else, and the
-		// env_file may no longer hold (#657).
-		h := &systemdHandle{unit: st.Unit, startedAt: st.StartedAt, stopTimeout: us.StopTimeout, done: make(chan struct{}), env: us.Environment}
+		// env_file may no longer hold (#657). A failed read is no
+		// reason not to adopt: the handle reports none, and the app's
+		// filter knows the file as it is now (rememberRunningEnv).
+		env, err := r.conn.UnitEnvironment(ctx, st.Unit)
+		if err != nil {
+			r.log().Warn("reading the recorded unit's environment", zap.String("unit", st.Unit), zap.Error(err))
+			env = nil
+		}
+		h := &systemdHandle{unit: st.Unit, startedAt: st.StartedAt, stopTimeout: us.StopTimeout, done: make(chan struct{}), env: env}
 		h.pid.Store(int64(us.MainPID))
 		h.setArgv(us.ExecStart)
 		// The caps the unit was started with, which a config changed

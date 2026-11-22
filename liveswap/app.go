@@ -290,14 +290,6 @@ type managedApp struct {
 	// deploys, relaunches, reattaches and configure.
 	secretsMu sync.Mutex
 	secrets   []string
-	// runningEnvRead is set when a reattach has read the running
-	// instance's environment back from the manager: the values the app
-	// holds are then known whatever its env_file holds now, so a file
-	// that cannot be read withholds no body (redactorFor), unless it is
-	// one the box writes, whose NOTIFY_ values no unit holds. A launch
-	// unsets it (rememberSecrets): from then on the filter is what it
-	// is in a moteld that never restarted.
-	runningEnvRead bool
 	// secretsFrom is the env_file path whose contents are in secrets
 	// (rendered by a launch, or read for the filter); a spec naming a
 	// different path — a reload, or a rollback of one — is unread
@@ -326,7 +318,6 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 	defer ma.secretsMu.Unlock()
 	ma.secretsFrom, ma.secretsLoaded = path, true
 	ma.secrets = mergeSecrets(ma.secrets, kvs)
-	ma.runningEnvRead = false // a launch: what a reattach read stops standing in for an unread file
 }
 
 // redactorFor is the filter for a response about this app: the
@@ -340,12 +331,12 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 // that cannot be read now (a rewrite mid-flight, a mode not yet fixed)
 // is not an error here — the next launch reports that — and the read
 // is retried on the next response until it succeeds. The values the
-// reattached instance was launched with are not the file's now: the
-// reattach read them back from the manager (rememberRunningEnv), and
-// once it has, and until the next launch, a file that cannot be read
-// withholds nothing — but a file the box writes still does: the
-// NOTIFY_ values in it are withheld from every unit, so the reattach
-// cannot have read them (buildEnvFull).
+// reattached instance was launched with, which the file may no longer
+// hold, the reattach read back from the manager (rememberRunningEnv).
+// They stand in for nothing else: the journal holds lines of every
+// unit of the app, a candidate launched from a later file among them,
+// so while the file cannot be read every body is withheld whatever the
+// reattach read.
 func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 	// The spec is read under secretsMu so the "which env_file is
 	// loaded" check and the spec it is checked against are one
@@ -361,7 +352,7 @@ func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 		} else if kvs, err := parseEnvFile(spec.envFile); err == nil {
 			ma.secrets = mergeSecrets(ma.secrets, kvs)
 			ma.secretsFrom, ma.secretsLoaded = spec.envFile, true
-		} else if !ma.runningEnvRead || boxWritten(spec.envFile) {
+		} else {
 			unread = err
 		}
 	}
@@ -430,16 +421,19 @@ func mergeSecrets(have, add []string) []string {
 // (inline env is not secret by policy). So a value changed in the
 // env_file, a key taken out of it, a file now missing or unreadable,
 // and a spec now naming another file all leave the running instance's
-// value known. What it costs: an inline env value, or an inherited
-// one, that changed since the launch is a known value until the next
-// launch. Nothing is logged and nothing written: the values stay in
-// memory, as every launch's do.
+// value known (while the file cannot be read, redactorFor withholds
+// every body all the same). What it costs: an inline env value, or an
+// inherited one, that changed since the launch is a known value for
+// the rest of this moteld's life, as every value it has read is
+// (mergeSecrets only adds): past the app's next launch, until moteld
+// restarts again (DESIGN-liveswap.md, Accepted residuals). Nothing is
+// logged and nothing written: the values stay in memory, as every
+// launch's do.
 //
 // An environment without the instance's own SOCKET pair is not one
 // motel built for this instance (the manager reported none, or a
 // shape not read): nothing is remembered and false is returned, so
-// the filter stays as it was — the file as it is now, withheld while
-// unreadable.
+// the filter knows the file as it is now.
 func (ma *managedApp) rememberRunningEnv(spec *appSpec, version, socket, releaseDir string, env []string) bool {
 	if !slices.Contains(env, "SOCKET="+socket) {
 		return false
@@ -460,7 +454,6 @@ func (ma *managedApp) rememberRunningEnv(spec *appSpec, version, socket, release
 	ma.secretsMu.Lock()
 	defer ma.secretsMu.Unlock()
 	ma.secrets = mergeSecrets(ma.secrets, held)
-	ma.runningEnvRead = true
 	return true
 }
 

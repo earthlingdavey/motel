@@ -768,6 +768,9 @@ func isNoSuchUnit(err error) bool {
 
 // statusFromProps reads the fields the runner needs out of a unit's
 // full property map (Unit + Service interfaces).
+// Not the unit's Environment, which the map holds too: that holds
+// env_file values, and a status is read and kept everywhere
+// (UnitEnvironment is its one reader).
 func statusFromProps(props map[string]any) unitStatus {
 	return unitStatus{
 		LoadState:      propString(props, "LoadState"),
@@ -777,7 +780,6 @@ func statusFromProps(props map[string]any) unitStatus {
 		MainPID:        propInt(props, "MainPID"),
 		ExecMainPID:    propInt(props, "ExecMainPID"),
 		ExecStart:      propExecStart(props),
-		Environment:    propStrings(props, "Environment"),
 		Sandboxed:      propYes(props, "PrivateUsers") && propYes(props, "PrivatePIDs"),
 		ExecMainCode:   propInt(props, "ExecMainCode"),
 		ExecMainStatus: propInt(props, "ExecMainStatus"),
@@ -853,11 +855,30 @@ func propString(props map[string]any, key string) string {
 	return s
 }
 
-// propStrings reads an "as" property as godbus decodes it, a []string,
-// as a copy: every entry as the manager gave it, in its order, a
-// repeated key and an empty value included. Any other shape is nothing.
-func propStrings(props map[string]any, key string) []string {
-	s, _ := props[key].([]string)
+// UnitEnvironment reads the service's Environment property on its own
+// (statusFromProps leaves it out of every status). A unit the manager
+// does not know has none.
+func (c *userManagerClient) UnitEnvironment(ctx context.Context, name string) ([]string, error) {
+	conn, err := c.get()
+	if err != nil {
+		return nil, err
+	}
+	p, err := conn.GetServicePropertyContext(ctx, name, "Environment")
+	if err != nil {
+		if isNoSuchUnit(err) {
+			return nil, nil
+		}
+		c.dropIfDisconnected(conn, err)
+		return nil, err
+	}
+	return envStrings(p.Value.Value()), nil
+}
+
+// envStrings reads an "as" value as godbus decodes it, a []string, as a
+// copy: every entry as the manager gave it, in its order, an empty
+// value included. Any other shape is nothing.
+func envStrings(v any) []string {
+	s, _ := v.([]string)
 	return append([]string(nil), s...)
 }
 

@@ -3,6 +3,7 @@ package liveswap
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -60,6 +61,11 @@ type fakeSystemdConn struct {
 	// generic error when that is nil).
 	defaultTasksMax    uint64
 	defaultTasksMaxErr error
+
+	// env is what UnitEnvironment reports per unit; envErr is its
+	// failure while set.
+	env    map[string][]string
+	envErr error
 }
 
 func (f *fakeSystemdConn) DefaultTasksMax(_ context.Context) (uint64, error) {
@@ -165,6 +171,15 @@ func (f *fakeSystemdConn) UnitStatus(_ context.Context, name string) (unitStatus
 		return unitStatus{LoadState: "not-found"}, nil
 	}
 	return st, nil
+}
+
+func (f *fakeSystemdConn) UnitEnvironment(_ context.Context, name string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.envErr != nil {
+		return nil, f.envErr
+	}
+	return append([]string(nil), f.env[name]...), nil
 }
 
 func (f *fakeSystemdConn) ResetFailedUnit(_ context.Context, name string) error {
@@ -800,7 +815,10 @@ func TestSystemdRunnerReattach(t *testing.T) {
 
 	adopted := []string{"/opt/app/server", "--port=0"}
 	launched := []string{"API_TOKEN=launched-value-01", "SOCKET=/run/app.sock"}
-	conn.setStatus("live.service", unitStatus{LoadState: "loaded", ActiveState: "active", SubState: "running", MainPID: 77, Sandboxed: true, ExecStart: adopted, Environment: launched})
+	conn.mu.Lock()
+	conn.env = map[string][]string{"live.service": launched}
+	conn.mu.Unlock()
+	conn.setStatus("live.service", unitStatus{LoadState: "loaded", ActiveState: "active", SubState: "running", MainPID: 77, Sandboxed: true, ExecStart: adopted})
 	h, ok, err := r.Reattach(handleState{Unit: "live.service", StartedAt: started})
 	if !ok || err != nil {
 		t.Fatalf("running unit must be adopted: ok=%v err=%v", ok, err)
@@ -964,28 +982,56 @@ func TestStatusFromPropsAndStopBudget(t *testing.T) {
 	}
 }
 
-// TestStatusFromPropsEnvironment: the unit's Environment, an "as" that
-// godbus decodes as a []string, is read as the manager gave it, every
-// pair in its order: a repeated key twice, an empty value, a value
-// holding = whole. (The manager refuses a key twice at a unit's start,
-// "Invalid environment block", so a running unit never reports one;
-// the parser still drops nothing it is given.) It is what a reattach
-// hands the response filter (#657), so a pair dropped here is a value
-// sent as written. Any other shape is no environment, never a panic.
-func TestStatusFromPropsEnvironment(t *testing.T) {
+// TestEnvStrings: the unit's Environment, an "as" that godbus decodes
+// as a []string, is read as the manager gave it, every pair in its
+// order: an empty value, a value holding = whole, and a repeated key
+// twice (the manager refuses a key twice at a unit's start, "Invalid
+// environment block", so a running unit never reports one; the reader
+// still drops nothing it is given). It is what a reattach hands the
+// response filter (#657), so a pair dropped here is a value sent as
+// written. Any other shape is no environment, never a panic.
+func TestEnvStrings(t *testing.T) {
 	env := []string{"API_TOKEN=one-value-0001", "EMPTY=", "DSN=user=app password=p=q", "API_TOKEN=two-value-0002", "SOCKET=/run/app.sock"}
-	st := statusFromProps(map[string]any{"Environment": env})
-	if !slices.Equal(st.Environment, env) {
-		t.Fatalf("Environment read as %q, want %q", st.Environment, env)
+	got := envStrings(env)
+	if !slices.Equal(got, env) {
+		t.Fatalf("Environment read as %q, want %q", got, env)
 	}
 	env[0] = "API_TOKEN=changed"
-	if st.Environment[0] != "API_TOKEN=one-value-0001" {
+	if got[0] != "API_TOKEN=one-value-0001" {
 		t.Fatal("the environment read must be a copy of the manager's")
 	}
 	for _, v := range []any{nil, "API_TOKEN=x", []any{"API_TOKEN=x"}, [][]string{{"API_TOKEN=x"}}, []string{}} {
-		if got := statusFromProps(map[string]any{"Environment": v}).Environment; got != nil {
+		if got := envStrings(v); got != nil {
 			t.Errorf("%#v read as %q, want nothing", v, got)
 		}
+	}
+}
+
+// TestStatusCarriesNoEnvironment: a status, read on every poll, stop
+// and sweep and kept as a handle's last, holds none of the unit's
+// environment, which the full property map holds (#657's review).
+func TestStatusCarriesNoEnvironment(t *testing.T) {
+	st := statusFromProps(map[string]any{"LoadState": "loaded", "Environment": []string{"API_TOKEN=one-value-0001"}})
+	if strings.Contains(fmt.Sprintf("%+v", st), "one-value-0001") {
+		t.Fatalf("a status holds the environment: %+v", st)
+	}
+}
+
+// TestSystemdRunnerReattachAdoptsWhenTheEnvironmentIsUnread: a read of
+// the environment that fails does not stop the adoption (the unit runs
+// and serves); the handle reports none.
+func TestSystemdRunnerReattachAdoptsWhenTheEnvironmentIsUnread(t *testing.T) {
+	r, conn := newTestSystemdRunner(t)
+	conn.mu.Lock()
+	conn.envErr = errors.New("manager went away")
+	conn.mu.Unlock()
+	conn.setStatus("live.service", unitStatus{LoadState: "loaded", ActiveState: "active", SubState: "running", MainPID: 77, Sandboxed: true})
+	h, ok, err := r.Reattach(handleState{Unit: "live.service"})
+	if !ok || err != nil {
+		t.Fatalf("a running unit must be adopted though its environment did not read: ok=%v err=%v", ok, err)
+	}
+	if env := h.launchEnv(); env != nil {
+		t.Fatalf("an unread environment reported as %q", env)
 	}
 }
 

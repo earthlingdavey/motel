@@ -31,7 +31,7 @@ const (
 // operator did while the unit ran. The app's journal holds the line
 // the instance wrote with its own value. ensureRunning is the
 // reattach; its error is returned for the caller to check.
-func restartedLogsRig(t *testing.T, launched string, change func(spec *appSpec)) (*Handler, *testPeople, *managedApp, error) {
+func restartedLogsRig(t *testing.T, launched string, change func(t *testing.T, spec *appSpec)) (*Handler, *testPeople, *managedApp, error) {
 	t.Helper()
 	h, people, _, _ := logsRig(t, demoJournal(1, func(int) string { return "upstream said 401 for " + launchedToken }))
 	ma := h.app.managed["demo"]
@@ -40,7 +40,7 @@ func restartedLogsRig(t *testing.T, launched string, change func(spec *appSpec))
 	socket, releaseDir := spec.dirs.socket(recordedNonce), spec.dirs.release("v1")
 	env, err := buildEnv(spec, "v1", socket, releaseDir)
 	must(t, err)
-	change(spec)
+	change(t, spec)
 	r := ma.runner.(*fakeRunner)
 	r.reattachOK, r.reattachEnv = true, env
 	st := ma.store.(*fakeStore)
@@ -56,53 +56,74 @@ func restartedLogsRig(t *testing.T, launched string, change func(spec *appSpec))
 // app's text is filtered with the values the instance was launched
 // with, and redacted_env names the key: the logs read, the status's
 // filter, and the filter a deploy's record is written through. Whatever
-// the operator did to the env_file since the launch.
+// the operator did to the env_file since the launch. While the file
+// cannot be read (gone, unreadable), every body is withheld as before:
+// the journal holds lines of the app's other units too, which the
+// reattach did not read (a candidate launched from the file as it was
+// later). The record's filter withholds nothing for that, and knows the
+// launched value; and the moment the file reads again, so does every
+// body.
 func TestReattachKnowsTheLaunchedValues(t *testing.T) {
 	launched := "API_TOKEN=" + launchedToken + "\nOTHER=kept-value-0000\n"
+	rotated := "API_TOKEN=" + rotatedToken + "\nOTHER=kept-value-0000\n"
 	for _, c := range []struct {
 		name   string
-		change func(spec *appSpec)
+		unread bool
+		change func(t *testing.T, spec *appSpec)
 	}{
-		{"the value changed in the file", func(spec *appSpec) {
-			must(t, os.WriteFile(spec.envFile, []byte("API_TOKEN="+rotatedToken+"\nOTHER=kept-value-0000\n"), 0o600))
+		{"the value changed in the file", false, func(t *testing.T, spec *appSpec) {
+			must(t, os.WriteFile(spec.envFile, []byte(rotated), 0o600))
 		}},
-		{"the key taken out of the file", func(spec *appSpec) {
+		{"the key taken out of the file", false, func(t *testing.T, spec *appSpec) {
 			must(t, os.WriteFile(spec.envFile, []byte("OTHER=kept-value-0000\n"), 0o600))
 		}},
-		{"the file gone", func(spec *appSpec) {
+		{"the file gone", true, func(t *testing.T, spec *appSpec) {
 			must(t, os.Remove(spec.envFile))
 		}},
-		{"the file unreadable", func(spec *appSpec) {
+		{"the file unreadable", true, func(t *testing.T, spec *appSpec) {
 			// A directory where the file was: unreadable as root too,
 			// which the test container runs as.
 			must(t, os.Remove(spec.envFile))
 			must(t, os.Mkdir(spec.envFile, 0o700))
 		}},
-		{"the spec naming another file", func(spec *appSpec) {
+		{"the spec naming another file", false, func(t *testing.T, spec *appSpec) {
 			other := filepath.Join(t.TempDir(), "other.env")
-			must(t, os.WriteFile(other, []byte("API_TOKEN="+rotatedToken+"\n"), 0o600))
+			must(t, os.WriteFile(other, []byte(rotated), 0o600))
 			spec.envFile = other
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h, people, ma, err := restartedLogsRig(t, launched, c.change)
 			must(t, err)
+			line := "token " + launchedToken
+			// The record's filter withholds nothing for an unread live
+			// file, and holds the launched value either way.
+			rd, _ := ma.recordRedactor(ma.snapshot(), deployResult{Version: "v2"})
+			if out, _ := rd.Redact(line); out != "token [redacted:API_TOKEN]" {
+				t.Errorf("the record's filter: %q", out)
+			}
+			if c.unread {
+				w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
+				if strings.Contains(w.Body.String(), launchedToken) || !strings.Contains(w.Body.String(), "response withheld") {
+					t.Fatalf("the logs read while the file is unread: %d %s", w.Code, w.Body)
+				}
+				if ma.redactorFor(ma.status()).withhold == "" {
+					t.Fatal("the status's filter withholds nothing while the file is unread")
+				}
+				// The file reads again, as the operator left it: rotated.
+				must(t, os.RemoveAll(ma.spec.envFile))
+				must(t, os.WriteFile(ma.spec.envFile, []byte(rotated), 0o600))
+			}
 			w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
 			got := decodeLogs(t, w)
 			if w.Code != http.StatusOK || strings.Contains(w.Body.String(), launchedToken) || len(got.Lines) != 1 ||
 				got.Lines[0].Text != "upstream said 401 for [redacted:API_TOKEN]" || !slices.Contains(got.RedactedEnv, "API_TOKEN") {
 				t.Fatalf("the logs read: %d %s", w.Code, w.Body)
 			}
-			// The status's filter and the record's hold the same values:
-			// the probe body, the log tail and a deploy's record pass
-			// one or the other.
-			line := "token " + launchedToken
+			// The status's filter holds the same values: the probe body
+			// and the log tail pass it.
 			if out, keys := ma.redactorFor(ma.status()).Redact(line); out != "token [redacted:API_TOKEN]" || !slices.Contains(keys, "API_TOKEN") {
 				t.Errorf("the status's filter: %q %v", out, keys)
-			}
-			rd, _ := ma.recordRedactor(ma.snapshot(), deployResult{Version: "v2"})
-			if out, _ := rd.Redact(line); out != "token [redacted:API_TOKEN]" {
-				t.Errorf("the record's filter: %q", out)
 			}
 		})
 	}
@@ -113,8 +134,8 @@ func TestReattachKnowsTheLaunchedValues(t *testing.T) {
 // the inherited ones, HOME as the shared dir, SOCKET, and an inline env
 // pair as the current spec expands it — so a diagnostic can still name
 // them; every other pair is one. An inline value changed in the config
-// since the launch is a known value until the next launch (the
-// default's cost, which the owner is to confirm). An empty value and a
+// since the launch is a known value for the rest of moteld's life (the
+// default's cost, an accepted row in DESIGN-liveswap.md). An empty value and a
 // value holding = are each a pair as the manager gave it. (No key
 // twice: the manager refuses such an environment at the start, so a
 // running unit never reports one.)
@@ -169,62 +190,5 @@ func TestReattachWithNoEnvironmentKnowsTheFileAsBefore(t *testing.T) {
 		if r := rig.ma.redactorFor(rig.ma.status()); r.withhold == "" {
 			t.Errorf("%q: the filter withholds nothing while the file is unreadable and the values unknown", env)
 		}
-	}
-}
-
-// reattachedRig is a rig after a moteld restart whose reattach read
-// the unit's environment back (env, with the instance's SOCKET), the
-// spec's env_file at envFile, which the test may leave unwritten.
-func reattachedRig(t *testing.T, envFile string, env ...string) *testRig {
-	t.Helper()
-	rig := newTestRig(t)
-	rig.spec.envFile = envFile
-	socket := rig.spec.dirs.socket(recordedNonce)
-	env = append(env, "SOCKET="+socket)
-	rig.runner.reattachOK, rig.runner.reattachEnv = true, env
-	rig.store.state = appState{CurrentVersion: "v1", Nonce: recordedNonce, Handle: handleState{Unit: "motel-demo.v1." + recordedNonce + ".service"}}
-	rig.store.ok = true
-	must(t, os.MkdirAll(rig.spec.dirs.release("v1"), 0o755))
-	bindSocket(t, socket)
-	must(t, rig.ma.ensureRunning())
-	if !rig.ma.runningEnvRead {
-		t.Fatal("the reattach did not read the environment")
-	}
-	return rig
-}
-
-// TestReattachKeepsWithholdingForABoxWrittenFile: a box-written env
-// file's NOTIFY_ values are withheld from every unit (buildEnvFull), so
-// the environment a reattach reads back cannot hold them: while such a
-// file cannot be read, every body is withheld as before the reattach.
-func TestReattachKeepsWithholdingForABoxWrittenFile(t *testing.T) {
-	boxDir := t.TempDir()
-	orig := boxSecretsDir
-	boxSecretsDir = boxDir
-	t.Cleanup(func() { boxSecretsDir = orig })
-	rig := reattachedRig(t, filepath.Join(boxDir, "demo", "env"), "API_TOKEN="+launchedToken) // never written: unreadable
-	if r := rig.ma.redactorFor(rig.ma.status()); r.withhold == "" {
-		t.Fatal("a box-written file that cannot be read must withhold every body: its NOTIFY_ values are no unit's")
-	}
-}
-
-// TestLaunchEndsWhatTheReattachStoodInFor: once the app is launched
-// again, the filter is what it is in a moteld that never restarted: a
-// reload naming another env_file that cannot be read withholds every
-// body, though the values the reattach read stay known.
-func TestLaunchEndsWhatTheReattachStoodInFor(t *testing.T) {
-	dir := t.TempDir()
-	rig := reattachedRig(t, filepath.Join(dir, "gone.env"), "API_TOKEN="+launchedToken)
-	if r := rig.ma.redactorFor(rig.ma.status()); r.withhold != "" {
-		t.Fatalf("after the reattach, an unreadable file withholds: %s", r.withhold)
-	}
-	rig.ma.rememberSecrets(rig.spec.envFile, nil) // a launch
-	rig.spec.envFile = filepath.Join(dir, "other.env")
-	r := rig.ma.redactorFor(rig.ma.status())
-	if r.withhold == "" {
-		t.Fatal("after a launch, a reload to a file that cannot be read must withhold as it always did")
-	}
-	if out, _ := NewRedactor(rig.ma.secrets, nil).Redact(launchedToken); out != "[redacted:API_TOKEN]" {
-		t.Fatalf("the reattach's values are no longer known: %q", out)
 	}
 }
