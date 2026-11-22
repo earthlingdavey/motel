@@ -1,0 +1,663 @@
+package liveswap
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	gotoken "go/token"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/smallhoursorg/motel/liveswap/wire"
+)
+
+// strs is xs as plain strings: a test's view of typed text.
+func strs[T ~string](xs []T) []string {
+	out := make([]string, len(xs))
+	for i, x := range xs {
+		out[i] = string(x)
+	}
+	return out
+}
+
+// doorBox is the handler's one app, demo, with the test people (alice
+// views demo, carol views the box, erin reads its logs), an env_file, a
+// 40-line tail, and v1 deployed over HTTP.
+type doorBox struct {
+	h      *Handler
+	rig    *testRig
+	people *testPeople
+}
+
+func newDoorBox(t *testing.T, env string) *doorBox {
+	t.Helper()
+	h, rig := newTestHandler(t)
+	b := &doorBox{h: h, rig: rig, people: newTestPeople(t)}
+	h.people = b.people.reg
+	rig.spec.deployLogLines = 40
+	rig.spec.envFile = filepath.Join(t.TempDir(), "demo.env")
+	must(t, os.WriteFile(rig.spec.envFile, []byte(env), 0o600))
+	if code, body := b.post(t, "v1", false); code != http.StatusOK {
+		t.Fatalf("deploying v1: %d %s", code, body)
+	}
+	return b
+}
+
+// post is POST /demo with the app's deploy token, its phases streamed
+// as lines when stream: the code and the bytes.
+func (b *doorBox) post(t *testing.T, version string, stream bool) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/demo", strings.NewReader(`{"url":"https://x/`+version+`.tgz","version":"`+version+`"}`))
+	req.Header.Set("Authorization", "Bearer "+appToken(t))
+	if stream {
+		req.Header.Set("Accept", ndjson)
+	}
+	return b.serve(t, req)
+}
+
+func (b *doorBox) serve(t *testing.T, req *http.Request) (int, string) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	if err := b.h.ServeHTTP(w, req, nil); err != nil {
+		t.Fatalf("ServeHTTP: %v", err)
+	}
+	return w.Code, w.Body.String()
+}
+
+// sinks is every answer a reader can get of demo now, and every record
+// on disk, by where it was read.
+func (b *doorBox) sinks(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{
+		"GET /demo":                  do(t, b.h, http.MethodGet, "/demo", appToken(t), "").Body.String(),
+		"GET /demo, a viewer":        sendTo(t, b.h, http.MethodGet, "/demo", token(b.people.alice)).Body.String(),
+		"GET /_motel/apps":           sendTo(t, b.h, http.MethodGet, "/_motel/apps", token(b.people.carol)).Body.String(),
+		"GET /_motel/apps/demo/logs": sendTo(t, b.h, http.MethodGet, "/_motel/apps/demo/logs", token(b.people.erin)).Body.String(),
+	}
+	entries, err := os.ReadDir(b.rig.spec.dirs.deploys)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		version := strings.TrimSuffix(e.Name(), ".json")
+		raw, err := os.ReadFile(filepath.Join(b.rig.spec.dirs.deploys, e.Name()))
+		must(t, err)
+		out["record of "+version] = string(raw)
+		out["GET /demo?deploy="+version] = do(t, b.h, http.MethodGet, "/demo?deploy="+version, appToken(t), "").Body.String()
+	}
+	return out
+}
+
+// readable is whether a reader of body can read value: one of the forms
+// the filter knows, in its bytes, in a string the JSON decodes to, or in
+// such a string with Go's quoting of a run undone (an error that quotes
+// the app's bytes).
+func readable(body, value string) bool {
+	texts := []string{body}
+	for _, line := range strings.Split(body, "\n") {
+		var v any
+		if json.Unmarshal([]byte(line), &v) != nil {
+			continue
+		}
+		for _, s := range jsonStrings(v, nil) {
+			texts = append(texts, s)
+			for _, q := range goQuotedRe.FindAllString(s, -1) {
+				if u, err := strconv.Unquote(q); err == nil {
+					texts = append(texts, u)
+				}
+			}
+		}
+	}
+	for _, text := range texts {
+		for _, f := range secretForms(value) {
+			if len(f) >= secretMinLen && strings.Contains(text, f) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// jsonStrings is every string, keys included, in the decoded JSON v.
+func jsonStrings(v any, out []string) []string {
+	switch x := v.(type) {
+	case string:
+		out = append(out, x)
+	case []any:
+		for _, e := range x {
+			out = jsonStrings(e, out)
+		}
+	case map[string]any:
+		for k, e := range x {
+			out = jsonStrings(e, append(out, k))
+		}
+	}
+	return out
+}
+
+// noneReadable fails the test for each sink a value is readable in.
+func noneReadable(t *testing.T, sinks map[string]string, values ...string) {
+	t.Helper()
+	names := make([]string, 0, len(sinks))
+	for n := range sinks {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		for _, v := range values {
+			if readable(sinks[n], v) {
+				t.Errorf("%s holds %q: %.600s", n, v, sinks[n])
+			}
+		}
+	}
+}
+
+// The canary: an app prints two values of its env_file (one plain, one
+// with a quote and a backslash, which JSON and Go escape) at every place
+// the app's bytes reach an answer or a record: its journal while a
+// deploy fails, its health probe's body and Location, an answer that is
+// no HTTP, which Go quotes into the probe's error, the watchdog's failed
+// probe, journalctl's own failure, and its journal at the logs read.
+// Neither is readable in any answer of any reader, streamed or not, nor
+// in any record on disk; each place's keys are named.
+func TestCanaryAtEveryDoor(t *testing.T) {
+	const plain, quoted = "canary-printed-by-the-app-7Hq2", `canary"quoted\by-the-app-9Lm4`
+	b := newDoorBox(t, "PLAIN="+plain+"\nQUOTED="+quoted+"\n")
+	esc, _ := json.Marshal(quoted)
+	tail := []string{"boot " + plain, `{"msg":` + string(esc) + `}`, "then " + quoted}
+	// A failed health gate: the journal and the probe's answer.
+	b.rig.ma.journal = &fakeJournal{lines: tail}
+	b.rig.prober.err = fmt.Errorf("not healthy within deadline 5m0s: %w", &probeError{status: 503, location: "https://example.test/" + plain + "?q=" + quoted, body: `{"err":` + string(esc) + `} ` + plain})
+	answers := map[string]string{}
+	_, answers["a failed deploy's answer"] = b.post(t, "v2", false)
+	_, answers["a failed deploy, streamed"] = b.post(t, "v3", true)
+	// An answer that is no HTTP: Go's client quotes the app's bytes.
+	b.rig.prober.err = fmt.Errorf("not healthy within deadline 5m0s: %w", fmt.Errorf("net/http: malformed HTTP response %q", plain+" "+string(esc)))
+	_, answers["an answer that is no HTTP"] = b.post(t, "v4", false)
+	// journalctl's own failure, in log_tail_error.
+	b.rig.ma.journal = &fakeJournal{err: errors.New("journalctl: " + plain + " " + quoted)}
+	b.rig.prober.err = fmt.Errorf("not healthy within deadline 5m0s: %w", &probeError{status: 500})
+	_, answers["a failed deploy with no tail"] = b.post(t, "v5", false)
+	// The watchdog's failed probe of the running v1.
+	b.rig.ma.wd.mu.Lock()
+	b.rig.ma.wd.state = wdStateWatching
+	b.rig.ma.wd.mu.Unlock()
+	_, _ = b.rig.ma.probeFailed("v1", fmt.Errorf("net/http: malformed HTTP status code %q", quoted+" "+plain))
+	// The logs read.
+	b.rig.ma.logs = &scriptedLogs{journal: demoJournal(3, func(i int) string { return tail[i] })}
+	sinks := b.sinks(t)
+	for k, v := range answers {
+		sinks[k] = v
+	}
+	noneReadable(t, sinks, plain, quoted)
+	// Each place still says something, and names the keys it replaced.
+	var st wire.Status
+	must(t, json.Unmarshal([]byte(sinks["GET /demo"]), &st))
+	if st.Watchdog == nil || !strings.Contains(string(st.Watchdog.LastFailure), "[redacted:") || strings.Join(st.RedactedEnv, ",") != "PLAIN,QUOTED" {
+		t.Errorf("GET /demo: %s", sinks["GET /demo"])
+	}
+	var logs wire.Logs
+	must(t, json.Unmarshal([]byte(sinks["GET /_motel/apps/demo/logs"]), &logs))
+	if len(logs.Lines) != 3 || strings.Join(logs.RedactedEnv, ",") != "PLAIN,QUOTED" {
+		t.Errorf("the logs read: %s", sinks["GET /_motel/apps/demo/logs"])
+	}
+	failed := 0
+	for k, body := range sinks {
+		var rec wire.DeployResult
+		if !strings.HasPrefix(k, "record of ") || json.Unmarshal([]byte(body), &rec) != nil || rec.Status != "failed" {
+			continue
+		}
+		failed++
+		if !rec.FilteredAtEntry || len(rec.RedactedEnv) == 0 {
+			t.Errorf("%s: %s", k, body)
+		}
+	}
+	if failed == 0 {
+		t.Error("no failed deploy's record was read")
+	}
+}
+
+// failRemoval makes the release removals fail as they fail for an
+// account that is not root when the app has made a read-only directory
+// in its release whose name holds value: the system's error names the
+// path (removeAll).
+func failRemoval(t *testing.T, value string) {
+	t.Helper()
+	saved := removeAll
+	t.Cleanup(func() { removeAll = saved })
+	removeAll = func(p string) error {
+		return &os.PathError{Op: "unlinkat", Path: filepath.Join(p, "cache-"+value, "keep"), Err: syscall.EACCES}
+	}
+}
+
+// L1 of the spike's attack: a deploy fails its health gate, and the
+// cleanup of its release cannot remove a directory the app made, whose
+// name holds an env value; the system's words name the path, and the
+// error net hides it in the deploy's answer, the status, the record and
+// the record read back.
+func TestErrorNetCleanupOfAFailedRelease(t *testing.T) {
+	const value = "canary-yellow-bird-sings-0642"
+	b := newDoorBox(t, "TENANT="+value+"\n")
+	failRemoval(t, value)
+	b.rig.prober.err = fmt.Errorf("not healthy within deadline 5m0s: %w", &probeError{status: 503, body: "starting"})
+	code, body := b.post(t, "v2", false)
+	if code != http.StatusInternalServerError || !strings.Contains(body, "cleanup of failed release v2: unlinkat ") || !strings.Contains(body, "/cache-[redacted:TENANT]/keep: permission denied") {
+		t.Fatalf("the premise, a cleanup that names the app's path: %d %s", code, body)
+	}
+	sinks := b.sinks(t)
+	sinks["the deploy's answer"] = body
+	noneReadable(t, sinks, value)
+}
+
+// L2: moteld stopped during a deploy whose units ran; at the next deploy
+// its marker is settled, the release cannot be removed for the same
+// directory, and the record motel writes for the interrupted deploy
+// names the path: the net hides it there and in every answer.
+func TestErrorNetInterruptedDeployRecord(t *testing.T) {
+	const value = "canary-yellow-bird-sings-0642"
+	b := newDoorBox(t, "TENANT="+value+"\n")
+	d := b.rig.spec.dirs
+	must(t, os.MkdirAll(d.release("v9"), 0o755))
+	must(t, saveDeployMarker(d, deployMarker{Version: "v9", StartedAt: time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)}))
+	failRemoval(t, value)
+	_, body := b.post(t, "v10", false)
+	sinks := b.sinks(t)
+	sinks["the next deploy's answer"] = body
+	if rec := sinks["record of v9"]; !strings.Contains(rec, "the deploy was cut short") || !strings.Contains(rec, "/cache-[redacted:TENANT]/keep") || !strings.Contains(rec, `"redacted_env":["TENANT"]`) {
+		t.Fatalf("the premise, the interrupted deploy's record names the path: %s", rec)
+	}
+	noneReadable(t, sinks, value)
+}
+
+// linkedCommand has the running v1 replace its own command, in its
+// release dir, with a link to a path outside its view whose name holds
+// an env value, and returns the value and the real pre-flight's refusal
+// of that release (resolveInView), which names the link's target.
+func linkedCommand(t *testing.T) (b *doorBox, value string, refusal error) {
+	t.Helper()
+	outside := filepath.Join(t.TempDir(), "opt", "runtime-canary-yellow-bird-0642", "bin")
+	must(t, os.MkdirAll(outside, 0o755))
+	value = filepath.Join(outside, "node")
+	must(t, os.WriteFile(value, []byte("#!/bin/sh\n"), 0o755))
+	b = newDoorBox(t, "RUNTIME_BIN="+value+"\n")
+	rel := b.rig.spec.dirs.release("v1")
+	_ = os.Remove(filepath.Join(rel, "server"))
+	must(t, os.Symlink(value, filepath.Join(rel, "server")))
+	pre, _, n := b.rig.runner.lastPreflightAndStart()
+	if n == 0 {
+		t.Fatal("no pre-flight was recorded")
+	}
+	pre.dir, pre.version = rel, "v1"
+	pre.command = append([]string{"./server"}, pre.command[1:]...)
+	pre.sandbox = b.rig.spec.sandboxSpecFor(rel, pre.nonce)
+	if _, _, refusal = resolveInView(pre); refusal == nil || !strings.Contains(refusal.Error(), value) {
+		t.Fatalf("the premise, the real pre-flight names the link's target: %v", refusal)
+	}
+	return b, value, refusal
+}
+
+// L3: a rollback to a release the app rewrote is refused at its
+// pre-flight, whose refusal names the link's target, a path holding an
+// env value: the net hides it in the 422 and in last_deploy. The same
+// refusal on the watchdog's relaunch, and on a recovery after a restart,
+// is hidden in watchdog.last_failure.
+func TestErrorNetPreflightRefusal(t *testing.T) {
+	t.Run("a rollback", func(t *testing.T) {
+		b, value, refusal := linkedCommand(t)
+		if code, body := b.post(t, "v2", false); code != http.StatusOK {
+			t.Fatalf("deploying v2: %d %s", code, body)
+		}
+		b.rig.runner.setPreflightErr(refusal)
+		req := httptest.NewRequest(http.MethodPost, "/demo?rollback=v1", nil)
+		req.Header.Set("Authorization", "Bearer "+appToken(t))
+		code, body := b.serve(t, req)
+		if code != http.StatusUnprocessableEntity || !strings.Contains(body, "[redacted:RUNTIME_BIN]") || !strings.Contains(body, `"redacted_env":["RUNTIME_BIN"]`) {
+			t.Fatalf("the rollback: %d %s", code, body)
+		}
+		sinks := b.sinks(t)
+		sinks["the rollback's answer"] = body
+		noneReadable(t, sinks, value)
+	})
+	t.Run("the watchdog's relaunch", func(t *testing.T) {
+		b, value, refusal := linkedCommand(t)
+		rig := b.rig
+		rig.startWatchdogT(t)
+		waitUntil(t, "watchdog to arm", func() bool {
+			s := rig.ma.wd.currentState()
+			return s == wdStateGrace || s == wdStateWatching
+		})
+		rig.runner.setPreflightErr(refusal)
+		rig.runner.handleAt(0).kill()
+		advanceUntil(t, rig, time.Second, "the relaunch refused", func() bool {
+			wd := rig.ma.status().Watchdog
+			return wd != nil && wd.LastFailure != ""
+		})
+		sinks := b.sinks(t)
+		if !strings.Contains(sinks["GET /demo"], `"last_failure":`) || !strings.Contains(sinks["GET /demo"], "[redacted:RUNTIME_BIN]") {
+			t.Fatalf("the premise, last_failure names the refusal: %s", sinks["GET /demo"])
+		}
+		noneReadable(t, sinks, value)
+	})
+	t.Run("a recovery after a restart", func(t *testing.T) {
+		b, value, refusal := linkedCommand(t)
+		rig := b.rig
+		rig.runner.handleAt(0).kill()
+		rig.ma.mu.Lock()
+		rig.ma.current = nil
+		rig.ma.mu.Unlock()
+		rig.ma.activeSocket.Store(nil)
+		rig.runner.setPreflightErr(refusal)
+		rig.startWatchdogT(t)
+		done := make(chan struct{})
+		go func() { rig.ma.recover(context.Background(), zap.NewNop()); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("recover did not give up on a refused relaunch")
+		}
+		sinks := b.sinks(t)
+		if !strings.Contains(sinks["GET /demo"], "[redacted:RUNTIME_BIN]") {
+			t.Fatalf("the premise, last_failure names the refusal: %s", sinks["GET /demo"])
+		}
+		noneReadable(t, sinks, value)
+	})
+}
+
+// The error net runs whatever failed and whether or not a unit ran: a
+// download refused before any launch, with a current value in the
+// deployer's URL, is hidden in the answer and the record. A deploy whose
+// own launch rendered the env_file reads no file at its net, so a reload
+// to an unreadable file while it ran withholds nothing of its error: the
+// values it launched with are known.
+func TestErrorNetBeforeALaunchAndAfterAReload(t *testing.T) {
+	const value = "q7Wm2xK9pL4vB8nR3tY6zH5c" // gitleaks:allow — made up for this test
+	b := newDoorBox(t, "SIG="+value+"\n")
+	b.rig.fetch.err = fmt.Errorf("downloading https://example.test/v2.tgz?sig=%s: HTTP 403", value)
+	code, body := b.post(t, "v2", false)
+	if code != http.StatusInternalServerError || !strings.Contains(body, "[redacted:") {
+		t.Fatalf("a refused download: %d %s", code, body)
+	}
+	b.rig.fetch.err = nil
+	noneReadable(t, b.sinks(t), value)
+
+	ma := b.rig.ma
+	ma.rememberSecrets(b.rig.spec.envFile, []string{"SIG=" + value})
+	live := *b.rig.spec
+	live.envFile = filepath.Join(t.TempDir(), "missing.env")
+	ma.spec = &live
+	text, keys := ma.errText("start failed: "+value, false)
+	if text != "start failed: [redacted:SIG]" || strings.Join(keys, ",") != "SIG" {
+		t.Errorf("the net of a deploy that launched, the env_file since unreadable: %q %v", text, keys)
+	}
+	if text, _ := ma.errText("start failed: "+value, true); !strings.HasPrefix(string(text), "[withheld:") {
+		t.Errorf("the net where the file is read: %q", text)
+	}
+}
+
+// A safe name exempts nothing from the known values (rule 1 of the
+// filter's header): the app's text that holds a version, a pin or a
+// release on disk equal to an env value has it replaced, though such a
+// name is left alone by the heuristics.
+func TestADoorsNamesExemptNoValue(t *testing.T) {
+	const value = "release-named-like-a-value-01"
+	b := newDoorBox(t, "TOKEN="+value+"\n")
+	must(t, os.MkdirAll(b.rig.spec.dirs.release(value), 0o755))
+	d := b.rig.ma.door(true, value)
+	if got := d.text("serving " + value); got != "serving [redacted:TOKEN]" {
+		t.Errorf("the app's text: %q", got)
+	}
+	sha := strings.Repeat("4c2d9e7b1a05", 3) + "0f9e"
+	if got := b.rig.ma.door(true, sha).text("built " + sha); got != wire.AppText("built "+sha) {
+		t.Errorf("a version that looks generated, named: %q", got)
+	}
+}
+
+// The logs door reads no more of a long line than the logs read always
+// has: a value past the first 4 KiB and its margin is in no part of the
+// filter's input, so it is named in no redacted_env; one inside what is
+// read is replaced and named; what is sent is at most 4 KiB, ending in
+// "…".
+func TestLogsDoorReadsABoundedPieceOfALongLine(t *testing.T) {
+	const near, far = "made-up-value-in-the-margin-01", "made-up-value-far-down-the-line-02"
+	line := strings.Repeat("a", logsLineMax+100) + " " + near + " " + strings.Repeat("b", 20000) + " " + far + " " + strings.Repeat("c", 20000)
+	if len(line) < 40000 {
+		t.Fatal("the premise: a line longer than the filter reads")
+	}
+	seen := map[string]bool{}
+	out := filterLogLine(NewRedactor([]string{"NEAR=" + near, "FAR=" + far}, nil), line, seen)
+	if len(out) > logsLineMax || !strings.HasSuffix(out, "…") || strings.Contains(out, near) || strings.Contains(out, far) {
+		t.Errorf("sent %d bytes, ending %q", len(out), out[max(0, len(out)-20):])
+	}
+	if !seen["NEAR"] || seen["FAR"] {
+		t.Errorf("the keys named %v: want NEAR, read in the margin, and not FAR, past what is read", seen)
+	}
+}
+
+// A record an older moteld wrote bears no mark that its app text was
+// filtered where it entered: it was filtered whole when written, with
+// the values known then, and is filtered again when read, its error and
+// detail, with the values known now. A record that bears the mark is
+// sent as it stands.
+func TestOldRecordIsFilteredWhenRead(t *testing.T) {
+	const learnt = "value-joined-env-file-later-77"
+	b := newDoorBox(t, "TOKEN="+learnt+"\n")
+	d := b.rig.spec.dirs
+	old := `{"finished_at":"2026-11-01T10:00:05Z","detail":{"exit":"exit status 3","probe":{"status":503,"location":"https://x/` + learnt + `","body":"probe ` + learnt + `"},"log_tail":["one ` + learnt + `","[redacted:OLD] two"],"log_tail_error":"journalctl ` + learnt + `"},` +
+		`"error":"start failed: ` + learnt + `","redacted_env":["OLD"],"sha256":"` + strings.Repeat("ab", 32) + `","started_at":"2026-11-01T10:00:00Z","status":"failed","version":"v8"}`
+	must(t, writeDeployRecord(d, "v8", []byte(old)))
+	w := do(t, b.h, http.MethodGet, "/demo?deploy=v8", appToken(t), "")
+	got := w.Body.String()
+	if w.Code != http.StatusOK || readable(got, learnt) {
+		t.Fatalf("an unmarked record: %d %s", w.Code, got)
+	}
+	var rec wire.DeployResult
+	must(t, json.Unmarshal(w.Body.Bytes(), &rec))
+	if rec.Error != "start failed: [redacted:TOKEN]" || rec.Detail == nil || rec.Detail.Exit != "exit status 3" || rec.Detail.Probe.Status != 503 ||
+		strings.Join(strs(rec.Detail.LogTail), "|") != "one [redacted:TOKEN]|[redacted:OLD] two" || rec.Detail.LogTailError != "journalctl [redacted:TOKEN]" ||
+		strings.Join(rec.RedactedEnv, ",") != "OLD,TOKEN" || rec.SHA256 != strings.Repeat("ab", 32) || rec.Version != "v8" || rec.FilteredAtEntry {
+		t.Errorf("an unmarked record, filtered: %s", got)
+	}
+	// Marked, the same bytes are sent as they stand.
+	marked := strings.Replace(old, `"error":`, `"filtered_at_entry":true,"error":`, 1)
+	must(t, writeDeployRecord(d, "v8", []byte(marked)))
+	if w := do(t, b.h, http.MethodGet, "/demo?deploy=v8", appToken(t), ""); w.Body.String() != marked+"\n\n" { // the file's newline, and the answer's
+		t.Errorf("a marked record: %s", w.Body)
+	}
+	// An error or a detail not of its type is not sent: it could not be
+	// filtered as one.
+	must(t, writeDeployRecord(d, "v8", []byte(`{"version":"v8","status":"failed","error":["`+learnt+`"],"detail":"`+learnt+`"}`)))
+	if w := do(t, b.h, http.MethodGet, "/demo?deploy=v8", appToken(t), ""); w.Body.String() != `{"status":"failed","version":"v8"}`+"\n" {
+		t.Errorf("an unmarked record of other types: %s", w.Body)
+	}
+}
+
+// madeIn is every place in the Go files under dir (none of them tests)
+// where an AppText or an ErrText is made from something that is not a
+// constant: a conversion, by the file it is in, and a call of
+// wire.OwnText, by the function it is in.
+func madeIn(t *testing.T, root string) (conversions, ownText map[string][]string) {
+	t.Helper()
+	conversions, ownText = map[string][]string{}, map[string][]string{}
+	fset := gotoken.NewFileSet()
+	err := filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
+		if err != nil || e.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		for _, decl := range f.Decls {
+			fn, _ := decl.(*ast.FuncDecl)
+			ast.Inspect(decl, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				name := ""
+				switch x := call.Fun.(type) {
+				case *ast.SelectorExpr:
+					if pkg, ok := x.X.(*ast.Ident); ok && pkg.Name == "wire" {
+						name = x.Sel.Name
+					}
+				case *ast.Ident:
+					if f.Name.Name == "wire" {
+						name = x.Name
+					}
+				case *ast.ArrayType: // []wire.AppText(…)
+					if s, ok := x.Elt.(*ast.SelectorExpr); ok {
+						name = s.Sel.Name
+					}
+				}
+				switch {
+				case name == "AppText" || name == "ErrText":
+					if len(call.Args) == 1 {
+						if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == gotoken.STRING {
+							return true // a constant: needs no filter
+						}
+					}
+					conversions[name] = append(conversions[name], rel)
+				case name == "OwnText" && fn != nil:
+					where := fn.Name.Name
+					if fn.Recv != nil && len(fn.Recv.List) == 1 {
+						recv := fn.Recv.List[0].Type
+						if s, ok := recv.(*ast.StarExpr); ok {
+							recv = s.X
+						}
+						if id, ok := recv.(*ast.Ident); ok {
+							where = id.Name + "." + where
+						}
+					}
+					ownText[rel] = append(ownText[rel], where)
+				}
+				return true
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return conversions, ownText
+}
+
+// The app's text has a type only the filter makes: no conversion to
+// wire.AppText is written anywhere on the box but in redact.go, so a
+// field of that type cannot be given the app's bytes as they came. A
+// door added elsewhere fails here.
+func TestAppTextOnlyFromTheDoor(t *testing.T) {
+	conv, _ := madeIn(t, ".")
+	for _, f := range conv["AppText"] {
+		if f != "redact.go" {
+			t.Errorf("%s converts to wire.AppText: the app's text is made by the door alone (redact.go)", f)
+		}
+	}
+	if len(conv["AppText"]) == 0 {
+		t.Error("no conversion found at all: the walk sees nothing")
+	}
+	boxConv, _ := madeIn(t, filepath.Join("..", "box"))
+	if len(boxConv["AppText"]) != 0 {
+		t.Errorf("the box makes wire.AppText in %v", boxConv["AppText"])
+	}
+}
+
+// An error's text has a type of its own, made from a string that is not
+// a constant in two ways only: through the app's filter (errText,
+// redact.go), or by wire.OwnText for a sentence that holds nothing an
+// app wrote. Every caller of OwnText is listed here: a new one is a
+// decision written down here, and an error's text from under an app's
+// directories goes through errText instead.
+func TestErrTextMakers(t *testing.T) {
+	conv, own := madeIn(t, ".")
+	if c := conv["ErrText"]; len(c) == 0 || !allAre(c, "redact.go", filepath.Join("wire", "wire.go")) {
+		t.Errorf("wire.ErrText is converted to in %v; want redact.go (the net) and wire.go (OwnText) alone", c)
+	}
+	want := map[string][]string{
+		// The request's own name, query, body, version and the box's
+		// figures; never an error from under an app's directories.
+		"handler.go":         {"Handler.ServeHTTP", "Handler.servePerson", "ForbiddenBody", "Handler.getStatus", "Handler.getStatus", "Handler.deployURL", "Handler.deployURL", "Handler.deployURL", "Handler.deployPush", "Handler.deployPush", "Handler.deployPush", "Handler.deployRollback", "Handler.deployRecord", "Handler.deployRecord"},
+		"motel_approutes.go": {"Handler.serveMotelApp", "Handler.serveMotelApp"},
+		"people.go":          {"AdmitPerson"},
+	}
+	for f := range own {
+		sort.Strings(own[f])
+	}
+	for f := range want {
+		sort.Strings(want[f])
+	}
+	if fmt.Sprint(own) != fmt.Sprint(want) {
+		t.Errorf("wire.OwnText is called in\n%v\nwant\n%v", own, want)
+	}
+}
+
+func allAre(got []string, allowed ...string) bool {
+	for _, g := range got {
+		ok := false
+		for _, a := range allowed {
+			ok = ok || g == a
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// The guards see what they are for: a conversion of the app's text and
+// a new caller of OwnText, written in a file of a package of the box's,
+// are each found.
+func TestGuardsSeeANewMaker(t *testing.T) {
+	dir := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(dir, "door.go"), []byte(`package liveswap
+import "github.com/smallhoursorg/motel/liveswap/wire"
+func f(s string, err error) (wire.AppText, wire.ErrText, wire.Error) {
+	return wire.AppText(s), wire.ErrText(err.Error()), wire.Error{Error: wire.OwnText(err.Error())}
+}
+func g() wire.AppText { return wire.AppText("a constant") }
+`), 0o600))
+	conv, own := madeIn(t, dir)
+	if fmt.Sprint(conv) != "map[AppText:[door.go] ErrText:[door.go]]" || fmt.Sprint(own) != "map[door.go:[f]]" {
+		t.Errorf("found %v and %v", conv, own)
+	}
+}
+
+// A probe that got no answer is said in motel's words without motel's
+// own URL: Go's client names `Get "http://localhost/<health_path>"`,
+// whose host and path are motel's (the path is the status's), and the
+// error net would replace an env value equal to either (DB_HOST=localhost
+// is common) in a sentence that holds nothing of the app's. Why it got
+// no answer stays, and the chain for errors.Is.
+func TestProbeWithNoAnswerLeavesMotelsURLOut(t *testing.T) {
+	p := &httpProber{clock: newFakeClock()}
+	sock := filepath.Join(shortTempDir(t), "nothing.sock")
+	err := p.probeOnce(context.Background(), testSocketRef(t, sock), "/health?ready=1", time.Second)
+	if err == nil {
+		t.Fatal("a probe of a socket nothing listens on passed")
+	}
+	if s := err.Error(); !strings.HasPrefix(s, "health check got no answer: ") || strings.Contains(s, "localhost") || strings.Contains(s, "/health") {
+		t.Errorf("the probe's sentence: %q", s)
+	}
+	var ue interface{ Timeout() bool }
+	if !errors.As(err, &ue) {
+		t.Errorf("the chain lost Go's client's error: %#v", err)
+	}
+	b := newDoorBox(t, "PGHOST=localhost\nHEALTH=/health?ready=1\n")
+	if text, keys := b.rig.ma.errText("health gate: not healthy within deadline 5m0s: "+err.Error(), true); strings.Contains(string(text), "[redacted:") || keys != nil {
+		t.Errorf("the net replaced motel's own words: %q %v", text, keys)
+	}
+}
