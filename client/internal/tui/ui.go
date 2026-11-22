@@ -228,6 +228,12 @@ func (u *UI) show() {
 		u.body.SwitchToPage("page")
 		u.page.ScrollToBeginning()
 		u.App.SetFocus(u.page)
+	case model.ScreenLogs:
+		// The page holds the rows that fit, and the screen scrolls its
+		// lines itself (keys.go): the page never scrolls.
+		u.body.SwitchToPage("page")
+		u.page.ScrollToBeginning()
+		u.App.SetFocus(u.page)
 	case model.ScreenRecord:
 		focus = v.App
 		if v != u.inFront {
@@ -268,6 +274,11 @@ func (u *UI) show() {
 	}
 	u.S.Engine.RulesOpen(rules, now)
 	u.S.Engine.MeOpen(v.Screen == model.ScreenMe, now)
+	logs := ""
+	if v.Screen == model.ScreenLogs {
+		logs = v.App
+	}
+	u.S.LogsShown(logs, now)
 	if u.overlay != 0 {
 		u.root.ShowPage("overlay")
 		u.over.ScrollToBeginning()
@@ -349,8 +360,9 @@ func (u *UI) retry() {
 // app's row; an app's status; a record, and the status beside it;
 // whoami; the box, its backups and its alerts (the box screen has a
 // line of each); the backups; the alerts; the rules, the box's or an
-// app's; an app's series over the window shown, and its status; nothing
-// on help.
+// app's; an app's series over the window shown, and its status; an
+// app's lines, or whoami without a logs grant on it (who you are is then
+// what the screen shows); nothing on help.
 func (u *UI) shown(v model.View) []model.Job {
 	st := func(a string) model.Job { return model.Job{Kind: model.KStatus, App: a} }
 	switch v.Screen {
@@ -378,8 +390,29 @@ func (u *UI) shown(v model.View) []model.Job {
 		return []model.Job{{Kind: model.KRules, App: v.App}}
 	case model.ScreenMetrics:
 		return []model.Job{{Kind: model.KSeries, App: v.App, Range: v.Range}, st(v.App)}
+	case model.ScreenLogs:
+		if u.S.LogsGrant(v.App) == model.Granted {
+			return []model.Job{{Kind: model.KLogs, App: v.App}}
+		}
+		return []model.Job{{Kind: model.KWhoAmI}}
 	}
 	return nil
+}
+
+// openLogs is l on an app's screen, and :logs <app>: its lines, read
+// afresh, with the app's screen under them for esc.
+func (u *UI) openLogs(app string) {
+	lv := model.View{Screen: model.ScreenLogs, App: app}
+	switch top := u.top(); {
+	case top == lv:
+		return
+	case top.Screen == model.ScreenApp && top.App == app:
+	default:
+		// Never shown on the way: shown, it would ask the app's alerts.
+		u.stack = append(u.stack, model.View{Screen: model.ScreenApp, App: app})
+	}
+	u.S.LogsOpen(app, u.now())
+	u.open(lv)
 }
 
 // openMetrics is g on an app's screen: its numbers over the window last

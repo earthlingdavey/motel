@@ -2,49 +2,42 @@ package render
 
 import (
 	"io"
-	"time"
 
 	"github.com/smallhoursorg/motel/client/internal/termtext"
 )
 
-// LogLine is one line of an app's output: when the journal stored it,
-// the release that wrote it (the box's version, or the client's words
-// when the journal kept none), and its text made safe.
+// LogLine is one line of an app's output as the layout writes it: the
+// divider before it when one is written (the words between its dashes,
+// the day and the release), its time (UTC, to the second) and its text
+// made safe. Which lines have a divider, and its words, are the layout's
+// (model.LogsDivider), shared with the TUI's logs screen.
 type LogLine struct {
-	At            time.Time
-	Release, Text termtext.Text
+	Divider termtext.Text
+	Clock   string
+	Text    termtext.Text
 }
 
-// Logs writes an app's lines as reads bring them. Each line is its time
-// (UTC, to the second) and its text, whole as the box sent it. The
-// release is not on every line: a divider, before the first line and
-// wherever the release or the day (UTC) changes, names the day and the
-// release. A notice of the client's (Note) is a divider of its own, and
-// the line after it has its divider again.
+// Logs writes an app's lines as reads bring them, each its time and its
+// text, whole as the box sent it, after its divider when it has one. A
+// notice of the client's (Note) is a divider of its own.
 type Logs struct {
-	W       io.Writer
-	began   bool
-	day     string
-	release termtext.Text
+	W io.Writer
 }
 
 // Lines writes lines after those written before.
 func (l *Logs) Lines(lines []LogLine) error {
 	p := &printer{w: l.W}
 	for _, ln := range lines {
-		day := ln.At.UTC().Format("2006-01-02")
-		if !l.began || day != l.day || ln.Release != l.release {
-			p.line("-- %s UTC, release %s --", day, ln.Release)
-			l.began, l.day, l.release = true, day, ln.Release
+		if !ln.Divider.Empty() {
+			p.line("-- %s --", ln.Divider)
 		}
-		p.line("%s  %s", ln.At.UTC().Format("15:04:05"), ln.Text)
+		p.line("%s  %s", ln.Clock, ln.Text)
 	}
 	return p.err
 }
 
 // Note writes the client's own sentence s on a divider.
 func (l *Logs) Note(s string) error {
-	l.began = false
 	p := &printer{w: l.W}
 	p.line("-- %s --", s)
 	return p.err

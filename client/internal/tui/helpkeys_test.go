@@ -18,9 +18,10 @@ import (
 // table, or moved off a screen, fails TestHelpIsTheKeys.
 var helpKeys = map[model.Screen][]string{
 	model.ScreenApps:     {"enter", "d", "/", "s", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
-	model.ScreenApp:      {"enter", "d", "g", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
+	model.ScreenApp:      {"enter", "d", "g", "l", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenMetrics:  {"t", "PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenRecord:   {"w", "p n", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
+	model.ScreenLogs:     {"w", "j k ↑ ↓", "PgUp PgDn Home", "End", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenMe:       {"PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenBox:      {"PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenHelp:     {"PgUp PgDn Home End", "↑ ↓", ":", "esc", "?", "q"},
@@ -104,6 +105,7 @@ func TestHelpIsTheKeys(t *testing.T) {
 		{model.ScreenMe, func(h *harness) { h.open(model.View{Screen: model.ScreenMe}) }},
 		{model.ScreenBox, func(h *harness) { h.open(model.View{Screen: model.ScreenBox}) }},
 		{model.ScreenMetrics, func(h *harness) { h.open(app("blog")); h.press("g") }},
+		{model.ScreenLogs, func(h *harness) { h.open(app("blog")); h.press("l") }},
 		{model.ScreenHelp, func(h *harness) { h.open(model.View{Screen: model.ScreenHelp}) }},
 		{model.ScreenRefused, stop},
 		{model.ScreenStopHelp, func(h *harness) { stop(h); h.press("?") }},

@@ -164,16 +164,16 @@ func TestMeLastReadFailed(t *testing.T) {
 // was, and so it is on a stop, which says its own reason. Each read of
 // whoami is a ctrl-r, AgainAfter or more after the last.
 func TestTitleHeldWhoAmIFailed(t *testing.T) {
-	held := "motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box"
+	held := "motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box; logs of blog, hostile"
 	for _, c := range []struct {
 		name string
 		err  *model.Failure
 		want string
 	}{
-		{"a release that is not N.N.N", &model.Failure{Kind: model.FailUnusable, Message: "not moteld's answer"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box"},
-		{"409", &model.Failure{Kind: model.FailThis, Message: "deploy.example.com answered 409"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box"},
-		{"no answer", &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com closed the connection"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box"},
-		{"403", &model.Failure{Kind: model.FailForbidden, Message: "deploy.example.com does not allow your key this"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box"},
+		{"a release that is not N.N.N", &model.Failure{Kind: model.FailUnusable, Message: "not moteld's answer"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box; logs of blog, hostile"},
+		{"409", &model.Failure{Kind: model.FailThis, Message: "deploy.example.com answered 409"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box; logs of blog, hostile"},
+		{"no answer", &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com closed the connection"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box; logs of blog, hostile"},
+		{"403", &model.Failure{Kind: model.FailForbidden, Message: "deploy.example.com does not allow your key this"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box; logs of blog, hostile"},
 		{"a stop: 401", &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com refused the key (401)"}, held},
 		{"none", nil, held},
 	} {

@@ -38,7 +38,7 @@ type Fake struct {
 	mu sync.Mutex
 	// Errs makes a read fail: keyed "whoami", "apps", "box", "backups", "box-alerts",
 	// "box-rules", an app's name, "<app>@<version>", "alerts:<app>",
-	// "rules:<app>" or "series:<app>".
+	// "rules:<app>", "series:<app>" or "logs:<app>".
 	Errs map[string]error
 	// Bodies replaces a fixture's body, keyed by its path in fixtures/.
 	Bodies map[string]string
@@ -53,10 +53,12 @@ type Fake struct {
 	firing []Arrival
 }
 
-// Call is one read the fake answered.
+// Call is one read the fake answered: for a logs read, the cursor it
+// sent too.
 type Call struct {
-	Job model.Job
-	At  time.Time
+	Job   model.Job
+	At    time.Time
+	After string
 }
 
 // Set makes the read keyed k fail with err, or answer again with nil.
@@ -262,6 +264,38 @@ func (f *Fake) Rules(ctx context.Context, app string) (model.Got[wire.Rules], er
 func (f *Fake) BoxRules(ctx context.Context) (model.Got[wire.Rules], error) {
 	var g model.Got[wire.Rules]
 	b, err := f.load(ctx, model.Job{Kind: model.KBoxRules}, "box-rules", "box-rules.json", &g.V)
+	g.Body = b
+	return g, err
+}
+
+// Logs answers logs/<app>.json: to a tail (after ""), the fixture or
+// what a test set (Body); to a follow, what a test set, else no new
+// line, as a box whose app writes nothing more. An app with no fixture
+// holds no line.
+func (f *Fake) Logs(ctx context.Context, app, after string) (model.Got[wire.Logs], error) {
+	var g model.Got[wire.Logs]
+	path := "logs/" + app + ".json"
+	f.mu.Lock()
+	_, replaced := f.Bodies[path]
+	f.mu.Unlock()
+	_, err := fs.Stat(fixtures, "fixtures/"+path)
+	if !replaced && (after != "" || err != nil) {
+		f.Body(path, `{"kept":"on","lines":[],"more":false,"gap":false}`)
+		defer func() {
+			f.mu.Lock()
+			delete(f.Bodies, path)
+			f.mu.Unlock()
+		}()
+	}
+	f.mu.Lock()
+	n := len(f.Calls)
+	f.mu.Unlock()
+	b, err := f.load(ctx, model.Job{Kind: model.KLogs, App: app}, "logs:"+app, path, &g.V)
+	f.mu.Lock()
+	if len(f.Calls) > n {
+		f.Calls[n].After = after
+	}
+	f.mu.Unlock()
 	g.Body = b
 	return g, err
 }

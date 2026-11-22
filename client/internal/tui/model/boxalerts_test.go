@@ -197,7 +197,7 @@ func TestMeSaysWhoReadsTheBoxAlerts(t *testing.T) {
 			t.Fatalf("%s: whoami not read: %v", c.scope, s.MeErr)
 		}
 		v := strings.Join(strings.Fields(joined(s.MeView(*now))), " ")
-		if strings.Contains(v, "Nor the box's own alerts and silences") != c.says || !strings.Contains(v, "Read logs: this client does not offer them yet.") {
+		if strings.Contains(v, "Read the box's own alerts and silences") != c.says || !strings.Contains(v, "Read an app's logs: that needs a logs grant on it.") {
 			t.Errorf("%s: who am I says\n%s", c.scope, v)
 		}
 	}

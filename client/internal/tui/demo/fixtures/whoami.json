@@ -5,6 +5,14 @@
   {
    "role": "viewer",
    "scope": "box"
+  },
+  {
+   "role": "logs",
+   "scope": "app:blog"
+  },
+  {
+   "role": "logs",
+   "scope": "app:hostile"
   }
  ],
  "box": "deploy.example.com",

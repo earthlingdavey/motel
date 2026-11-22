@@ -65,6 +65,8 @@ func (u *UI) render(now time.Time) {
 		door.SetText(u.page, door.Lines(u.S.RulesViewFit(v.App, now, u.w, door.Width), u.Colour))
 	case model.ScreenMetrics:
 		door.SetText(u.page, door.Lines(u.S.MetricsViewFit(v.App, v.Range, now, u.w, u.h-3, door.Width), u.Colour))
+	case model.ScreenLogs:
+		door.SetText(u.page, door.Lines(u.S.LogsViewFit(v.App, now, u.w, u.h-3, door.Width, u.wrap), u.Colour))
 	case model.ScreenHelp:
 		door.SetText(u.page, door.LitLines(hang(u.help(), u.w)))
 	case model.ScreenStopHelp:
@@ -195,6 +197,8 @@ func (u *UI) crumbs(v model.View, now time.Time) (model.Line, model.Line) {
 		return ownLine("apps › " + v.App + " › rules"), u.S.RulesAsOf(v.App, now)
 	case model.ScreenMetrics:
 		return ownLine("apps › " + v.App + " › metrics " + v.Range), u.S.MetricsAsOf(v.App, v.Range, now)
+	case model.ScreenLogs:
+		return ownLine("apps › " + v.App + " › logs"), u.S.LogsAsOf(v.App, now)
 	case model.ScreenHelp, model.ScreenStopHelp:
 		return ownLine("help"), ownLine("esc closes")
 	}
@@ -218,6 +222,7 @@ var footers = map[model.Screen]string{
 	model.ScreenRules:    "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenAppRules: "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenMetrics:  "↑↓ scroll  t window  y json  c cmd  esc back  ? more",
+	model.ScreenLogs:     "↑↓ scroll  End follow  w wrap  c cmd  esc back  ? more",
 	model.ScreenHelp:     "↑↓ scroll  esc close  q quit",
 	model.ScreenRefused:  "↑↓ scroll  r ask again  ? keys  q quit",
 	model.ScreenStopHelp: "↑↓ scroll  esc back  r ask again  q quit",
@@ -540,13 +545,14 @@ VIEWS (type after :)
  alerts                       what fires on the box, and its silences (viewers of the box)
  rules [<app>]                each rule the box alerts on, how close it is (no app: viewers of the box)
  metrics <app> [<window>]     one app's numbers over 1h (or 24h, 7d, 14d), drawn
+ logs <app>                   one app's own lines, followed (a logs grant on it)
  help                         this
 
 MARKS   ✖ broken now   ▲ look   ⟳ deploying   ? cannot tell   · nothing to show
 AGE     how old each row's answer is; "stale" after three missed reads
 ALERTS  first in the title bar, on every screen: how many fire that you may see (✖ 3 firing; ▲ when none is critical), reversed while one is new until a key, ? when the count is old or not known. The terminal's bell rings once for a read that brings a new one, at most once a minute; MOTEL_BELL=off turns it off
 
-This client only reads. Rolling back, adding silences and logs arrive when the box offers them.
+This client only reads. Rolling back and adding silences arrive when the box offers them.
 Backups are the box's own claim: look from a machine of your own with restic too.
 Deploys come from CI; config and secrets from signed pushes; root's work is over ssh.`
 }

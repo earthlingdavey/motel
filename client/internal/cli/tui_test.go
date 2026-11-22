@@ -94,6 +94,11 @@ func (r *recorder) Series(context.Context, string, string) (model.Got[wire.Serie
 	return model.Got[wire.Series]{}, nil
 }
 
+func (r *recorder) Logs(context.Context, string, string) (model.Got[wire.Logs], error) {
+	r.called = "Logs"
+	return model.Got[wire.Logs]{}, nil
+}
+
 // wantRead is the read each command makes, written out: the command
 // an action names, and the model.Client method its read must call,
 // which live maps to the client's read of the same name.
@@ -109,6 +114,7 @@ var wantRead = map[string]string{
 	"monitor rules --app <app>":     "Rules",
 	"monitor rules":                 "BoxRules",
 	"metrics <app> --range <range>": "Series",
+	"logs <app>":                    "Logs",
 }
 
 // TestActionsAreCommands: every read the TUI makes is an action naming
@@ -248,6 +254,10 @@ func TestFailureForTheTUI(t *testing.T) {
 		{&client.Failure{Exit: client.ExitUnknown}, model.FailNoAnswer},
 		{&client.Failure{Exit: client.ExitUnknown, Status: 500}, model.FailNoAnswer},
 		{&client.Failure{Exit: client.ExitUnknown, Status: 599}, model.FailNoAnswer},
+		// A logs read's 503 with the box's wait (client.Logs sets it on no
+		// other); one with none is no answer.
+		{&client.Failure{Exit: client.ExitUnknown, Status: 503, RetryAfter: time.Second}, model.FailBusy},
+		{&client.Failure{Exit: client.ExitUnknown, Status: 503}, model.FailNoAnswer},
 		{&client.Failure{Exit: client.ExitUnknown, Status: 499}, model.FailUnusable},
 		{&client.Failure{Exit: client.ExitUnknown, Status: 600}, model.FailUnusable},
 		{&client.Failure{Exit: client.ExitUnknown, Status: 200}, model.FailUnusable},

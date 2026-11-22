@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
 
+	"github.com/smallhoursorg/motel/client/internal/tui/door"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -34,14 +36,17 @@ const (
 )
 
 var (
-	reading = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord, model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenMetrics}
+	reading = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord, model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenMetrics, model.ScreenLogs}
 	lists   = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord}
-	browse  = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord, model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenMetrics, model.ScreenHelp}
+	browse  = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord, model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenMetrics, model.ScreenLogs, model.ScreenHelp}
 	every   = append(append([]model.Screen{}, browse...), model.ScreenRefused)
 	// stops are a stop screen and help over it, where nothing is asked
 	// and so nothing opens: only scrolling, leaving help, r and q.
 	stops = []model.Screen{model.ScreenRefused, model.ScreenStopHelp}
 	all   = append(append([]model.Screen{}, every...), model.ScreenStopHelp)
+	// notLogs is all but the logs screen, whose lines scroll by its own
+	// keys (with an overlay open, the overlay's).
+	notLogs = slices.DeleteFunc(slices.Clone(all), func(s model.Screen) bool { return s == model.ScreenLogs })
 )
 
 func rune1(r rune) func(*tcell.EventKey) bool {
@@ -80,9 +85,10 @@ var bindings = []binding{
 	})},
 	{"g", "its numbers over time: memory, cpu, requests, 5xx share, p95", []model.Screen{model.ScreenApp}, closed, rune1('g'), done(func(u *UI, v model.View) { u.openMetrics(v.App) })},
 	{"t", "another window: 1h, 24h, 7d, 14d", []model.Screen{model.ScreenMetrics}, closed, rune1('t'), done(func(u *UI, _ model.View) { u.nextRange() })},
+	{"l", "its own lines, as the box's journal holds them, followed (a logs grant)", []model.Screen{model.ScreenApp}, closed, rune1('l'), done(func(u *UI, v model.View) { u.openLogs(v.App) })},
 	{"/", "filter by name; /! keeps only marked rows", []model.Screen{model.ScreenApps}, closed, rune1('/'), done(func(u *UI, _ model.View) { u.ask('/') })},
 	{"s", "sort: attention, name, memory, 5xx", []model.Screen{model.ScreenApps}, closed, rune1('s'), done(func(u *UI, _ model.View) { u.sort++ })},
-	{"w", "wrap long lines (off: a line stays a line)", []model.Screen{model.ScreenRecord}, closed, rune1('w'), done(func(u *UI, _ model.View) {
+	{"w", "wrap long lines (off: a line stays a line)", []model.Screen{model.ScreenRecord, model.ScreenLogs}, closed, rune1('w'), done(func(u *UI, _ model.View) {
 		u.wrap = !u.wrap
 		u.tail.SetWrap(u.wrap)
 	})},
@@ -105,14 +111,43 @@ var bindings = []binding{
 		}
 		return ev
 	}},
-	{"PgUp PgDn Home End", "move by a page, to the start or the end", all, either, keys(tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyHome, tcell.KeyEnd), pass},
+	{"j k ↑ ↓", "scroll a row; scrolled up, held where it is as lines arrive", []model.Screen{model.ScreenLogs}, closed, func(ev *tcell.EventKey) bool {
+		return rune1('j')(ev) || rune1('k')(ev) || keys(tcell.KeyUp, tcell.KeyDown)(ev)
+	}, func(u *UI, v model.View, ev *tcell.EventKey) *tcell.EventKey {
+		by := 1
+		if rune1('k')(ev) || ev.Key() == tcell.KeyUp {
+			by = -1
+		}
+		u.S.LogsScroll(v.App, by, u.w, door.Width, u.wrap)
+		return nil
+	}},
+	{"PgUp PgDn Home", "scroll by a page, to the oldest line held", []model.Screen{model.ScreenLogs}, closed, keys(tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyHome), func(u *UI, v model.View, ev *tcell.EventKey) *tcell.EventKey {
+		switch ev.Key() {
+		case tcell.KeyPgUp:
+			u.S.LogsPage(v.App, -1, u.w, door.Width, u.wrap)
+		case tcell.KeyPgDn:
+			u.S.LogsPage(v.App, 1, u.w, door.Width, u.wrap)
+		default:
+			u.S.LogsHome(v.App, u.w, door.Width, u.wrap)
+		}
+		return nil
+	}},
+	{"End", "the newest line, following again", []model.Screen{model.ScreenLogs}, closed, keys(tcell.KeyEnd), done(func(u *UI, v model.View) { u.S.LogsEnd(v.App) })},
+	{"PgUp PgDn Home End", "move by a page, to the start or the end", notLogs, either, keys(tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyHome, tcell.KeyEnd), pass},
+	{"PgUp PgDn Home End", "scroll the overlay", []model.Screen{model.ScreenLogs}, open, keys(tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyHome, tcell.KeyEnd), pass},
 	{"↑ ↓", "scroll", []model.Screen{model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenMetrics, model.ScreenHelp, model.ScreenRefused, model.ScreenStopHelp}, closed, keys(tcell.KeyUp, tcell.KeyDown), pass},
 	{"↑ ↓", "scroll the overlay", reading, open, keys(tcell.KeyUp, tcell.KeyDown), pass},
 	{"c", "the motel command for this view", reading, either, rune1('c'), done(func(u *UI, _ model.View) { u.overlay = 1; u.show() })},
 	{"y", "what the box said, as JSON", reading, either, rune1('y'), done(func(u *UI, _ model.View) { u.overlay = 2; u.show() })},
 	{"P", "quit and print it (safe on a terminal)", reading, open, rune1('P'), done(func(u *UI, v model.View) { u.printAndQuit(v) })},
 	{"P", "quit, and print the person line below the prompt (a refused key)", []model.Screen{model.ScreenRefused}, either, rune1('P'), done(func(u *UI, v model.View) { u.printAndQuit(v) })},
-	{"ctrl-r", "ask the box again now, for what this screen shows", reading, either, keys(tcell.KeyCtrlR), done(func(u *UI, v model.View) { u.S.Engine.Again(u.now(), u.shown(v)...) })},
+	{"ctrl-r", "ask the box again now, for what this screen shows", reading, either, keys(tcell.KeyCtrlR), done(func(u *UI, v model.View) {
+		if v.Screen == model.ScreenLogs {
+			// A follow the box stopped (kept off) reads again.
+			u.S.LogsAgain(u.now())
+		}
+		u.S.Engine.Again(u.now(), u.shown(v)...)
+	})},
 	{"r", "ask again, with a token signed afresh (once in 5 s)", stops, either, rune1('r'), done(func(u *UI, _ model.View) { u.retry() })},
 	{":", "go to a view (Tab completes)", browse, either, rune1(':'), done(func(u *UI, _ model.View) { u.ask(':') })},
 	{"esc", "back one screen, or close the overlay; never quits", browse, either, keys(tcell.KeyEscape), done(func(u *UI, _ model.View) { u.back() })},

@@ -1,0 +1,30 @@
+✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the … live · 0s ago
+apps › blog › logs                                                       as of 14:12:40 UTC · 0s ago
+── following: a read every 2 s ─────────────────────────────────────────────────────────────────────
+-- older lines were not sent: a read sends at most 200 lines or 64 KiB of them, and this screen does
+  not page back (motel logs --lines 1000 may reach further) --
+-- 2026-11-15 UTC, release e9a0b3f2c118 --
+11:52:20  > blog@2.4.0 start
+11:52:21  > node server.js
+11:52:22  Error: Cannot find module './lib/feed'
+11:52:22      at Module._resolveFilename (node:internal/modules/cjs/loader:1145:15)
+-- 2026-11-15 UTC, release not kept by the journal --
+11:52:23  node: exited with code 1
+-- 2026-11-15 UTC, release 7c1e55d0a913 --
+12:12:10  > blog@2.4.1 start
+12:12:11  > node server.js
+12:12:12  listening on /srv/motel/blog/run/app.sock
+12:12:40  GET / 200 14ms
+12:13:40  GET /posts/hello-world 200 22ms
+13:12:35  GET /feed.xml 200 41ms
+13:42:38  warn: slow query (412ms): SELECT * FROM posts ORDER BY published_at DESC LIMIT 20
+13:42:40  GET / 200 431ms
+14:02:40  GET /posts/a-very-long-title-that-goes-on-and-on-past-the-edge-of-any-ordinary-terminal-w…
+14:10:39  GET /static/site.css 304 2ms
+14:10:40  GET / 200 12ms
+14:11:39  POST /comments 201 35ms
+14:11:40  GET /posts/hello-world 200 18ms
+14:12:31  GET /healthz 200 1ms
+14:12:36  GET / 200 11ms
+
+↑↓ scroll  End follow  w wrap  c cmd  esc back  ? more

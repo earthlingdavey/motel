@@ -1,6 +1,8 @@
 package model
 
 import (
+	"slices"
+	"strconv"
 	"time"
 
 	"github.com/smallhoursorg/motel/client/internal/termtext"
@@ -103,4 +105,84 @@ func LogsLines(lines []wire.LogLine) []LogsLine {
 		out[i] = LogsLine{At: l.At, Release: termtext.From(rel), Text: termtext.Tabbed(l.Text)}
 	}
 	return out
+}
+
+// The layout of an app's lines, which `motel logs` prints and the logs
+// screen draws, each from these, so the two cannot differ: each line is
+// its Clock and its text; a divider (LogsDivider) is written before the
+// first line, after a note of the client's, and wherever the release or
+// the day changes; and the client's notes among the lines are these
+// sentences, each a divider of its own.
+
+// Clock is the line's time as the layout shows it: UTC, to the second.
+func (l LogsLine) Clock() string { return l.At.UTC().Format("15:04:05") }
+
+// LogsDivider is the words of the divider written before l, the day
+// (UTC) and the release, when one is: prev is the line written before
+// it, nil when none was or a note of the client's was written since.
+func LogsDivider(prev *LogsLine, l LogsLine) (termtext.Text, bool) {
+	day := l.At.UTC().Format("2006-01-02")
+	if prev != nil && prev.At.UTC().Format("2006-01-02") == day && prev.Release == l.Release {
+		return termtext.Text{}, false
+	}
+	return termtext.From(day + " UTC, release " + l.Release.String()), true
+}
+
+// LogsDividers is where a layout written as reads bring lines has got
+// to, for LogsDivider: the line written last.
+type LogsDividers struct{ prev *LogsLine }
+
+// Before is the divider written before l, when one is, and moves on to l.
+func (d *LogsDividers) Before(l LogsLine) (termtext.Text, bool) {
+	t, ok := LogsDivider(d.prev, l)
+	d.prev = &l
+	return t, ok
+}
+
+// Note is a note of the client's written: the next line has its divider
+// again.
+func (d *LogsDividers) Note() { d.prev = nil }
+
+// LogsGapSays is the note of a follow's gap (LogsTurn.Gap): none, the
+// answer brought no line of app; older, it stopped with older lines
+// left (every entry it took was passed over), so not that the journal
+// holds none.
+func LogsGapSays(app string, none, older bool) string {
+	newest := "these are its newest"
+	switch {
+	case none && older:
+		newest = "this read sent no line"
+	case none:
+		newest = "it now holds no line of " + app
+	}
+	return "a gap: the box no longer holds the line this follow had read to, so lines since then may be missing; " + newest
+}
+
+// LogsOlderSays is the start of the note of a tail's more
+// (LogsTurn.Older), n the count asked for: each reader says after it
+// what it does about the older lines.
+func LogsOlderSays(n string) string {
+	return "older lines were not sent: a read sends at most " + n + " lines or 64 KiB of them"
+}
+
+// LogsMostLines is the largest count of wire.LogsLines: a tail of it
+// reaches furthest back.
+func LogsMostLines() string {
+	return slices.MaxFunc(wire.LogsLines, func(a, b string) int {
+		x, _ := strconv.Atoi(a)
+		y, _ := strconv.Atoi(b)
+		return x - y
+	})
+}
+
+// LogsOffSays is the client's sentence for a kept "off": host keeps
+// app's output on the box.
+func LogsOffSays(host, app string) string {
+	return host + " keeps " + app + "'s output on the box (deploy_log_lines 0): it sends no line of it"
+}
+
+// LogsNoneSays is the client's sentence for a first read that brings no
+// line.
+func LogsNoneSays(host, app string) string {
+	return host + " holds no line of " + app + " in its journal"
 }

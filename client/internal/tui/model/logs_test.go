@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/smallhoursorg/motel/client/internal/termtext"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
@@ -77,5 +78,21 @@ func TestLogsLinesShown(t *testing.T) {
 		if strings.ContainsRune(got, '\t') {
 			t.Errorf("%q: a tab is written", c.in)
 		}
+	}
+}
+
+// TestLogsKeepBytes: lines long as shown are held to LogsKeepBytes, the
+// oldest dropped first and counted.
+func TestLogsKeepBytes(t *testing.T) {
+	d := &logsData{}
+	mib := termtext.From(strings.Repeat("x", 1<<20))
+	for range 20 {
+		d.items = append(d.items, logsItem{line: LogsLine{Text: mib}})
+		d.lines++
+		d.bytes += 1 << 20
+	}
+	d.trim()
+	if d.lines != 16 || d.dropped != 4 || d.bytes != 16<<20 || d.first != 4 {
+		t.Errorf("held %d lines, %d bytes; dropped %d, first %d", d.lines, d.bytes, d.dropped, d.first)
 	}
 }

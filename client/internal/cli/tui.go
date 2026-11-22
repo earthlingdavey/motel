@@ -425,6 +425,15 @@ func (l live) Series(ctx context.Context, app, rng string) (model.Got[wire.Serie
 	return got(v, ans, err)
 }
 
+func (l live) Logs(ctx context.Context, app, after string) (model.Got[wire.Logs], error) {
+	a, err := client.ParseApp(app)
+	if err != nil {
+		return model.Got[wire.Logs]{}, argument(err)
+	}
+	v, ans, err := l.c.Logs(ctx, a, "", after)
+	return got(v, ans, err)
+}
+
 func (l live) BoxAlerts(ctx context.Context) (model.Got[wire.BoxAlerts], error) {
 	v, ans, err := l.c.BoxAlerts(ctx)
 	return got(v, ans, err)
@@ -480,6 +489,11 @@ func failure(err error) error {
 		m.Kind = model.FailNotSigned
 	case f.Status == http.StatusTooManyRequests:
 		m.Kind = model.FailSlowed
+	case f.Status == http.StatusServiceUnavailable && f.RetryAfter > 0:
+		// A logs read's 503 with the box's wait (client.Logs, the only
+		// read that sets one on a 503): its read slots taken, by anyone,
+		// or moteld starting; this read alone waits (model.FailBusy).
+		m.Kind = model.FailBusy
 	case f.Exit == client.ExitForbidden:
 		m.Kind = model.FailForbidden
 	case f.Exit == client.ExitNotFound:

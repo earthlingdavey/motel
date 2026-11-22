@@ -195,9 +195,9 @@ func TestMeRule(t *testing.T) {
 
 // TestMeLogsRole: logs is said as a word, as viewer is, in the title
 // and on the who-am-I screen, where its verb says the viewer's reads it
-// gives too, and the sentence on logs says the grant reads them; a logs
-// grant on the box offers the box screens, one on an app does not. The
-// scopes stand in one column past the longest verb.
+// gives too, and nothing says logs may not be read; a logs grant on the
+// box offers the box screens, one on an app does not. The scopes stand
+// in one column past the longest verb.
 func TestMeLogsRole(t *testing.T) {
 	for _, c := range []struct {
 		roles     []wire.RoleHeld
@@ -221,7 +221,7 @@ func TestMeLogsRole(t *testing.T) {
 		if !strings.Contains(text, c.me+"\n") || strings.Contains(text, `"logs"`) {
 			t.Errorf("%+v: who am I shows\n%s\nwant a line %q", c.roles, text, c.me)
 		}
-		if !strings.Contains(text, "Read logs: your logs grant reads them, but this client does not show them yet.") || strings.Contains(text, "does not offer them yet") {
+		if strings.Contains(text, "logs grant on it") || strings.Contains(text, "does not show them yet") {
 			t.Errorf("%+v: who am I says of logs\n%s", c.roles, text)
 		}
 		if s.BoxViewer() != c.boxViewer {

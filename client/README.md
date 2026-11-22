@@ -627,6 +627,12 @@ made by hand. Accepted:
 | The backups screen's lines of the box's are cut at the window's edge, the cut marked `…` (an advice at a line's end, `` `motel-backup drill`, as root, … ``, is cut at 80 columns): the screen scrolls up and down, not sideways | 2 | 5 | 1 | 10 | 3 | accepted: the cut is marked, and `y` shows the whole answer |
 | A row stopped, throttled or in backoff with a deploy in flight can have the state's word cut from its strip at 80 columns, the deploy before it taking the room: when the row is stale (`1m old, stale: ` before it), its name is near 20 characters, or its phase is a long one (`stopping_old`). Its mark and STATE still say it, on the row below the strip | 2 | 5 | 1 | 10 | 2 | accepted |
 | Such a row's VERSION says only the version in flight (`stopped  → 9a1b2c3d4e5f`), so the table does not name the version that is stopped, throttled or in backoff, and the row can be read as the new version being the stopped one; the `→` marks it as on its way ("The TUI", below), and the strip and the app's screen name the stopped one | 2 | 4 | 3 | 24 | 1 (keep the running version in VERSION on these rows) | accepted over the bar, pending the owner (the skill's rule 4): VERSION said as a row in flight says it was the owner's chosen fix for #584's item 4 |
+| While whoami lists a `logs` grant on an app and the box still refuses its logs read (403), the read held by that 403 is asked again at each whoami answer that follows it (whoami is asked again by the 403 itself, at most once a minute, else every 5 minutes): a refused read, and a Warn line in the box's journal (which the box writes at most once a minute for a person and an app), each time, for as long as the screen is open. It takes whoami and the logs route disagreeing about one key from one address, which neither does by design: whoami lists the grants that apply from the request's address | 2 | 2 | 1 | 4 | 2 (keep, for each refused app, whether whoami has since not listed the grant, and ask again only after that) | accepted, found by the fourth self-review round of the logs screen: the screen says the refusal and that ctrl-r asks again |
+| A logs read the box answered busy (a `503` with its wait, `FailBusy`) counts as a failed read of its own (its misses), as a refusal does: a box that then stops answering is seen by that read's backoff from the count it reached (4 s, 8 s… instead of 2 s), and the read of another thing is not brought forward for it | 2 | 2 | 1 | 4 | 2 (a branch in `Done` for a busy answer) | accepted: the other reads see the outage at their own pace, and the title bar says it |
+| While the logs screen shows no line of the app (no logs grant, whoami not known, a refusal, kept off, still asking, a head that fills the page), its footer still lists the scroll, follow and wrap keys, which do nothing useful there | 2 | 5 | 3 | 30 | 2, 2 | accepted over the bar by the owner's decision of 2026-11-22: the fix was tried in three review rounds and each brought faults in, since the footer, the keys and the layout must then agree on whether lines are shown; the rule's stop. A follow-up issue may take it up on its own |
+| Scrolling or paging on a logs page that shows no line (the head fills the page, or the grant went while lines were held) moves and holds the view at a place not seen: when lines show again the rule says `held: N new lines since · End follows`, and End follows | 2 | 5 | 1 | 10 | 2, 2 | accepted |
+| After a read that stopped every read and `r`, a failure the logs screen said before the stop is said again until the next logs answer, 2 s or the read's wait | 2 | 2 | 3 | 12 | 1, 2 (forgetting it on a stop also cleared the failure of another opening's read) | accepted |
+| The logs screen's tail after a skip (a follow more than the 5,000 lines it holds behind, `lines skipped`) leaves out each of its lines at or before the time of the newest line held, so a line of the journal's with that same microsecond, after the last one held, is not shown, nor one stamped earlier after a step of the box's clock back | 2 | 5 | 1 | 10 | 2 (keep the last line's text too, and match on both) | accepted: the skip's note says the lines between were not read, which these are among |
 
 Owed, from the reviews of the TUI's first part (#558; scored there), of
 their fixes, and of its second part; the others are fixed:
@@ -744,7 +750,51 @@ panels only for an app behind `observe`), and one the client does not
 know is named as the box's. The box with no metrics line, a store that
 did not answer, a word for the store the client does not know, and a
 moteld older than the read (a 404, which the title bar does not call a
-refusal) are each said in the client's words. The box screen shows the commit
+refusal) are each said in the client's words. `l` on an app's screen
+opens its own lines (`motel logs`), and `:logs <app>` goes there from
+anywhere, esc back to the app, for a person whose whoami lists a `logs`
+grant on the app or on the box. Without one the screen says which
+grant is needed and asks the box nothing, since a refused logs read is
+a line in the box's journal; before whoami has answered about this key
+it asks nothing either, and while whoami's newest read has failed it
+goes by the answer held (a grant removed since is a 403, which asks
+whoami again). It opens on the newest lines (200, the box's default),
+read afresh at each opening, and follows them every 2 s (`LogsEvery`)
+while it is in front: help, the `:` line and an overlay over it keep its
+lines and its cursor, and it reads on from the cursor once it is in
+front again, as after the idle pause. A read that stopped with lines
+left after the last it sent is followed by the next at once; a run of
+those that has brought 5,000 lines goes on from a tail, and a note says
+the lines between were not read. The lines are laid out as `motel logs`
+prints them, from the same pieces (`model.LogsDivider`,
+`LogsLine.Clock`, the notes' sentences): each its time, UTC to the
+second, and its text, every control character and colour code an
+escape; a divider before the first line held, after a note, and
+wherever the release or the day changes; the client's notes (older
+lines not sent, a gap, lines skipped) as dividers among them. A line
+wider than the window is cut at its edge, `…` its last cell; `w` wraps
+it, as on a record (one setting for both: turned on here, a record's
+tail is wrapped too), the rest on rows of its own indented past the time,
+so no part of a line begins a row where a line or a divider does: the
+screen lays out the rows itself, by the door's widths (never inside one
+of termtext's escapes), and tview wraps nothing. A rule above them says
+it follows; a row or a page up (↑, k, PgUp, Home) holds the view where it
+is while lines arrive, the rule counting them (`held: 37 new lines since
+· End follows`); End, or scrolling down to the newest row, follows
+again. It holds the newest 5,000 lines (`LogsKeep`), and at most 16 MiB
+of their text as shown (`LogsKeepBytes`: a line of 4 KiB from the box
+can be four times that made safe, eight with tabs), and says how many
+older ones it dropped. The box saying the app keeps its output on the
+box (`kept: off`), or naming what it keeps in a word the client does not
+know, is said in the client's words, and nothing more is read until
+ctrl-r. A 403 or a 404 drops the lines and the cursor, as a refused
+status is dropped. `c` gives `motel logs` for the app, the tail the
+screen opens on (with `--follow` it reads on as the screen does), and
+its `--json` form; `y` and `P` the newest answer that brought lines
+(the newest, when none has or the box said it keeps them on the box),
+as `motel logs --json` prints one, its cursor
+among it: the box's position in its journal, which the client holds in
+memory only and prints only when `P` is pressed. The box screen shows the commit
 the box runs, its Caddyfile's digest and its key for secrets, and, when
 the box says the Caddyfile is not the one that commit installed, a line
 under the digest that says so, as `motel box status`'s first line does.
@@ -798,7 +848,7 @@ takes two, a combining mark none, and a character the door writes as
 an escape as many as the escape has): a line too wide is cut, `…` its
 last cell, and the title bar's and the crumb's right side is cut only
 when it alone takes the whole window or more (the apps' summary of hundreds of apps at 60 columns), the same way. `:` goes to a view in the command words (`:status blog`,
-`:deploys blog <version>`, `:me`, `:box`, `:backups`, `:alerts`, `:rules`, `:rules blog`, `:metrics blog 24h`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
+`:deploys blog <version>`, `:me`, `:box`, `:backups`, `:alerts`, `:rules`, `:rules blog`, `:metrics blog 24h`, `:logs blog`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
 written from the table the keys are bound from, its rows wrapped to the window (an entry's words under its words), and scrolls, as its footer says. On a screen that reads
@@ -873,7 +923,20 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   metrics screen's window is read every 30 s while it is shown
   (`SeriesEvery`, the box's own 30 s per app and window), and the app's
   status every 5 s beside it, for the deploy marks; another window is
-  read in its place, the first not. The
+  read in its place, the first not. The logs screen's lines are read
+  every 2 s while it is in front (`LogsEvery`), 0.5 a second, counted in
+  the budget the other apps share as the open app's reads are (its app
+  is not the open one meanwhile: its status is read in the background);
+  a read made at once for lines left takes its turn among the other
+  apps' reads, by when each is due, so a chatty app's run of them
+  starves none. With it open, a viewer of the box's other apps keep 30 s
+  to about 23 apps (the engine's own sum, `background`). A logs `503`
+  with the box's wait (its four read slots taken, by anyone, or moteld
+  still starting after a restart, which the client cannot tell apart)
+  waits that read alone, for the wait or 2 s when that is longer, and
+  slows nothing else; it is not counted as an answer from the box, so a
+  run of no answer goes on through it; its screen says the last read
+  failed, and the title bar says nothing of it. The
   open app is read every 5 s, and its alerts every 15 s while its screen
   is open (`AlertsEvery`, after the box's own 5 s of Alertmanager's
   answer). Following a deploy costs no read of its own: it is the open
@@ -910,7 +973,7 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   if it is still open); a read of it that fails, a 5xx too, is not asked again by
   itself, and the record read before stays on screen beside a failure
   that is not a refusal: a 403 or a 404 is said alone, as on an app's
-  screen and the box screen, and drops the status, record or box's status held (not who am I's: the title bar and who am I say its age and that it failed; nor the apps list: the apps screen shows it as of its time, says the last read failed, and `y` there still gives it, which is bearable since it is said to be old and failed and each name's status is still asked, and dropped on its own refusal), so `y` and `P` have no answer of it to give (`y` says the box refused the read, or answered it 404). Ten idle minutes pause it: every read stops but the alerts the title bar counts, which go on at a minute or more (a viewer of the box's every minute, 470 reads in the 7 h 50 min after the pause of 8 hours away and about 54 signatures, as at 15 s; a person with app grants only, each app's at the interval it had at the keys and never under a minute: 0.017 a second with 1 app, 0.083 with 5, 0.2 with 12, 0.63 with 40, measured on the fake clock, `TestAppWatchThroughThePause`; with the apps list every minute and whoami every five, which say which apps are watched, so one added or granted meanwhile is; whoami is read through the pause, whatever is watched, so a grant removed by a push and given back while away is seen, and a read a 403 held is asked again; a grant limited by `from` that drops out on another network is seen too while another grant still lets the key in, but with none left the box refuses the key (401), every read stops, and only `r` asks again), and the title bar says `PAUSED (idle 10m), alerts still read: any key resumes` (while their newest reads answered: one that failed has it say `PAUSED (idle 10m): any key resumes`, and the mark its count old; one waited for, `waiting`); an alert new meanwhile moves the mark and rings the bell as at the keys, and the mark stays reversed until the key that resumes. Every key is read for so, a hardware key too: one that cannot sign with nobody there stops the reads at its next signature (the accepted row on a key that cannot sign with nobody there).
+  screen and the box screen, and drops the status, record or box's status held (not who am I's: the title bar and who am I say its age and that it failed; nor the apps list: the apps screen shows it as of its time, says the last read failed, and `y` there still gives it, which is bearable since it is said to be old and failed and each name's status is still asked, and dropped on its own refusal), so `y` and `P` have no answer of it to give (`y` says the box refused the read, or answered it 404). Ten idle minutes pause it (the logs screen's follow too, its rule then saying paused, and it reads on from its cursor at the key that resumes): every read stops but the alerts the title bar counts, which go on at a minute or more (a viewer of the box's every minute, 470 reads in the 7 h 50 min after the pause of 8 hours away and about 54 signatures, as at 15 s; a person with app grants only, each app's at the interval it had at the keys and never under a minute: 0.017 a second with 1 app, 0.083 with 5, 0.2 with 12, 0.63 with 40, measured on the fake clock, `TestAppWatchThroughThePause`; with the apps list every minute and whoami every five, which say which apps are watched, so one added or granted meanwhile is; whoami is read through the pause, whatever is watched, so a grant removed by a push and given back while away is seen, and a read a 403 held is asked again; a grant limited by `from` that drops out on another network is seen too while another grant still lets the key in, but with none left the box refuses the key (401), every read stops, and only `r` asks again), and the title bar says `PAUSED (idle 10m), alerts still read: any key resumes` (while their newest reads answered: one that failed has it say `PAUSED (idle 10m): any key resumes`, and the mark its count old; one waited for, `waiting`); an alert new meanwhile moves the mark and rings the bell as at the keys, and the mark stays reversed until the key that resumes. Every key is read for so, a hardware key too: one that cannot sign with nobody there stops the reads at its next signature (the accepted row on a key that cannot sign with nobody there).
 - **What fires.** The title bar's first cells, on every screen, count
   the alerts that fire that this person may see, after the glyph of the
   worst (`✖ 3 firing`; `▲ 1 firing` when none is critical; `✖ 3` and

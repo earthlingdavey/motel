@@ -76,6 +76,16 @@ type Session struct {
 	// series is each app's series by window, read while the metrics
 	// screen shows it.
 	series map[Job]*seriesData
+	// logs is the logs screen's lines (logsview.go), logsOn the app whose
+	// logs screen is in front, "" for none, and logsCur its cursor, which
+	// its read takes off the UI's goroutine.
+	logs    *logsData
+	logsOn  string
+	logsCur logsCursor
+	// logsFailed is the failure of each app's newest logs read, until one
+	// is answered: a refusal (a 403, a 404) the engine holds until ctrl-r,
+	// or a failure whose backoff it waits out; a fresh opening says it.
+	logsFailed map[string]error
 	// last is when the box last answered a read; backAt when it
 	// answered again after a run of no answer. refused says the box
 	// refused the last read it answered or refused: an order kept
@@ -146,7 +156,7 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 			case FailUnusable:
 				s.last, s.refused = at, false // an answer came, if not one to use
 			case FailNotFound:
-				if j.Kind == KAlerts || j.Kind == KBoxAlerts || j.Kind == KBackups || j.Kind == KRules || j.Kind == KBoxRules || j.Kind == KSeries {
+				if j.Kind == KAlerts || j.Kind == KBoxAlerts || j.Kind == KBackups || j.Kind == KRules || j.Kind == KBoxRules || j.Kind == KSeries || j.Kind == KLogs {
 					// A box older than the read, most likely: it answered,
 					// and refused nothing this key may read; the screen of
 					// the read says it (an app's, the alerts', the
@@ -157,6 +167,9 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 				}
 				s.refused = true
 			case FailNotSent: // nothing was asked of the box
+			case FailBusy:
+				// Busy, or moteld starting: no answer of the box's, nor a
+				// refusal (FailBusy).
 			default:
 				// The watch's read refused says so in the title bar's mark,
 				// not its word: a grant limited by `from` would otherwise
@@ -242,14 +255,20 @@ func (s *Session) seen(now time.Time) {
 				move(&d.g.At)
 			}
 		}
+		if s.logs != nil && s.logs.got != nil {
+			move(&s.logs.got.At)
+		}
+		if s.logs != nil && s.logs.full != nil && s.logs.full != s.logs.got {
+			move(&s.logs.full.At)
+		}
 	}
 	s.latest = now
 }
 
 // forget drops everything the box said, after it answered about another
 // key or box: who it said you are, its list, every status, record and
-// series, the box's own answers (its status, its backups, its alerts,
-// its rules), and the
+// series, an app's lines and their cursor, the box's own answers (its
+// status, its backups, its alerts, its rules), and the
 // JSON made of one. Nothing it said before
 // can be told from what such a box would say, so none of it is shown;
 // after r, the session fills again from empty.
@@ -261,6 +280,11 @@ func (s *Session) forget() {
 	s.BoxAlertsSt, s.BoxAlertsErr = nil, nil
 	s.BoxRulesSt, s.BoxRulesErr = nil, nil
 	s.apps, s.records, s.series = nil, nil, nil
+	if s.logs != nil {
+		s.logsFresh(s.logs.app)
+		s.logs = nil
+	}
+	s.logsFailed = nil
 	s.json.key, s.json.lines = jsonKey{}, nil
 	s.watch = watchState{forgotten: true}
 	s.alarm.forget()
@@ -269,7 +293,7 @@ func (s *Session) forget() {
 // Forgotten says whether the session holds nothing the box said: true
 // at the start, and after an answer about another key or box.
 func (s *Session) Forgotten() bool {
-	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && s.BackupsSt == nil && s.BackupsErr == nil && s.BoxAlertsSt == nil && s.BoxAlertsErr == nil && s.BoxRulesSt == nil && s.BoxRulesErr == nil && len(s.apps) == 0 && len(s.records) == 0 && len(s.series) == 0 && s.json.lines == nil && len(s.watch.srcs) == 0 && len(s.alarm.unseen) == 0
+	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && s.BackupsSt == nil && s.BackupsErr == nil && s.BoxAlertsSt == nil && s.BoxAlertsErr == nil && s.BoxRulesSt == nil && s.BoxRulesErr == nil && len(s.apps) == 0 && len(s.records) == 0 && len(s.series) == 0 && s.logs == nil && s.json.lines == nil && len(s.watch.srcs) == 0 && len(s.alarm.unseen) == 0
 }
 
 func (s *Session) app(name string) *appData {

@@ -31,6 +31,7 @@ var Actions = []Action{
 	{KRules, "monitor rules --app <app>", "an app's rules screen", readRules},
 	{KBoxRules, "monitor rules", "the rules screen", readBoxRules},
 	{KSeries, "metrics <app> --range <range>", "the metrics screen", readSeries},
+	{KLogs, "logs <app>", "the logs screen", readLogs},
 }
 
 // ActionFor is the action that reads k.
@@ -46,7 +47,7 @@ func ActionFor(k Kind) (Action, bool) {
 // Read makes the action's read with c, for a test that watches which
 // Client method it calls.
 func (a Action) Read(ctx context.Context, c Client, j Job) error {
-	_, err := a.read(ctx, &Session{}, c, j)
+	_, err := a.read(ctx, &Session{Engine: NewEngine(time.Time{})}, c, j)
 	return err
 }
 

@@ -193,8 +193,8 @@ release after v0.8.0, `motel backup status`, `motel monitor alerts
 [--app <app>]`, `motel monitor rules [--app <app>]`, `motel metrics
 <app> [--range 1h|24h|7d|14d]` and `motel logs <app> [--follow]`, which
 a box at v0.8.0 answers `404` (the client exits 6); and
-`motel` alone, on a terminal, shows the same on screens, but for the
-logs for now. Without
+`motel` alone, on a terminal, shows the same on screens (an app's
+lines with `l` on its screen, for a holder of a `logs` grant). Without
 it, this makes one by hand and asks who they are (`box` is the box's
 name; the key is theirs; GNU or macOS `base64`):
 
@@ -232,7 +232,9 @@ Who reads what, by the grant that applies from where they are:
 
 On each release after v0.8.0: `motel logs <app>` prints the app's
 newest lines, and `motel logs <app> --follow` reads on every 2 s until
-ctrl-c (client/README.md says what each prints and exits); or by hand,
+ctrl-c (client/README.md says what each prints and exits); `l` on an
+app's screen in `motel` alone shows them, following them the same way
+while the screen is open; or by hand,
 as above, or from a program of yours, as below. A logs reader is sent
 what the app printed, which no filter can make safe: read [what a logs
 reader reads](#what-a-logs-reader-reads) before you give the grant.
@@ -312,10 +314,12 @@ journalctl --cursor='<first>' -o json --all SYSLOG_IDENTIFIER=motel-<app> _UID=$
 
 A person who follows an app writes one such line for each poll that
 finds new lines: an app that writes at least once a poll, followed at
-a poll every 2 s (as `motel logs --follow` polls), makes 1,800 lines an
-hour (1,200 at 3 s), about 0.5 to 0.8 MB of journal an hour. A follow
-is 0.5 requests a second of the 2 a person is allowed: one beside an
-open `motel` (1.5) takes a person to the box's limit. They share one message, so `journalctl -u
+a poll every 2 s (as `motel logs --follow` and `motel`'s logs screen
+poll), makes 1,800 lines an hour (1,200 at 3 s), about 0.5 to 0.8 MB of
+journal an hour. A follow is 0.5 requests a second of the 2 a person is
+allowed: `motel logs --follow` beside an open `motel` (1.5) takes a
+person to the box's limit; `motel`'s logs screen follows within its own
+1.5. They share one message, so `journalctl -u
 moteld -o cat | grep -v '"access: person read logs"'` hides them. A
 person who asks for an app's logs and is refused (no `logs` grant on
 it, or one whose `from` list does not hold their address) is a Warn

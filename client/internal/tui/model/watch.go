@@ -214,6 +214,21 @@ func (s *Session) follow(now time.Time) {
 			}
 		}
 	}
+	// The logs screen's read follows the logs grant: made while whoami
+	// lists one; held by a 403, it is asked again by a whoami answer that
+	// lists the grant, since a refusal starts the read as not granted
+	// (logsFresh): after a grant removed and given back, and also at each
+	// whoami answer while the box refuses a grant whoami lists, a refused
+	// read and a journal line each time (the accepted row in
+	// client/README.md).
+	if d := s.logs; d != nil {
+		granted := s.LogsGrant(d.app) == Granted
+		if granted && !d.granted && Forbidden(d.err) {
+			s.Engine.Again(now, Job{Kind: KLogs, App: d.app})
+		}
+		d.granted = granted
+	}
+	s.logsAsk(now)
 }
 
 // watching says whether j is the watch's read: a refusal of it goes in

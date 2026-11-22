@@ -25,6 +25,9 @@ const (
 	KRules
 	KBoxRules
 	KSeries
+	// KLogs is an app's own lines, followed while the logs screen shows
+	// them.
+	KLogs
 )
 
 // Job is one read: of an app, a record's version, a series' window.
@@ -148,6 +151,10 @@ type Engine struct {
 	// series is the read the metrics screen shows, an app's window, read
 	// only then, every SeriesEvery; the zero Job when none is.
 	series Job
+	// logs is the read the logs screen follows, an app's lines, made only
+	// while it is shown and whoami lists a logs grant on the app
+	// (Session.logsAsk), every LogsEvery; the zero Job when none is.
+	logs Job
 	// meAnswered is when whoami last answered; me403 when a 403 last
 	// asked it again.
 	meAnswered, me403 time.Time
@@ -223,6 +230,10 @@ type entry struct {
 	once         bool
 	// slowed is the read a 429 answered: the first after the wait.
 	slowed bool
+	// again is a logs read due at once, after one that stopped with lines
+	// left after the last it sent (logsMore): it takes its turn among the
+	// other apps' reads, not ahead of them.
+	again bool
 	// woke is a row not re-read since the machine slept: stale.
 	woke bool
 	// every is the interval the read after the last answer was due by,
@@ -271,6 +282,9 @@ func (e *Engine) background() time.Duration {
 	}
 	if en, ok := e.jobs[e.series]; e.series.Kind == KSeries && ok && !en.held {
 		left -= 1 / SeriesEvery.Seconds()
+	}
+	if en, ok := e.jobs[e.logs]; e.logs.Kind == KLogs && ok && !en.held {
+		left -= 1 / LogsEvery.Seconds()
 	}
 	if en, ok := e.jobs[Job{Kind: KBoxAlerts}]; e.watch == WatchBox && ok && !en.held {
 		left -= 1 / WatchEvery.Seconds()
@@ -488,10 +502,55 @@ func (e *Engine) SeriesOpen(app, rng string, now time.Time) {
 	e.poke()
 }
 
+// LogsOpen says which app's lines the logs screen follows, "" for none
+// (no logs screen, or no logs grant on the app): that read is made only
+// then, every LogsEvery, as a series is (SeriesOpen). Another app's read
+// in flight is cancelled; its entry is kept.
+func (e *Engine) LogsOpen(app string, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.seen(now)
+	j := Job{}
+	if app != "" {
+		j = Job{Kind: KLogs, App: app}
+	}
+	if _, ok := e.jobs[j]; j == e.logs && (ok || app == "") {
+		return
+	}
+	if old := e.logs; old.Kind == KLogs && old != j {
+		e.dropLocked(old)
+	}
+	e.logs = j
+	if app != "" {
+		switch en, ok := e.jobs[j]; {
+		case !ok:
+			e.jobs[j] = &entry{due: now}
+		case en.held, en.misses > 0:
+		case en.answered.IsZero() || now.Sub(en.answered) >= LogsEvery:
+			en.due, en.again = minTime(en.due, now), false
+		default:
+			en.due, en.again = en.answered.Add(LogsEvery), false
+		}
+	}
+	e.poke()
+}
+
+// logsMore is how a logs read ended, said by the read (readLogs) before
+// Done records it: more, it stopped with lines left after the last one
+// it sent, and Done makes the next read due at once, within the rate and
+// in its turn among the other apps' reads (rank); else at its interval.
+func (e *Engine) logsMore(j Job, more bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if en, ok := e.jobs[j]; ok {
+		en.again = more
+	}
+}
+
 // shownOnly says the reads of k are made only while a screen shows
 // them, so one whose screen closed keeps its entry, and its backoff,
-// for when it opens again: an app's alerts, a series.
-func shownOnly(k Kind) bool { return k == KAlerts || k == KSeries }
+// for when it opens again: an app's alerts, a series, an app's lines.
+func shownOnly(k Kind) bool { return k == KAlerts || k == KSeries || k == KLogs }
 
 // BoxAlertsOpen says whether a screen that shows the box's alerts is open
 // (the alerts screen, the box screen): GET /_motel/alerts is read only
@@ -594,6 +653,13 @@ func (e *Engine) WatchInterval(j Job, now time.Time) time.Duration {
 		return AlertsEvery
 	}
 	return e.appAlertsEvery()
+}
+
+// Idle says whether the reads are paused at now: no key for Idle.
+func (e *Engine) Idle(now time.Time) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.idleAt(now)
 }
 
 // idleAt says whether no key was pressed for Idle at t.
@@ -785,12 +851,16 @@ func (e *Engine) Again(now time.Time, shown ...Job) {
 			en = &entry{once: j.Kind == KDeploy, due: now}
 			e.jobs[j] = en
 		}
+		held := en.held
 		en.held, en.failed = false, false
 		due := now
-		if j.Kind == KWhoAmI || j.Kind == KBox || j.Kind == KBackups || j.Kind == KAlerts || j.Kind == KBoxAlerts || j.Kind == KRules || j.Kind == KBoxRules || j.Kind == KSeries {
+		if j.Kind == KWhoAmI || j.Kind == KBox || j.Kind == KBackups || j.Kind == KAlerts || j.Kind == KBoxAlerts || j.Kind == KRules || j.Kind == KBoxRules || j.Kind == KSeries || j.Kind == KLogs {
 			due = maxTime(now, en.asked.Add(AgainAfter))
 		}
-		if en.due.After(due) {
+		if en.due.After(due) || j.Kind == KLogs && held {
+			// A logs read's interval (2 s) is shorter than AgainAfter: a hold
+			// lifted is asked no sooner than AgainAfter after the last read,
+			// so ctrl-r held on a refused read asks once in 5 s.
 			en.due = due
 		}
 	}
@@ -945,7 +1015,7 @@ func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
 			continue
 		}
 		if en.held || j.Kind == KBox && !e.boxOpen || j.Kind == KBackups && !e.backupsOpen || j.Kind == KBoxAlerts && !e.boxAlertsOpen && e.watch != WatchBox || j.Kind == KAlerts && j.App != e.alertsApp && (e.watch != WatchApps || !e.listed[j.App]) ||
-			j.Kind == KBoxRules && !e.boxRulesOpen || j.Kind == KRules && j.App != e.rulesApp || j.Kind == KSeries && j != e.series || skip != nil && j == *skip {
+			j.Kind == KBoxRules && !e.boxRulesOpen || j.Kind == KRules && j.App != e.rulesApp || j.Kind == KSeries && j != e.series || j.Kind == KLogs && j != e.logs || skip != nil && j == *skip {
 			continue
 		}
 		r := e.rank(j, en)
@@ -999,7 +1069,11 @@ func (e *Engine) rank(j Job, en *entry) int {
 			return 6
 		}
 		return 5
-	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KAlerts, j.Kind == KBoxAlerts, j.Kind == KRules, j.Kind == KBoxRules, j.Kind == KSeries:
+	case j.Kind == KLogs && en.again:
+		// Read at once for lines left: beside the other apps' reads, by
+		// when each is due, so a chatty app's run of them starves none.
+		return 5
+	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KAlerts, j.Kind == KBoxAlerts, j.Kind == KRules, j.Kind == KBoxRules, j.Kind == KSeries, j.Kind == KLogs:
 		return 4
 	}
 	return 5
@@ -1085,9 +1159,11 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		e.poke()
 		return out
 	}
-	if fromBox := out == Answered || out == Slowed || out == Refused && !notSent(err); fromBox {
+	if fromBox := out == Answered || out == Slowed || out == Refused && !notSent(err) && busyWait(err) == 0; fromBox {
 		// A failure the client made without sending anything says
-		// nothing of the box, and a run of no answer goes on.
+		// nothing of the box, and a run of no answer goes on; nor does a
+		// logs read's busy 503, which a starting moteld sends too
+		// (FailBusy).
 		e.none = nil
 		if e.misses > 0 {
 			// Back after a run of no answer, whatever the box said: whoami
@@ -1216,6 +1292,12 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		en.due = now.Add(AlertsEvery)
 	case j.Kind == KSeries:
 		en.due = now.Add(SeriesEvery)
+	case j.Kind == KLogs && en.again:
+		// Lines left after the last one sent (logsMore): at once.
+		en.due = now
+	case j.Kind == KLogs:
+		// A busy box's wait, when it is longer than the interval.
+		en.due = now.Add(max(LogsEvery, busyWait(err)))
 	case j.Kind == KWhoAmI && out == NoAnswer:
 		// Who this key is stays unknown until whoami answers: it is asked
 		// again at its own backoff, not at its turn.
@@ -1240,6 +1322,15 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	return out
 }
 
+// busyWait is the wait a FailBusy names, zero for any other err.
+func busyWait(err error) time.Duration {
+	var f *Failure
+	if errors.As(err, &f) && f.Kind == FailBusy {
+		return f.RetryAfter
+	}
+	return 0
+}
+
 // backoff is the wait after n reads in a row that got no answer: 2 s,
 // doubling, to maxBackoff.
 func backoff(n int) time.Duration { return min(maxBackoff, time.Second<<min(n, 6)) }
@@ -1248,7 +1339,7 @@ func backoff(n int) time.Duration { return min(maxBackoff, time.Second<<min(n, 6
 // key or box: the apps it listed and what was due for them. After r,
 // whoami first, then the list, as at the start.
 func (e *Engine) forgetBox(now time.Time) {
-	e.apps, e.lastFocus, e.lastList, e.alertsApp, e.rulesApp, e.series = nil, time.Time{}, time.Time{}, "", "", Job{}
+	e.apps, e.lastFocus, e.lastList, e.alertsApp, e.rulesApp, e.series, e.logs = nil, time.Time{}, time.Time{}, "", "", Job{}, Job{}
 	e.watch, e.listed = WatchNone, nil
 	for j := range e.jobs {
 		if j.Kind != KWhoAmI {

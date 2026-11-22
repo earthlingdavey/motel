@@ -1,11 +1,13 @@
 package model
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/smallhoursorg/motel/client/internal/termtext"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // Screen is a view the TUI shows.
@@ -26,6 +28,8 @@ const (
 	// ScreenMetrics is an app's numbers over a window, opened from its
 	// screen.
 	ScreenMetrics
+	// ScreenLogs is an app's own lines, followed, opened from its screen.
+	ScreenLogs
 	ScreenHelp
 	ScreenRefused
 	// ScreenStopHelp is help opened over a stop screen: it leaves, asks
@@ -61,7 +65,7 @@ func (s *Session) askAgain(now time.Time) Line {
 }
 
 // screenReads is the read behind each screen that has one.
-var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenRecord: KDeploy, ScreenMe: KWhoAmI, ScreenBox: KBox, ScreenBackups: KBackups, ScreenAlerts: KBoxAlerts, ScreenRules: KBoxRules, ScreenAppRules: KRules, ScreenMetrics: KSeries}
+var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenRecord: KDeploy, ScreenMe: KWhoAmI, ScreenBox: KBox, ScreenBackups: KBackups, ScreenAlerts: KBoxAlerts, ScreenRules: KBoxRules, ScreenAppRules: KRules, ScreenMetrics: KSeries, ScreenLogs: KLogs}
 
 // CommandArgs is the motel command line that reads what v shows, as
 // its arguments: the command's words, --box so it works pasted
@@ -185,6 +189,17 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 				return g.Body, g.At, true
 			}
 		}
+	case ScreenLogs:
+		// The newest answer that brought lines (else the newest), cursor
+		// and all, as `motel logs --json` prints one; none without a logs
+		// grant, as nothing is asked.
+		if d := s.logs; d != nil && d.app == v.App && d.got != nil && s.LogsGrant(v.App) == Granted {
+			g := d.got
+			if d.full != nil && !d.stopped {
+				g = d.full
+			}
+			return g.Body, g.At, true
+		}
 	}
 	return nil, time.Time{}, false
 }
@@ -215,6 +230,10 @@ func (s *Session) readErr(v View) error {
 	case ScreenMetrics:
 		_, err := s.Series(v.App, v.Range)
 		return err
+	case ScreenLogs:
+		if d := s.logs; d != nil && d.app == v.App {
+			return d.err
+		}
 	}
 	return nil
 }
@@ -223,6 +242,12 @@ func (s *Session) readErr(v View) error {
 // is held (Body's false): it changes as a read ends, when Body does
 // not, so the screens make the overlay again when it does.
 func (s *Session) NoAnswer(v View) string {
+	switch {
+	case v.Screen == ScreenLogs && s.LogsGrant(v.App) == GrantNotKnown:
+		return "no answer to show: nothing is asked before whoami has answered about this key, as the screen says"
+	case v.Screen == ScreenLogs && s.LogsGrant(v.App) == NoGrant:
+		return "no answer to show: nothing is asked without a logs grant on " + v.App + ", as the screen says"
+	}
 	switch err := s.readErr(v); {
 	case Forbidden(err):
 		// A 403 or a 404 drops what was held (readStatus, readDeploy):
@@ -747,23 +772,23 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 		}
 		out = append(out, cutTo(Line{own("  "), verbs[i], own(pad("", col-len([]rune(verbs[i].T.String()))) + " " + on)}, width, cells))
 	}
-	// What may not be read here: logs, which this client shows no one
-	// yet (a holder of a logs grant is told the grant reads them); the
-	// box's own alerts and silences, by anyone but a viewer of the box.
-	cannot := "             Read logs: this client does not offer them yet."
-	for _, r := range me.Roles {
-		if r.Role == "logs" {
-			cannot = "             Read logs: your logs grant reads them, but this client does not show them yet."
-			break
-		}
+	// What may not be read here: an app's logs, without a logs grant (one
+	// on the box reads every app's); the box's own alerts and silences, by
+	// anyone but a viewer of the box.
+	var cannot []string
+	if !slices.ContainsFunc(me.Roles, func(r wire.RoleHeld) bool { return r.Role == "logs" }) {
+		cannot = append(cannot, "Read an app's logs: that needs a logs grant on it.")
 	}
 	if !s.BoxViewer() {
-		cannot += " Nor the box's own alerts and silences, which are a viewer of the box's: an app's are on its screen."
+		cannot = append(cannot, "Read the box's own alerts and silences, which are a viewer of the box's: an app's are on its screen.")
 	}
-	out = append(out, laid(width, cells, nil,
-		field("you may not", own("roll back, relaunch, deploy or push: no person may yet. Deploys come from CI.")),
-		Line{own(cannot)}, nil,
-		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the operator keeps. `motel key` prints the line to send them.")})...)
+	mayNot := []Line{field("you may not", own("roll back, relaunch, deploy or push: no person may yet. Deploys come from CI."))}
+	if len(cannot) > 0 {
+		mayNot = append(mayNot, Line{own("             " + strings.Join(cannot, " "))})
+	}
+	rest := append(append([]Line{nil}, mayNot...), nil,
+		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the operator keeps. `motel key` prints the line to send them.")})
+	out = append(out, laid(width, cells, rest...)...)
 	if s.MeErr != nil {
 		out = append(append(out, nil), Sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}}, width, cells)...)
 	}

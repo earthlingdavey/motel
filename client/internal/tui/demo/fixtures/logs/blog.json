@@ -1,0 +1,108 @@
+{
+ "kept": "on",
+ "lines": [
+  {
+   "at": "@-8420s",
+   "release": "e9a0b3f2c118",
+   "text": "> blog@2.4.0 start"
+  },
+  {
+   "at": "@-8419s",
+   "release": "e9a0b3f2c118",
+   "text": "> node server.js"
+  },
+  {
+   "at": "@-8418s",
+   "release": "e9a0b3f2c118",
+   "text": "Error: Cannot find module './lib/feed'"
+  },
+  {
+   "at": "@-8418s",
+   "release": "e9a0b3f2c118",
+   "text": "    at Module._resolveFilename (node:internal/modules/cjs/loader:1145:15)"
+  },
+  {
+   "at": "@-8417s",
+   "release": "",
+   "text": "node: exited with code 1"
+  },
+  {
+   "at": "@-7230s",
+   "release": "7c1e55d0a913",
+   "text": "> blog@2.4.1 start"
+  },
+  {
+   "at": "@-7229s",
+   "release": "7c1e55d0a913",
+   "text": "> node server.js"
+  },
+  {
+   "at": "@-7228s",
+   "release": "7c1e55d0a913",
+   "text": "listening on /srv/motel/blog/run/app.sock"
+  },
+  {
+   "at": "@-7200s",
+   "release": "7c1e55d0a913",
+   "text": "GET / 200 14ms"
+  },
+  {
+   "at": "@-7140s",
+   "release": "7c1e55d0a913",
+   "text": "GET /posts/hello-world 200 22ms"
+  },
+  {
+   "at": "@-3605s",
+   "release": "7c1e55d0a913",
+   "text": "GET /feed.xml 200 41ms"
+  },
+  {
+   "at": "@-1802s",
+   "release": "7c1e55d0a913",
+   "text": "warn: slow query (412ms): SELECT * FROM posts ORDER BY published_at DESC LIMIT 20"
+  },
+  {
+   "at": "@-1800s",
+   "release": "7c1e55d0a913",
+   "text": "GET / 200 431ms"
+  },
+  {
+   "at": "@-600s",
+   "release": "7c1e55d0a913",
+   "text": "GET /posts/a-very-long-title-that-goes-on-and-on-past-the-edge-of-any-ordinary-terminal-window 200 19ms"
+  },
+  {
+   "at": "@-121s",
+   "release": "7c1e55d0a913",
+   "text": "GET /static/site.css 304 2ms"
+  },
+  {
+   "at": "@-120s",
+   "release": "7c1e55d0a913",
+   "text": "GET / 200 12ms"
+  },
+  {
+   "at": "@-61s",
+   "release": "7c1e55d0a913",
+   "text": "POST /comments 201 35ms"
+  },
+  {
+   "at": "@-60s",
+   "release": "7c1e55d0a913",
+   "text": "GET /posts/hello-world 200 18ms"
+  },
+  {
+   "at": "@-9s",
+   "release": "7c1e55d0a913",
+   "text": "GET /healthz 200 1ms"
+  },
+  {
+   "at": "@-4s",
+   "release": "7c1e55d0a913",
+   "text": "GET / 200 11ms"
+  }
+ ],
+ "more": true,
+ "gap": false,
+ "cursor": "s=00000000000000000000000000000000;i=14;b=00000000000000000000000000000000;m=14;t=5f00000000014;x=14"
+}
