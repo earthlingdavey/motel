@@ -21,7 +21,7 @@ Built in:
 | **[box](examples/box/)** | Config from git: the box's Caddyfile lives in a repository of its own, and each signed push to `main` reaches the box, which checks the commit's signature, validates the file, installs it as root, and rolls back a reload that fails. The apps' secrets ride along, encrypted to the box's own key. CI holds no SSH key. |
 | **[backups](backups/)** | Hourly backups of what each app declares — its SQLite databases and the files under its `shared/` — into a [restic](https://restic.net) repository off the box, a weekly drill that proves a restore would work, and `motel-backup restore` to put an app back. A program of its own in the package, `motel-backup`, which runs Debian's restic and sqlite3 in sandboxed units and links no Caddy; moteld validates the declaration, and beyond that only reads what `motel-backup status` reads, for the alerts below and for a person with `viewer` on the box. The operator's guide is [docs/backups.md](docs/backups.md). |
 | **[notify](notify/DESIGN-notify.md)** | Who motel tells, about what (experimental): a restart loop, a failed or refused deploy, a rollback, each problem `motel-backup status` calls (a stale backup, a failed run, a restore not proven), a failed certificate renewal, a filling disk, a release worse than the one it replaced, a person's key used from a network new to it, the operator's own threshold rules, each to the operator's channels and, for an app, to the channels bound to the identities it trusts, from the `monitor` block in the Caddyfile, whose `metrics` line also keeps the box's and each app's numbers ([notify/DESIGN-metrics.md](notify/DESIGN-metrics.md)). Debian's Alertmanager delivers, on a unix socket and no port, with a config motel renders; `moteld monitor setup` installs it, and `moteld monitor setup --metrics` the store too. The operator's guide is [docs/monitor.md](docs/monitor.md). |
-| **[access](liveswap/access/DESIGN-access.md)** | People, not CI, reading a box from a laptop: `person` and `grant` lines in the box's Caddyfile give a person's ssh key the `viewer` role on one app or on the whole box, or `logs`, which reads what `viewer` reads and the apps' logs too, and the key signs a short token the box checks on every read. Reads only: no person can deploy, roll back or push. |
+| **[access](liveswap/access/DESIGN-access.md)** | People, not CI, reading a box from a laptop: `person` and `grant` lines in the box's Caddyfile give a person's ssh key the `viewer` role on one app or on the whole box, or, on each release after v0.8.0, `logs`, which reads what `viewer` reads and the apps' logs too, and the key signs a short token the box checks on every read. Reads only: no person can deploy, roll back or push. |
 | **cache** | HTTP page caching via [Souin](https://github.com/darkweak/souin) with in-memory [Otter](https://github.com/darkweak/storages) storage. |
 | everything Caddy has | Automatic HTTPS, HTTP/2 + HTTP/3, the Caddyfile, the admin API — motel *is* Caddy underneath, with the modules above compiled in. |
 | **[motel, the client](client/)** | Not in the server: the laptop client (experimental), which reads a box over HTTPS with that token — an app's status and deploys, a deploy as it runs, its numbers over time, its logs, the box's backups, alerts and rules — from the command line or its screens. Each release after v0.8.0 carries it for an M-series Mac and for Linux on amd64 and arm64; elsewhere it builds from this repository. |
@@ -191,8 +191,9 @@ when something on the box goes wrong, at ntfy, Slack, Discord or any
 URL that takes Alertmanager's JSON, and keeps each app's numbers.
 [Giving a person access](docs/people.md) (experimental, since v0.8.0)
 lets someone you name read an app from their laptop, with their own
-ssh key and no account on the box: its status and deploys, its alerts
-and numbers, and with a `logs` grant its logs.
+ssh key and no account on the box: its status and deploys, and on
+each release after v0.8.0 its alerts and numbers, and with a `logs`
+grant its logs.
 
 
 ## What motel is (and isn't)
@@ -286,7 +287,7 @@ make e2e               # full stack: the liveswap and penaltybox suites against 
 make e2e-backup        # the backups suites — setup, a run, the timers, status, restore, the repository check — one box each against a local S3 server; CI runs it beside e2e
 make e2e-notify        # the notify suite: a box with Debian's Alertmanager and a stub receiver, its splits a box each; a bare run leaves heartbeat (~9.5 min) out, CI names it
 make e2e-metrics       # the metrics suite: notify's box with Debian's victoria-metrics and the same receiver, its splits a box each; not beside e2e-notify on one host
-make lint vet tidy     # golangci-lint (gofmt-gated), go vet, go mod tidy; MODULES="notify box" lints and tidies those modules alone
+make lint vet tidy     # golangci-lint (gofmt-gated), go vet, go mod tidy; MODULES="notify box" lints and tidies those modules alone, PKGS=./notify/... vets one
 make tidy-check        # fails if go mod tidy would change a module's go.mod/go.sum; CI runs it on every PR that changes code
 make mod-download      # every module's dependencies into Go's module cache, a download that breaks tried three times; CI runs it first in every job that runs Go
 make vulncheck         # govulncheck, all modules (tool dep in go.mod — Dependabot-bumped)
@@ -326,10 +327,11 @@ and it runs only with the package's applier units
 ([box/DESIGN-box.md](box/DESIGN-box.md)). `backups/` is a module of
 its own for the opposite reason: it builds `motel-backup`, the
 program that starts restic and sqlite3 in root-equivalent units, so
-it links neither Caddy nor anything Caddy depends on: of the server it
-takes the declaration package (`liveswap/backupdecl`) and the wire
-types, and the server links its look at the backups (`backups/look`,
-with `status` and `record`), the one `motel-backup status` takes.
+it links no Caddy: of the server it takes the declaration package
+(`liveswap/backupdecl`) and the wire types, and the server links its
+look at the backups, the one `motel-backup status` takes
+(`backups/look`, and with it the packages that imports, the engine's
+among them).
 `notify/` is a module of its own, part of the product only: it imports
 liveswap and the backups' record and verdict (`backups/record`,
 `backups/status`) through local `replace`s, and nothing imports it but
@@ -383,41 +385,47 @@ here's exactly what's in the two binaries, `moteld` and
 `motel-backup`, and what they drag in. Module counts are the modules
 reachable from each dependency in the root module's `go mod graph`
 (`GOWORK=off`, deduplicated by module path), measured 2026-11-22; the
-"pulls in" column shows what each dependency adds *beyond* what's
+"Adds" column shows what each dependency adds *beyond* what's
 already in the tree above it, because the trees overlap almost
 entirely. (Counts exclude the `govulncheck` tool dependency — a
 `tool` directive is never compiled into the product and never
 inherited by importers; it exists in go.mod so Dependabot can bump
 the scanner.)
 
-| Dependency | Pulls in (~modules) | moteld | liveswap | penaltybox | box | notify | motel-backup | motel (client) | Notes |
-|---|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|---|
-| [Caddy](https://github.com/caddyserver/caddy) | ~600 | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | The foundation — motel *is* a Caddy distribution. Commercially sponsored, strong security track record. Nearly the entire dependency tree is Caddy's. |
-| [Souin](https://github.com/darkweak/souin) (`cache`) | +5 | ✓ | — | — | — | — | — | — | HTTP cache (RFC 7234). Solo-maintained; the e2e suite exercises it directly so drift is caught in CI. The riskiest dependency here, and still better than an in-house HTTP cache. |
-| [darkweak/storages/otter](https://github.com/darkweak/storages) | +5 | ✓ | — | — | — | — | — | — | In-memory storage backend for Souin, wrapping [maypok86/otter](https://github.com/maypok86/otter). |
-| [zap](https://github.com/uber-go/zap) | 0 (already in Caddy's tree) | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | Caddy's module logging API is zap; not optional for a Caddy module. |
-| [go-humanize](https://github.com/dustin/go-humanize) | 0 (already in Caddy's tree) | ✓ | ✓ | — | — | — | — | — | A few formatting helpers in liveswap. |
-| [go-systemd](https://github.com/coreos/go-systemd) (`dbus`) + [godbus](https://github.com/godbus/dbus) | 0 (already in Caddy's tree) | ✓ | ✓ | — | — | — | ✓ | — | liveswap's runner: apps are transient units created over systemd's D-Bus API on the motel user's own manager (no polkit, no root). motel-backup starts its restic and sqlite3 units the same way. Both arrive in Caddy's tree anyway (smallstep's CA requires go-systemd, which requires godbus, pure Go); for motel-backup, which links no Caddy, they and `golang.org/x/sys` are the whole third-party graph. |
-| [go-oidc](https://github.com/coreos/go-oidc) + [go-jose](https://github.com/go-jose/go-jose) | 0 (already in Caddy's tree) | ✓ | ✓ | — | — | — | — | — | Deploy authentication (`deploy_trust`): OIDC discovery/JWKS verification and JWT signing/verification. Both were already transitive dependencies of Caddy; liveswap now requires them directly, and box's pushes use the same verifier through liveswap. Vetted and widely used — the deliberate alternative to hand-rolling JWT crypto. |
-| [age](https://github.com/FiloSottile/age) (`filippo.io/age`) | +4 | ✓ | — | — | ✓ | — | — | — | Secrets: each value in the box repository is an age file encrypted to the box's own key, which root decrypts on the box into the app's env file. Chosen over SOPS, whose library measured 80 more modules in a binary root runs ([box/DESIGN-box.md](box/DESIGN-box.md), "Decisions and rejected alternatives"). |
-| [x/crypto](https://pkg.go.dev/golang.org/x/crypto) (`ssh`) + [edwards25519](https://github.com/FiloSottile/edwards25519) | 0 (already in Caddy's tree) | ✓ | ✓ | — | ✓ | — | — | — | The ssh formats. box reads `signer` keys and takes a commit's ssh signature apart with it (the check itself is the system `ssh-keygen -Y verify`). liveswap's `access` checks in-process the signature a person's token is, only when the token's key is of a type some listed key has (a box that declares no one lists none), and refuses an Ed25519 key of small order (edwards25519), on a `person` line and, for box, on a `signer` line. The client's binary links neither: it reads a key with the standard library and signs with the system `ssh-keygen`. The Go team's and Filippo Valsorda's; Caddy's own go.mod requires both. |
-| [cobra](https://github.com/spf13/cobra) + [pflag](https://github.com/spf13/pflag) | 0 (already in Caddy's tree) | ✓ | — | — | ✓ | ✓ | — | ✓ | Caddy's own CLI is cobra, so anything that adds a subcommand speaks it: box registers `moteld box ...` through Caddy's command API, notify `moteld monitor ...` the same way, and `cmd/moteld` parses a command's flags with Caddy's own definition of them before its backup check runs. The client, `motel`, parses its commands with cobra too. |
-| [Prometheus's client libraries](https://github.com/prometheus/client_golang) (`client_golang`, `client_model`, `common`) | 0 (already in Caddy's tree) | ✓ | — | — | — | ✓ | — | — | notify's numbers: the box's and each app's are gathered in a registry of its own and pushed to the metrics store in Prometheus's text format, and Alertmanager's delivery counters are read in the same format. Caddy's own metrics are built on them. |
-| [yaml](https://github.com/yaml/go-yaml) (`go.yaml.in/yaml/v3`) | 0 (already in Caddy's tree) | ✓ | — | — | — | ✓ | — | — | The two files notify writes for Debian's programs: Alertmanager's config and vmalert's rules. |
-| [tview](https://github.com/rivo/tview) + [tcell](https://github.com/gdamore/tcell) | +4 (tview, tcell, gdamore/encoding, go-colorful; uniseg) | — | — | — | — | — | — | ✓ | the screens `motel` alone opens only, in the laptop client; no server links them. tview has one maintainer and no release since 2025-08, and it stays on tcell v2: the TUI keeps its screens thin over a model with no terminal library (`internal/tui/model`), so a move to another library costs the screens alone. tview reads `[...]` tags in box text, which `internal/tui/door` makes inert (client/README.md, "The TUI"). |
+| Dependency | Adds | Required by | Notes |
+|---|:-:|---|---|
+| [Caddy](https://github.com/caddyserver/caddy) | ~600 | liveswap, penaltybox, box, notify | The foundation — motel *is* a Caddy distribution. Commercially sponsored, strong security track record. Nearly the entire dependency tree is Caddy's. |
+| [Souin](https://github.com/darkweak/souin) (`cache`) | +5 | moteld | HTTP cache (RFC 7234). Solo-maintained; the e2e suite exercises it directly so drift is caught in CI. The riskiest dependency here, and still better than an in-house HTTP cache. |
+| [darkweak/storages/otter](https://github.com/darkweak/storages) | +5 | moteld | In-memory storage backend for Souin, wrapping [maypok86/otter](https://github.com/maypok86/otter). |
+| [zap](https://github.com/uber-go/zap) | \* | liveswap, penaltybox, box, notify | Caddy's module logging API is zap; not optional for a Caddy module. |
+| [go-humanize](https://github.com/dustin/go-humanize) | \* | liveswap | A few formatting helpers in liveswap. |
+| [go-systemd](https://github.com/coreos/go-systemd) (`dbus`) + [godbus](https://github.com/godbus/dbus) | \* | liveswap, motel-backup | liveswap's runner: apps are transient units created over systemd's D-Bus API on the motel user's own manager (no polkit, no root). motel-backup starts its restic and sqlite3 units the same way. Both arrive in Caddy's tree anyway (smallstep's CA requires go-systemd, which requires godbus, pure Go); for motel-backup, which links no Caddy, they and `golang.org/x/sys` are the whole third-party graph. |
+| [go-oidc](https://github.com/coreos/go-oidc) + [go-jose](https://github.com/go-jose/go-jose) | \* | liveswap | Deploy authentication (`deploy_trust`): OIDC discovery/JWKS verification and JWT signing/verification. Both were already transitive dependencies of Caddy; liveswap now requires them directly, and box's pushes use the same verifier through liveswap. Vetted and widely used — the deliberate alternative to hand-rolling JWT crypto. |
+| [age](https://github.com/FiloSottile/age) (`filippo.io/age`) | +4 | box | Secrets: each value in the box repository is an age file encrypted to the box's own key, which root decrypts on the box into the app's env file. Chosen over SOPS, whose library measured 80 more modules in a binary root runs ([box/DESIGN-box.md](box/DESIGN-box.md), "Decisions and rejected alternatives"). |
+| [x/crypto](https://pkg.go.dev/golang.org/x/crypto) (`ssh`) + [edwards25519](https://github.com/FiloSottile/edwards25519) | \* | liveswap, box | The ssh formats. box reads `signer` keys and takes a commit's ssh signature apart with it (the check itself is the system `ssh-keygen -Y verify`). liveswap's `access` checks in-process the signature a person's token is, only when the token's key is of a type some listed key has (a box that declares no one lists none), and refuses an Ed25519 key of small order (edwards25519), on a `person` line and, for box, on a `signer` line. The client's binary links neither: it reads a key with the standard library and signs with the system `ssh-keygen`. The Go team's and Filippo Valsorda's; Caddy's own go.mod requires both. |
+| [cobra](https://github.com/spf13/cobra) + [pflag](https://github.com/spf13/pflag) | \* | moteld, box, notify, client | Caddy's own CLI is cobra, so anything that adds a subcommand speaks it: box registers `moteld box ...` through Caddy's command API, notify `moteld monitor ...` the same way, and `cmd/moteld` parses a command's flags with Caddy's own definition of them before its backup check runs. The client, `motel`, parses its commands with cobra too. |
+| [Prometheus's client libraries](https://github.com/prometheus/client_golang) (`client_golang`, `client_model`, `common`) | \* | notify | notify's numbers: the box's and each app's are registered on Caddy's registry for the config, which is gathered and pushed whole to the metrics store in Prometheus's text format, and Alertmanager's delivery counters are read in the same format. Caddy's own metrics are built on them. |
+| [yaml](https://github.com/yaml/go-yaml) (`go.yaml.in/yaml/v3`) | \* | notify | The two files notify writes for Debian's programs: Alertmanager's config and vmalert's rules. |
+| [tview](https://github.com/rivo/tview) + [tcell](https://github.com/gdamore/tcell) | +4 | client | the screens `motel` alone opens only, in the laptop client; no server links them. tview has one maintainer and no release since 2025-08, and it stays on tcell v2: the TUI keeps its screens thin over a model with no terminal library (`internal/tui/model`), so a move to another library costs the screens alone. tview reads `[...]` tags in box text, which `internal/tui/door` makes inert (client/README.md, "The TUI"). |
 
-A ✓ in the liveswap, penaltybox, box and notify columns means that
-module's own code requires the dependency. A "—" there is not "absent from that
-module's graph" — the rows marked "already in Caddy's tree" arrive via
-Caddy either way. The moteld column is ✓ in every row but the last,
-the client's screens: the product binary contains the rest. The motel-backup column is the other
-binary, and there "—" does mean absent: it links no Caddy, so its
-graph is the one row marked ✓ plus `golang.org/x/sys`. What it needs
+\* Adds nothing: already in Caddy's tree.
+
+"Required by" names whose own code requires the dependency: a module
+compiled into moteld (liveswap, penaltybox, box, notify; "moteld" is
+the product's own `cmd/moteld`), or one of the other two binaries,
+motel-backup and the client. The product binary, moteld, contains
+every row but the last, the client's screens. A module not named is
+not "absent from that module's graph": the rows marked \* arrive via
+Caddy either way. For motel-backup, the other binary on the box, not
+named does mean absent: it links no Caddy, so its
+binary holds the one row that names it plus `golang.org/x/sys` (its module
+graph is larger, as the client's below is, and for the same reason: its
+go.mod requires liveswap's). What it needs
 beyond its own binary are programs, not modules: Debian's `restic`
 and `sqlite3`, which the package depends on, run in units of their
 own ([backups/README.md](backups/README.md)).
 
-The motel (client) column is the laptop client, which no server
+The client is the laptop client, `motel`, which no server
 installs: it too links no Caddy, and its binary holds the client's own
 packages, `liveswap/wire`, cobra and pflag, and for its screens tview,
 tcell and the modules they bring (gdamore/encoding, go-colorful,
