@@ -227,11 +227,11 @@ func TestLogsLineFilteredBeforeItIsCut(t *testing.T) {
 		t.Errorf("the JSON-escaped value: %q", got.Lines[0].Text)
 	}
 	for i, l := range got.Lines[1:3] {
-		if len(l.Text) > logsLineMax || !strings.HasSuffix(l.Text, "…") || !utf8.ValidString(l.Text) {
+		if len(l.Text) > logsLineMax || !strings.HasSuffix(string(l.Text), "…") || !utf8.ValidString(string(l.Text)) {
 			t.Errorf("line %d: %d bytes, ends %q", i+1, len(l.Text), l.Text[max(0, len(l.Text)-20):])
 		}
 	}
-	if !strings.HasSuffix(got.Lines[1].Text, " sess=[re…") {
+	if !strings.HasSuffix(string(got.Lines[1].Text), " sess=[re…") {
 		t.Errorf("the value across the cut, replaced whole, then the marker cut: …%q", got.Lines[1].Text[len(got.Lines[1].Text)-20:])
 	}
 	if strings.Join(got.RedactedEnv, ",") != "SESSION_SECRET,SMTP_PASSWORD" {
@@ -239,7 +239,7 @@ func TestLogsLineFilteredBeforeItIsCut(t *testing.T) {
 	}
 	// The order this replaces: the cut first, then the filter, sends a
 	// piece of the value no filter knows.
-	f := h.app.managed["demo"].redactorFor(statusSnapshot{})
+	f := h.app.managed["demo"].door(true).r
 	if naive, _ := f.Redact(cutText(across, logsLineMax)); !strings.HasSuffix(naive, "sess=made-u") {
 		t.Errorf("the cut before the filter did not send the piece the test is about: %q", naive[len(naive)-40:])
 	}
@@ -261,30 +261,51 @@ func TestLogsBodyTimesAndCursorPassNoFilter(t *testing.T) {
 		got.Cursor != cursorOf(1) || strings.Join(got.RedactedEnv, ",") != "API_VERSION" {
 		t.Errorf("%s", w.Body)
 	}
-	// Shape: two lines made one by a value of the punctuation between them.
-	// The body goes whole through the filter, which makes them one too:
-	// withheld, no cursor, no read's line.
+	// Each line's text passes the filter on its own, and nothing passes
+	// over the body: a value of the punctuation between two lines meets
+	// nothing to replace, and both lines are sent, each filtered.
 	j = demoJournal(2, func(i int) string { return []string{"made-up-value-0001 end of one", "start of two"}[i] })
 	h, people, _, logs := logsRig(t, j)
 	value := `one"},{"at":"2026-11-20T09:00:00.001Z","release":"v1","text":"start` // the text, a time and the punctuation between two lines
 	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K="+value+"\nS=made-up-value-0001\n"), 0o600))
 	w = sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
-	if w.Body.String() != `{"error":"response withheld: a redacted value overlapped the response's own structure"}`+"\n" {
+	got = decodeLogs(t, w)
+	if len(got.Lines) != 2 || got.Lines[0].Text != "[redacted:S] end of one" || got.Lines[1].Text != "start of two" || got.Cursor != cursorOf(1) || strings.Join(got.RedactedEnv, ",") != "S" {
 		t.Errorf("a value across two lines: %d %s", w.Code, w.Body)
 	}
-	if n := logs.FilterMessage("access: person read logs").Len(); n != 0 {
-		t.Errorf("a withheld body wrote %d read's lines", n)
+	if n := logs.FilterMessage("access: person read logs").Len(); n != 1 {
+		t.Errorf("a read wrote %d read's lines", n)
 	}
-	// A withheld body (the env_file unreadable) is the filter's sentence,
-	// no cursor, and, sending no line, no journal line.
-	must(t, os.Remove(h.app.managed["demo"].spec.envFile))
-	h.app.managed["demo"].secretsLoaded = false
-	w = sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
-	if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), `{"error":"response withheld`) || strings.Contains(w.Body.String(), "cursor") {
-		t.Errorf("withheld: %d %s", w.Code, w.Body)
+}
+
+// TestLogsUnreadableEnvFile: with the app's env_file unreadable the
+// filter knows no value, so no line's text is sent: each is the
+// filter's sentence (an empty line empty), and the rest of the answer
+// (each line's time and release, the cursor) is moteld's own and sent,
+// with the read's line in the journal. A command reading it exits 0.
+func TestLogsUnreadableEnvFile(t *testing.T) {
+	j := demoJournal(3, func(i int) string { return []string{"made-up-value-0001 printed", "", "plain"}[i] })
+	h, people, _, logs := logsRig(t, j)
+	ma := h.app.managed["demo"]
+	must(t, os.Remove(ma.spec.envFile))
+	must(t, os.Mkdir(ma.spec.envFile, 0o700)) // there, and not a file that reads
+	ma.secretsLoaded = false
+	w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
+	got := decodeLogs(t, w)
+	if w.Code != http.StatusOK || len(got.Lines) != 3 || got.Cursor != cursorOf(2) {
+		t.Fatalf("%d %s", w.Code, w.Body)
 	}
-	if n := logs.FilterMessage("access: person read logs").Len(); n != 0 {
-		t.Errorf("a withheld body wrote a read's line: %d lines", n)
+	const withheld = "[withheld: the app's env_file could not be read, so its values are unknown to the filter]"
+	for i, want := range []wire.AppText{withheld, "", withheld} {
+		if got.Lines[i].Text != want || !got.Lines[i].At.Equal(j[i].at) || got.Lines[i].Release != "v1" {
+			t.Errorf("line %d: %+v", i, got.Lines[i])
+		}
+	}
+	if strings.Contains(w.Body.String(), "made-up-value-0001") || strings.Contains(w.Body.String(), "plain") {
+		t.Errorf("a line's text is sent: %s", w.Body)
+	}
+	if n := logs.FilterMessage("access: person read logs").Len(); n != 1 {
+		t.Errorf("the read wrote %d read's lines", n)
 	}
 }
 
@@ -465,87 +486,9 @@ func TestLogsFinalPassLengthensNoText(t *testing.T) {
 		t.Fatalf("%d %.300s", w.Code, w.Body)
 	}
 	for i, l := range got.Lines {
-		if len(l.Text) > logsLineMax || !utf8.ValidString(l.Text) {
+		if len(l.Text) > logsLineMax || !utf8.ValidString(string(l.Text)) {
 			t.Errorf("line %d: %d bytes", i, len(l.Text))
 		}
-	}
-}
-
-// TestLogsFinalCut: the fallback's cut, with its ellipsis, makes no form
-// of a known value, and leaves none a pair held: a value that ends in
-// "…", a value an outcome word; each is cut back until none stands.
-func TestLogsFinalCut(t *testing.T) {
-	f := NewRedactor([]string{"S=abcdef…", "K=succeeded"}, nil)
-	for _, s := range []string{
-		strings.Repeat("{", logsLineMax-9) + "abcdefuvwxyz",
-		strings.Repeat("{", logsLineMax-3-len(`"status":"succeeded`)) + `"status":"succeeded"}}}}`,
-	} {
-		out := finalCut(f, s)
-		q, _ := json.Marshal(out)
-		if len(out) > logsLineMax || !strings.HasSuffix(out, "…") || f.replaceKnown(string(q), map[string]bool{}, true) != string(q) {
-			t.Errorf("…%q", out[max(0, len(out)-30):])
-		}
-	}
-	if out := finalCut(f, strings.Repeat("x", 5000)); out != strings.Repeat("x", logsLineMax-3)+"…" {
-		t.Errorf("a plain text: %d bytes", len(out))
-	}
-}
-
-// TestLogsBodyStaysWhole: a value of JSON's punctuation that folds a
-// line's text into its release, or one that a fallback's cut and the
-// next line's JSON make whole, is in no answer sent: the body falls back,
-// and the fallback withholds what one more final pass would change.
-func TestLogsBodyStaysWhole(t *testing.T) {
-	cutAt := strings.Repeat("{", logsLineMax-len(`"status":"succeeded"`)) + `"status":"succeeded"`
-	for name, c := range map[string]struct {
-		env   string
-		texts []string
-		value string
-	}{
-		"a text folded into the release":           {"PUNCT=\",\"text\":\"\n", []string{"one", "two"}, `","text":"`},
-		"a value the cut makes with the next line": {"K=succeeded\nS=[redact…\"},{\"at\n", []string{cutAt, "two"}, `[redact…"},{"at`},
-	} {
-		h, people, _, _ := logsRig(t, demoJournal(2, func(i int) string { return c.texts[i] }))
-		must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte(c.env), 0o600))
-		w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
-		if strings.Contains(w.Body.String(), c.value) {
-			t.Errorf("%s: the value is sent: %.300s", name, w.Body)
-		}
-		var got map[string]json.RawMessage
-		if json.Unmarshal(w.Body.Bytes(), &got) != nil {
-			t.Fatalf("%s: %s", name, w.Body)
-		}
-		if got["lines"] != nil && !linesIntact(got["lines"], []wire.LogLine{{At: demoJournal(2, lineN)[0].at}, {At: demoJournal(2, lineN)[1].at}}) {
-			t.Errorf("%s: lines sent damaged: %.300s", name, w.Body)
-		}
-	}
-}
-
-// TestLogsWithheldHoldsNoValue: a body withheld for its structure is
-// sent only if one more pass leaves it as it is: a marker and the words
-// after it can make a longer value the single pass had looked for
-// already, which is then the body that can hold nothing.
-func TestLogsWithheldHoldsNoValue(t *testing.T) {
-	h, people, _, _ := logsRig(t, demoJournal(2, func(i int) string { return []string{"one", "two"}[i] }))
-	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K=response\nS=[redacted:K] withheld\nPUNCT=\",\"text\":\"\n"), 0o600))
-	w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
-	if strings.Contains(w.Body.String(), "[redacted:K] withheld") || w.Body.String() != `{"error":"[#0]"}`+"\n" {
-		t.Errorf("%d %s", w.Code, w.Body)
-	}
-}
-
-// TestLogsWithheldIsJSON: a withheld sentence a value of JSON's
-// punctuation was replaced in is no JSON, and is then the body that can
-// hold nothing; never a 200 a client cannot parse.
-func TestLogsWithheldIsJSON(t *testing.T) {
-	h, people, _, _ := logsRig(t, demoJournal(1, lineN))
-	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte(`K0=\u0000;0`+"\n"+`K1=error":"`+"\n"), 0o600))
-	w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
-	if !json.Valid(w.Body.Bytes()) || w.Body.String() != `{"error":"[#0]"}`+"\n" {
-		t.Errorf("%d %s", w.Code, w.Body)
-	}
-	if got := unsent(NewRedactor([]string{`K1=error":"`}, nil), `{"error":"response withheld"}`); got != `{"error":"[#0]"}` {
-		t.Errorf("unsent: %s", got)
 	}
 }
 
@@ -812,6 +755,15 @@ func (r rawLogs) entries(_ context.Context, _ []string, each func([]byte) bool) 
 	return nil
 }
 
+// filterLogLine is one line's text through a door over f (none: a
+// filter that knows no value), as the logs read passes it (door.logLine).
+func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
+	if f == nil {
+		f = NewRedactor(nil, nil)
+	}
+	return string((&door{r: f, seen: seen}).logLine(text))
+}
+
 // FuzzLogsEntry: whatever journalctl prints, a read and its filter
 // never panic; a read either fails or gives lines whose text is valid
 // UTF-8, and a cursor journalCursor takes or none; and the body sent
@@ -844,12 +796,17 @@ func FuzzLogsEntry(f *testing.F) {
 		body := wire.Logs{Kept: wire.KeptOn, Lines: []wire.LogLine{}, More: read.more, Gap: read.gap, Cursor: read.cursor}
 		for _, l := range read.lines {
 			rel, _ := unitRelease(l.userUnit, "demo")
-			body.Lines = append(body.Lines, wire.LogLine{At: l.at, Release: rel, Text: l.text})
+			body.Lines = append(body.Lines, wire.LogLine{At: l.at, Release: rel})
 		}
-		s, _, ok := filterLogs(r, body)
-		if !ok {
-			s, _, _ = filterLogsWhole(r, body)
+		d := &door{r: r, seen: map[string]bool{}}
+		for i, l := range read.lines {
+			body.Lines[i].Text = d.logLine(l.text)
 		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(raw)
 		if strings.Contains(s, "hunter2-of-demo") {
 			t.Fatalf("the value is sent: %s", s)
 		}
@@ -866,8 +823,8 @@ func FuzzLogsEntry(f *testing.F) {
 			t.Fatalf("the cursor %q came back %q", read.cursor, got.Cursor)
 		}
 		for _, l := range got.Lines {
-			if !utf8.ValidString(l.Text) || len(l.Text) > logsLineMax {
-				t.Fatalf("a text of %d bytes, UTF-8 %v", len(l.Text), utf8.ValidString(l.Text))
+			if !utf8.ValidString(string(l.Text)) || len(l.Text) > logsLineMax {
+				t.Fatalf("a text of %d bytes, UTF-8 %v", len(l.Text), utf8.ValidString(string(l.Text)))
 			}
 		}
 	})

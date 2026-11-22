@@ -1,15 +1,12 @@
 package liveswap
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -75,18 +72,23 @@ const (
 // What a reader is sent is what the app printed: its customers' data and
 // the secrets it fetched while running, which no filter can know
 // (DESIGN-threat-model.md). The filter is a net under who may read, not
-// the safeguard: each line passes the app's filter on its own, then the
-// body the final pass (filterLogs).
+// the safeguard: each line's text passes the app's filter here, once,
+// as text, where it enters the answer (door.logLine, redact.go). A
+// line's time and release, the cursor and the words kept, more and gap
+// are moteld's own, and pass none. With the app's env_file unreadable
+// each line's text is the filter's sentence and the rest is sent. The
+// route's refusals are fixed sentences of moteld's: journalctl's own
+// words go to the box's journal alone. No pass runs over the body.
 func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle, q appQuery) error {
 	c := app.ma.snapshot()
 	if c.spec == nil || c.spec.deployLogLines == 0 {
 		// Motel's words alone: no filter of the app's is needed.
-		return RespondJSON(w, http.StatusOK, wire.Logs{Kept: wire.KeptOff, Lines: []wire.LogLine{}}, NewRedactor(nil, nil))
+		return RespondJSON(w, http.StatusOK, wire.Logs{Kept: wire.KeptOff, Lines: []wire.LogLine{}})
 	}
 	give, ok := takeLogsSlot(r.Context())
 	if !ok {
 		w.Header().Set("Retry-After", "1")
-		return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: logsBusyMessage}, NewRedactor(nil, nil))
+		return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: logsBusyMessage})
 	}
 	given := false
 	giveBack := func() {
@@ -113,7 +115,7 @@ func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle,
 	}
 	if err != nil {
 		h.logger.Error("logs: an app's journal could not be read", zap.String("app", app.ma.name), zap.String("person", app.who), zap.Error(err))
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: logsUnreadMessage}, NewRedactor(nil, nil))
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: logsUnreadMessage})
 	}
 	if read.passedOver > 0 {
 		// None an app makes (logs.go): a process of motel's uid outside
@@ -121,247 +123,39 @@ func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle,
 		h.logger.Warn("logs: lines under an app's identifier from a unit that is not the app's were not sent",
 			zap.String("app", app.ma.name), zap.Int("lines", read.passedOver), zap.String("units", read.passedUnit))
 	}
-	body := wire.Logs{Kept: wire.KeptOn, Lines: make([]wire.LogLine, len(read.lines)), More: read.more, Gap: read.gap, Cursor: read.cursor}
+	// The releases the lines name are versions from unit names, valid
+	// as versions (unitRelease): names the heuristics leave alone.
 	var releases []string
+	rels := make([]string, len(read.lines))
 	for i, e := range read.lines {
-		rel, _ := unitRelease(e.userUnit, app.ma.name)
-		body.Lines[i] = wire.LogLine{At: e.at, Release: rel, Text: e.text}
-		if rel != "" && !slices.Contains(releases, rel) {
-			releases = append(releases, rel)
+		rels[i], _ = unitRelease(e.userUnit, app.ma.name)
+		if rels[i] != "" && !slices.Contains(releases, rels[i]) {
+			releases = append(releases, rels[i])
 		}
 	}
-	// The releases the lines name are versions from unit names (rule 4):
-	// safe strings, as the status's are.
-	f := app.ma.redactorFor(app.ma.status(), releases...)
-	out, keys, ok := filterLogs(f, body)
-	sent := true
-	if !ok {
-		// The filter withheld the body (its env_file unreadable: the
-		// filter's sentence), or the final pass changed its shape: the
-		// body, its lines filtered each, whole through the filter, its
-		// cursor put back.
-		out, keys, sent = filterLogsWhole(f, body)
+	d := app.ma.door(true, releases...)
+	body := wire.Logs{Kept: wire.KeptOn, Lines: make([]wire.LogLine, len(read.lines)), More: read.more, Gap: read.gap, Cursor: read.cursor}
+	for i, e := range read.lines {
+		body.Lines[i] = wire.LogLine{At: e.at, Release: rels[i], Text: d.logLine(e.text)}
 	}
+	body.RedactedEnv = d.keys()
 	// At Warn, as the refusals are: a level that quiets moteld's Info
 	// lines leaves the record of who read what.
-	if sent && len(read.lines) > 0 {
+	if len(read.lines) > 0 {
 		fields := []zap.Field{zap.String("person", app.who), zap.String("app", app.ma.name), zap.Int("lines", len(read.lines)),
 			zap.String("first", read.lines[0].cursor), zap.String("last", read.lines[len(read.lines)-1].cursor)}
 		if read.gap {
 			fields = append(fields, zap.Bool("gap", true))
 		}
-		if len(keys) > 0 {
-			fields = append(fields, zap.Strings("redacted_env", keys))
+		if len(body.RedactedEnv) > 0 {
+			fields = append(fields, zap.Strings("redacted_env", body.RedactedEnv))
 		}
 		h.logger.Warn("access: person read logs", fields...)
 	}
 	// The slot bounds the journal's children and the filter's work, not
 	// a client's pace: a reader that stops reading holds no slot.
 	giveBack()
-	return respondFiltered(w, http.StatusOK, out)
-}
-
-// filterLogs is the logs body through the app's filter: each line's text
-// through the whole filter on its own (filterLogLine), then the body
-// without its cursor through the final pass alone (lastPass), which
-// holds the times (rule 7), its shape checked unchanged, then the cursor
-// and redacted_env, the keys any of it replaced, put back. The cursor is
-// journald's position in the box's journal, of journalCursor's form,
-// never the app's bytes: through the filter it is masked (32 hex
-// digits), and a follower could not send it back. It reports false, for
-// the caller to send the body whole through the filter, when the filter
-// withholds (its env_file unreadable) or the final pass refused or
-// changed the body's shape (a value of JSON's punctuation across two
-// lines).
-func filterLogs(f *Redactor, body wire.Logs) (string, []string, bool) {
-	if f != nil && f.withhold != "" {
-		return "", nil, false
-	}
-	seen := map[string]bool{}
-	lines := make([]wire.LogLine, len(body.Lines))
-	for i, l := range body.Lines {
-		lines[i] = wire.LogLine{At: l.At, Release: l.Release, Text: filterLogLine(f, l.Text, seen)}
-	}
-	type words struct {
-		Kept  string         `json:"kept"`
-		Lines []wire.LogLine `json:"lines"`
-		More  bool           `json:"more"`
-		Gap   bool           `json:"gap"`
-	}
-	raw, err := json.Marshal(words{body.Kept, lines, body.More, body.Gap})
-	if err != nil {
-		return "", nil, false
-	}
-	out, ok := f.lastPass(raw, seen)
-	if !ok {
-		return "", nil, false
-	}
-	// Its shape as it went in: the same lines at the same times, the
-	// same words; only the strings' text may differ.
-	var got words
-	dec := json.NewDecoder(bytes.NewReader([]byte(out)))
-	dec.DisallowUnknownFields()
-	if dec.Decode(&got) != nil || got.Kept != body.Kept || got.More != body.More || got.Gap != body.Gap {
-		return "", nil, false
-	}
-	var top map[string]json.RawMessage
-	if json.Unmarshal([]byte(out), &top) != nil || !linesIntact(top["lines"], lines) {
-		return "", nil, false
-	}
-	for i := range got.Lines {
-		// A text the pass made longer than a line (a value that is a word
-		// of the outcome vocabulary, which a text's own pair kept, rule 3,
-		// replaced once escaped) is the fallback's to cut.
-		if len(got.Lines[i].Text) > logsLineMax {
-			return "", nil, false
-		}
-	}
-	keys := reportedKeys(seen)
-	for i, k := range keys {
-		keys[i] = f.replaceKnown(k, seen, false) // a key name, not a body
-	}
-	// The pass's bytes as they are, in the wire type's order: no string
-	// of them is written again. Checked settled without the cursor, which
-	// passes no filter, then written with it.
-	assemble := func(cursor string) (string, bool) {
-		var b bytes.Buffer
-		enc := json.NewEncoder(&b)
-		enc.SetEscapeHTML(false)
-		err := enc.Encode(struct {
-			Kept        json.RawMessage `json:"kept"`
-			Lines       json.RawMessage `json:"lines"`
-			More        json.RawMessage `json:"more"`
-			Gap         json.RawMessage `json:"gap"`
-			Cursor      string          `json:"cursor,omitempty"`
-			RedactedEnv []string        `json:"redacted_env,omitempty"`
-		}{top["kept"], top["lines"], top["more"], top["gap"], cursor, keys})
-		return string(bytes.TrimSuffix(b.Bytes(), []byte("\n"))), err == nil
-	}
-	if bare, ok := assemble(""); !ok || !settled(f, bare) {
-		return "", nil, false
-	}
-	final, ok := assemble(body.Cursor)
-	if !ok {
-		return "", nil, false
-	}
-	return final, keys, true
-}
-
-// settled is whether one more final pass would leave the body s as it
-// is: what was put beside the pass's bytes after it (a cut,
-// redacted_env) made no form of a known value with them, nor stands
-// across a time's edge. s holds no cursor, which passes no filter.
-func settled(f *Redactor, s string) bool {
-	again, ok := f.lastPass([]byte(s), map[string]bool{})
-	return ok && again == s
-}
-
-// linesIntact is whether raw, a body's lines after the filter, are the
-// lines that went in: as many, each exactly its at, release and text,
-// the times as they were and the words strings. A value of JSON's
-// punctuation can make two lines one, or fold a text into a release,
-// and leave JSON that parses.
-func linesIntact(raw json.RawMessage, want []wire.LogLine) bool {
-	var got []map[string]json.RawMessage
-	if json.Unmarshal(raw, &got) != nil || len(got) != len(want) {
-		return false
-	}
-	for i, l := range got {
-		var at time.Time
-		var release, text string
-		if len(l) != 3 || json.Unmarshal(l["at"], &at) != nil || !at.Equal(want[i].At) ||
-			json.Unmarshal(l["release"], &release) != nil || json.Unmarshal(l["text"], &text) != nil ||
-			l["release"] == nil || l["text"] == nil {
-			return false
-		}
-	}
-	return true
-}
-
-// filterLogsWhole is filterLogs' fallback: the body, each line filtered
-// on its own as there, whole through the filter, as any body; then the
-// keys the lines' filtering replaced added to its redacted_env, and its
-// cursor put back. sent is false when the filter withheld the body (no
-// line in it), and keys then nil.
-func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, sent bool) {
-	seen := map[string]bool{}
-	lines := make([]wire.LogLine, len(body.Lines))
-	for i, l := range body.Lines {
-		lines[i] = wire.LogLine{At: l.At, Release: l.Release, Text: filterLogLine(f, l.Text, seen)}
-	}
-	cursor := body.Cursor
-	body.Lines, body.Cursor = lines, ""
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return `{"error":"[#0]"}`, nil, false
-	}
-	out = f.redactJSON(raw)
-	var top map[string]json.RawMessage
-	if json.Unmarshal([]byte(out), &top) != nil || top["lines"] == nil {
-		return unsent(f, out), nil, false
-	}
-	// The lines as they went in, at their times, or none: a value of
-	// JSON's punctuation across two lines made them one, and a cursor and
-	// a count past both would say a line was sent that was not.
-	withheld := unsent(f, f.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, map[string]bool{}, true))
-	var cut []wire.LogLine
-	if !linesIntact(top["lines"], lines) || json.Unmarshal(top["lines"], &cut) != nil {
-		return withheld, nil, false
-	}
-	{
-		// A text the filter made longer than a line is cut, where no form
-		// stands (finalCut).
-		over := false
-		for i := range cut {
-			if len(cut[i].Text) > logsLineMax {
-				cut[i].Text, over = finalCut(f, cut[i].Text), true
-			}
-		}
-		if over {
-			if b, err := json.Marshal(cut); err == nil {
-				top["lines"] = b
-				if b, err = json.Marshal(top); err == nil {
-					out = string(b)
-				}
-			}
-		}
-	}
-	names := reportedKeys(seen)
-	for i, k := range names {
-		names[i] = f.replaceKnown(k, seen, false) // a key name, not a body
-	}
-	out = withField(out, "redacted_env", names)
-	// What the cuts and redacted_env put beside the filter's bytes: one
-	// more final pass changes nothing, or nothing is sent. Before the
-	// cursor, which passes no filter.
-	if json.Unmarshal([]byte(out), &top) != nil || !settled(f, out) {
-		return withheld, nil, false
-	}
-	var had []string
-	_ = json.Unmarshal(top["redacted_env"], &had)
-	if cursor != "" {
-		top["cursor"], _ = json.Marshal(cursor)
-	}
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	if enc.Encode(top) == nil {
-		out = string(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
-	}
-	return out, had, true
-}
-
-// unsent is s, a body that sends no line (a sentence of the filter's or
-// the route's), if it is JSON and one more known-value pass leaves it as
-// it is; the body that can hold nothing otherwise. A single pass
-// replaces longest first, so a marker and the words after it can make a
-// longer value that pass had looked for already; and a value of JSON's
-// punctuation replaced in the sentence leaves no JSON.
-func unsent(f *Redactor, s string) string {
-	if !json.Valid([]byte(s)) || f.replaceKnown(s, map[string]bool{}, true) != s {
-		return `{"error":"[#0]"}`
-	}
-	return s
+	return RespondJSON(w, http.StatusOK, body)
 }
 
 // logsCutMargin is the least the filter sees of a cut line past what is
@@ -374,79 +168,6 @@ const logsCutMargin = 8 << 10
 
 // tokenAlphabet is layer 4's (entropyTokenRe in redact.go).
 const tokenAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+=_-"
-
-// finalCut is s, a text that passed the final pass, cut to logsLineMax
-// with "…", where no form of a known value stands in it as the final
-// pass reads a body's string: the ellipsis joined to the text before
-// it, or a word a pair held, left bare. Shortened a rune at a time, for
-// as long as a form could reach back from the end; "…" alone past that.
-func finalCut(f *Redactor, s string) string {
-	reach := len("…")
-	if f != nil && len(f.secrets) > 0 {
-		reach += len(f.secrets[0].text)
-	}
-	n := logsLineMax - len("…")
-	for range reach + 1 {
-		kept := cutText(s, n)
-		out := kept + "…"
-		q, _ := json.Marshal(out)
-		if f.replaceKnown(string(q), map[string]bool{}, true) == string(q) {
-			return out
-		}
-		if kept == "" {
-			break
-		}
-		n = len(kept) - 1
-	}
-	return "…"
-}
-
-// filterLogLine is one line's text through the app's filter, at most
-// logsLineMax bytes of it sent. The filter sees the text cut to
-// logsLineMax and a margin, the longest form it knows or logsCutMargin
-// if more, so every value or credential that begins inside what is sent
-// is whole when it is looked for (A). Where that cut fell, a value or
-// token it split is a piece no layer can know; it begins in the margin,
-// past logsLineMax, unless it is a token longer than the margin. So the
-// filter also sees the text cut at logsLineMax (B), and what is kept is
-// the start A and B have in common, less a run of layer 4's alphabet at
-// its end. A piece the first cut split is past B's input, so not in it;
-// one the second cut split is whole in A and replaced there, so A and B
-// part at it; a token longer than the margin, raw in both, is the run
-// that goes. What the filter shrank (a long token masked) costs nothing
-// of the start. Then what is left is cut to logsLineMax with "…" (a
-// marker or plain text may be cut there, nothing a layer would have
-// replaced). The keys it replaced are added to seen.
-func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
-	longest := logsCutMargin
-	if f != nil && len(f.secrets) > 0 {
-		longest = max(longest, len(f.secrets[0].text)) // longest first
-	}
-	pre := logsLineMax + longest
-	cut := len(text) > pre
-	if cut {
-		text = cutText(text, pre)
-	}
-	// journald ends a stdout line at a NUL, so none is in one; a NUL would
-	// be the start of the shape rule 7 holds times by (redact.go).
-	text = strings.ReplaceAll(text, "\x00", "\uFFFD")
-	out, keys := f.Redact(text)
-	for _, k := range keys {
-		seen[k] = true
-	}
-	if cut {
-		b, _ := f.Redact(cutText(text, logsLineMax))
-		out = strings.TrimRight(commonStart(out, b), tokenAlphabet)
-	}
-	// The app's bytes that are not UTF-8, each run one U+FFFD, only now:
-	// the filter saw them as written. Before the last cut, so the text
-	// sent stays within logsLineMax.
-	out = strings.ToValidUTF8(out, "\uFFFD")
-	if cut || len(out) > logsLineMax {
-		out = cutText(out, logsLineMax-len("…")) + "…"
-	}
-	return out
-}
 
 // commonStart is the bytes a and b begin with alike, ended on a rune's
 // start: a rune they share the first bytes of and not the rest is not
