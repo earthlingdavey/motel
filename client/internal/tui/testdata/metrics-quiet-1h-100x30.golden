@@ -1,0 +1,30 @@
+✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the … live · 0s ago
+apps › shop › metrics 1h                                                 as of 14:12:40 UTC · 0s ago
+over 1h · a point every 1 m · to 14:12 UTC (40s ago) · t: another window
+^ a version's latest deploy that succeeded (a column is 39s)
+
+cpu         newest 0.0005 cores at 14:12 (40s ago)
+            max 0.0007 13:18 · min 0.0001 13:12
+ 0.0007 |        ⡼⡇        ⢠⢿         ⡼⡇        ⢠⢿         ⢠⢿         ⡼⡇        ⢠⢿         ⡼⡇
+        |       ⡼⠁⡇       ⢠⠏⢸        ⡼⠁⡇       ⢠⠏⢸        ⢠⠏⢸        ⡼⠁⡇       ⢠⠏⢸        ⡼⠁⡇
+        |      ⣸⠁ ⡇      ⢀⡏ ⢸       ⣸⠁ ⡇      ⢀⡏ ⢸       ⢀⡏ ⢸       ⣸⠁ ⡇      ⢀⡏ ⢸       ⣸⠁ ⡇
+        |     ⣰⠃  ⢳     ⢀⡞  ⠘⡆     ⣰⠃  ⢳     ⢀⡞  ⠘⡆     ⢀⡞  ⠘⡆     ⣰⠃  ⢳     ⢀⡞  ⠘⡆     ⣰⠃  ⢳     ⢀⡖
+        |    ⣰⠃   ⢸    ⢀⡞    ⡇    ⣰⠃   ⢸    ⢀⡞    ⡇    ⢀⡞    ⡇    ⣰⠃   ⢸    ⢀⡞    ⡇    ⣰⠃   ⢸    ⢀⡞
+        |   ⢰⠃    ⢸    ⡞     ⡇   ⢰⠃    ⢸    ⡞     ⡇    ⡞     ⡇   ⢰⠃    ⢸    ⡞     ⡇   ⢰⠃    ⢸    ⡞
+        |  ⢠⠏     ⠸⡄  ⡼⠁     ⢧  ⢠⠏     ⠸⡄  ⡼⠁     ⢧  ⢀⡼⠁     ⢧  ⢠⠏     ⠸⡄  ⡼⠁     ⢧  ⢠⠏     ⠸⡄  ⡼⠁
+        | ⢠⠏       ⡇ ⡼⠁      ⢸ ⢠⠏       ⡇ ⡼⠁      ⢸ ⢠⠞       ⢸ ⢠⠏       ⡇ ⡼⠁      ⢸ ⢠⠏       ⡇ ⡼⠁
+        |⢠⠏        ⡇⡼⠁       ⢸⢠⠏        ⡇⡼⠁       ⢸⢠⠏        ⢸⢠⠏        ⡇⡼⠁       ⢸⢠⠏        ⡇⡼⠁
+ 0.0001 |⡞         ⣷⠃        ⢸⡞         ⣷⠃        ⢸⡞         ⢸⡞         ⣷⠃        ⢸⡞         ⣷⠃
+        +-------------------------------------------------------------------------------------------
+         13:12                                 61 of 61 steps                                  14:12
+
+requests    newest 0.00/s at 14:12 (40s ago)
+            max 0.40/s 13:32 · min 0.00/s 13:12
+ 0.40/s |                             ⢸⡇
+        |                             ⢸⡇
+        |                             ⢸⢹
+        |                             ⡞⢸
+        |                             ⡇⠈⡇
+        |                             ⡇ ⡇
+        |                            ⢠⠇ ⢹
+↑↓ scroll  t window  y json  c cmd  esc back  ? more

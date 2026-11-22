@@ -102,7 +102,8 @@ func SeriesValue(name string, v float64, compact bool) string {
 		return small(v, 0.01, 2) + "/s"
 	case wire.Panel5xx:
 		if v > 0 && v < 0.001 {
-			return "<0.1%"
+			// The box's share is to 0.01 %.
+			return figures(v*100, 2) + "%"
 		}
 		return trimZero(strconv.FormatFloat(v*100, 'f', 1, 64)) + "%"
 	case wire.PanelP95:
@@ -117,18 +118,109 @@ func SeriesValue(name string, v float64, compact bool) string {
 	return strconv.FormatFloat(v, 'g', 4, 64)
 }
 
-// small is v to prec places, "<floor" under it but above zero, and to
-// fewer places once it is large.
+// small is v to prec places, to two figures under floor but above zero
+// (the box's cores and rates are to six places), and to fewer places
+// once it is large.
 func small(v, floor float64, prec int) string {
 	switch {
 	case v > 0 && v < floor:
-		return "<" + strconv.FormatFloat(floor, 'f', -1, 64)
+		return figures(v, 6)
 	case v >= 100:
 		return strconv.FormatFloat(v, 'f', 0, 64)
 	case v >= 10:
 		return strconv.FormatFloat(v, 'f', 1, 64)
 	}
 	return strconv.FormatFloat(v, 'f', prec, 64)
+}
+
+// figures is v, above zero and under one, to two significant figures
+// and at most most places, its trailing zeros dropped; "<" the smallest
+// of most places when that is no figure at all.
+func figures(v float64, most int) string {
+	s := strconv.FormatFloat(v, 'f', min(1-int(math.Floor(math.Log10(v))), most), 64)
+	if !strings.ContainsAny(s, "123456789") {
+		return "<" + strconv.FormatFloat(math.Pow10(-most), 'f', -1, 64)
+	}
+	return strings.TrimSuffix(strings.TrimRight(s, "0"), ".")
+}
+
+// SeriesExtremes is hi and lo, a panel's highest and lowest, written as
+// a pair, compactly for a plot's axis: in the first of their writings
+// (seriesWritings) in which the two differ, or are one value, and each
+// tells its value: no "<" floor, no zero for a value above it, and
+// compact, no wider than a plot's label. With none, their plain
+// writings.
+func SeriesExtremes(name string, hi, lo float64, compact bool) (string, string) {
+	hs, ls := seriesWritings(name, hi, compact), seriesWritings(name, lo, compact)
+	tells := func(s string, v float64) bool {
+		return !strings.HasPrefix(s, "<") && (v == 0 || strings.ContainsAny(s, "123456789")) && (!compact || len([]rune(s)) <= plotLabel)
+	}
+	for i := range hs {
+		if (hs[i] != ls[i] || hi == lo) && tells(hs[i], hi) && tells(ls[i], lo) {
+			return hs[i], ls[i]
+		}
+	}
+	return hs[0], ls[0]
+}
+
+// seriesWritings is the ways v of the panel named name is written,
+// coarsest first: as SeriesValue writes it, then in its unit to 0 to 6
+// places, then, compact, cores in millicores (an "m") to 0 to 3 places,
+// the box's six places of a core. Every value of a panel has as many,
+// so the i-th of two values are written alike.
+func seriesWritings(name string, v float64, compact bool) []string {
+	out := []string{SeriesValue(name, v, compact)}
+	unit, suffix := 1.0, ""
+	switch name {
+	case wire.PanelMemory:
+		switch {
+		case compact && v < 1<<20:
+			unit, suffix = 1<<10, "K"
+		case v >= 1<<30 && compact:
+			unit, suffix = 1<<30, "G"
+		case v >= 1<<30:
+			unit, suffix = 1<<30, " GiB"
+		case compact:
+			unit, suffix = 1<<20, "M"
+		default:
+			unit, suffix = 1<<20, " MiB"
+		}
+	case wire.PanelCPU:
+		if !compact {
+			suffix = " cores"
+		}
+	case wire.PanelRequests:
+		switch {
+		case compact && v >= 1e6:
+			unit, suffix = 1e6, "M/s"
+		case compact && v >= 1e3:
+			unit, suffix = 1e3, "k/s"
+		default:
+			suffix = "/s"
+		}
+	case wire.Panel5xx:
+		unit, suffix = 0.01, "%"
+	case wire.PanelP95:
+		switch {
+		case compact && v >= 1000:
+			unit, suffix = 1000, "s"
+		case compact:
+			suffix = "ms"
+		default:
+			suffix = " ms"
+		}
+	default:
+		return out
+	}
+	for p := range 7 {
+		out = append(out, strconv.FormatFloat(v/unit, 'f', p, 64)+suffix)
+	}
+	if name == wire.PanelCPU && compact {
+		for p := range 4 {
+			out = append(out, strconv.FormatFloat(v*1000, 'f', p, 64)+"m")
+		}
+	}
+	return out
 }
 
 func trimZero(s string) string {
@@ -289,12 +381,26 @@ func (s *Session) MetricsViewFit(app, rng string, now time.Time, width, height i
 			known = false
 		}
 	}
+	// The steps the store had: the requests panel's, a point at each, a
+	// rate of 0 where no request came. The 5xx share and the p95 have no
+	// point at a step of none, which is no gap in what the store had.
+	var stored map[int64]bool
+	if rq := findPanel(v.Panels, seriesPanel{name: wire.PanelRequests, unit: wire.UnitPerSecond}); rq != nil {
+		stored = map[int64]bool{}
+		for _, pt := range inWindow(rq.Points, start, end) {
+			stored[int64(pt[0])] = true
+		}
+	}
 	has := map[string]bool{}
 	for i, p := range drawn {
 		has[p.name] = true
 		out = append(out, nil)
 		out = append(out, heads[i]...)
-		out = append(out, panelPlot(p, inWindow(findPanel(v.Panels, p).Points, start, end), start, end, step, now, plotW, rows, marks, width, cells)...)
+		var st map[int64]bool
+		if p.name == wire.Panel5xx || p.name == wire.PanelP95 {
+			st = stored
+		}
+		out = append(out, panelPlot(p, inWindow(findPanel(v.Panels, p).Points, start, end), st, start, end, step, now, plotW, rows, marks, width, cells)...)
 	}
 	ran := has[wire.PanelMemory] || has[wire.PanelCPU]
 	switch {
@@ -345,7 +451,8 @@ func inWindow(pts [][2]float64, start, end time.Time) [][2]float64 {
 
 // panelHead is a panel's head: its newest value with its time and age;
 // its highest and lowest, as the axis writes them, with their times, on
-// one row when it holds both, else a row each.
+// one row when it holds both, else a row each; or, every point of one
+// value, that value.
 func panelHead(p seriesPanel, in [][2]float64, now time.Time, width int, cells Cells) []Line {
 	if len(in) == 0 {
 		return []Line{cutTo(field(p.label, own("no point in this window")), width, cells)}
@@ -354,7 +461,13 @@ func panelHead(p seriesPanel, in [][2]float64, now time.Time, width int, cells C
 	newest := in[len(in)-1]
 	at := func(pt [2]float64) string { return clock(time.Unix(int64(pt[0]), 0), now, false) }
 	out := []Line{cutTo(field(p.label, own("newest "+SeriesValue(p.name, newest[1], false)+" at "+at(newest)+" ("+since(time.Unix(int64(newest[0]), 0), now)+")")), width, cells)}
-	maxS, minS := "max "+SeriesValue(p.name, hi[1], true)+" "+at(hi), "min "+SeriesValue(p.name, lo[1], true)+" "+at(lo)
+	if hi[1] == lo[1] {
+		// One value: said once.
+		v, _ := SeriesExtremes(p.name, hi[1], lo[1], false)
+		return append(out, cutTo(field("", own("every point "+v)), width, cells))
+	}
+	hiS, loS := SeriesExtremes(p.name, hi[1], lo[1], true)
+	maxS, minS := "max "+hiS+" "+at(hi), "min "+loS+" "+at(lo)
 	if both := field("", own(maxS+" · "+minS)); width <= 0 || both.Width(cells) <= width {
 		return append(out, both)
 	}
@@ -378,23 +491,48 @@ func extremes(in [][2]float64) (lo, hi [2]float64) {
 }
 
 // panelPlot is a panel's plot, its highest and lowest at the top and
-// the bottom of its axis; then the time axis, broken (a space) in each
+// the bottom of its axis (every point of one value: that value once, on
+// the row of its line); then the time axis, broken (a space) in each
 // column whose span holds a step with no point and marked ^ at each
-// deploy; and the window's two ends under it.
-func panelPlot(p seriesPanel, in [][2]float64, start, end time.Time, step time.Duration, now time.Time, plotW, rows int, marks []int, width int, cells Cells) []Line {
+// deploy; and the window's two ends under it, with how many of its
+// steps have a point. stored, when not nil, is the steps the store had
+// a point at (the requests panel's): a step of them with no point here
+// had no request, so it breaks no column, and the count says how many
+// steps had requests.
+func panelPlot(p seriesPanel, in [][2]float64, stored map[int64]bool, start, end time.Time, step time.Duration, now time.Time, plotW, rows int, marks []int, width int, cells Cells) []Line {
 	if len(in) == 0 {
 		return nil
 	}
+	// A window of more steps than any box's (a fixture's step of a second
+	// over 14 days) is left unbroken, and drawn with no bridge.
+	many := end.Sub(start)/step > 4096
+	if many {
+		stored = nil
+	}
 	lo, hi := extremes(in)
 	var out []Line
-	plot := Plot(in, start, end, step, lo[1], hi[1], plotW, rows)
+	plot := Plot(in, stored, start, end, step, lo[1], hi[1], plotW, rows)
+	hiS, loS := SeriesExtremes(p.name, hi[1], lo[1], true)
+	flat := -1
+	if hi[1] == lo[1] {
+		for i, r := range plot {
+			if strings.TrimSpace(r) != "" {
+				flat = i
+				break
+			}
+		}
+	}
 	for i, r := range plot {
 		label := ""
-		switch i {
-		case 0:
-			label = SeriesValue(p.name, hi[1], true)
-		case len(plot) - 1:
-			label = SeriesValue(p.name, lo[1], true)
+		switch {
+		case hi[1] == lo[1]:
+			if i == flat {
+				label = hiS
+			}
+		case i == 0:
+			label = hiS
+		case i == len(plot)-1:
+			label = loS
 		}
 		if r := []rune(label); len(r) > plotLabel {
 			// Cut, marked in ASCII: an ellipsis is of ambiguous width.
@@ -407,23 +545,19 @@ func panelPlot(p seriesPanel, in [][2]float64, start, end time.Time, step time.D
 	for _, pt := range in {
 		have[int64(pt[0])] = true
 	}
-	hits := 0
-	for t := start; !t.After(end) && end.Sub(start)/step <= 4096; t = t.Add(step) {
-		if have[t.Unix()] {
-			hits++
-		}
-	}
-	if end.Sub(start)/step > 4096 {
-		hits = len(have)
-	}
-	// Each step with no point breaks every cell its span (the step up to
-	// its time) is drawn in. A window of more steps than any box's (a
-	// fixture's step of a second over 14 days) is left unbroken.
-	if end.Sub(start)/step <= 4096 {
+	hits := len(have)
+	if !many {
+		hits = 0
 		for t := start; !t.After(end); t = t.Add(step) {
 			if have[t.Unix()] {
+				hits++
 				continue
 			}
+			if stored[t.Unix()] {
+				continue
+			}
+			// A step with no point breaks every cell its span (the step up
+			// to its time) is drawn in.
 			from := cellOf(maxTime(start, t.Add(-step+time.Second)), start, end, plotW)
 			for c := from; c <= cellOf(t, start, end, plotW); c++ {
 				axis[c] = ' '
@@ -438,6 +572,9 @@ func panelPlot(p seriesPanel, in [][2]float64, start, end time.Time, step time.D
 	// point, which the breaks in the axis show where.
 	from, to := clock(start, now, false), clock(end, now, false)
 	count := strconv.Itoa(hits) + " of " + strconv.Itoa(int(end.Sub(start)/step)+1) + " steps"
+	if stored != nil {
+		count += " had requests"
+	}
 	room := plotW - len(from) - len(to)
 	mid := strings.Repeat(" ", max(room, 1))
 	if room >= len(count)+2 {
@@ -536,9 +673,14 @@ func roughSpan(d time.Duration) string {
 // a point's dot at its time and its value between lo, the bottom row,
 // and hi, the top; two points a step or less apart joined by a line,
 // so a step with no point is a gap, never a zero or a line across it.
-// An empty cell is a space. Values outside lo and hi are drawn at the
-// edge; with lo equal to hi, every point on the middle row.
-func Plot(pts [][2]float64, start, end time.Time, step time.Duration, lo, hi float64, w, rows int) []string {
+// A point joined to neither is drawn across its step's span (the step
+// up to its time), so it shows. stored, when not nil, is the steps the
+// store had a point at: two points further apart than a step with every
+// step between them stored (no request then, not a gap) are bridged by
+// a dotted line, a dot every second cell. An empty cell is a space.
+// Values outside lo and hi are drawn at the edge; with lo equal to hi,
+// every point on the middle row, or at zero on the bottom row.
+func Plot(pts [][2]float64, stored map[int64]bool, start, end time.Time, step time.Duration, lo, hi float64, w, rows int) []string {
 	if w <= 0 || rows <= 0 {
 		return nil
 	}
@@ -555,6 +697,9 @@ func Plot(pts [][2]float64, start, end time.Time, step time.Duration, lo, hi flo
 	}
 	y := func(v float64) int {
 		f := 0.5
+		if hi == 0 && lo == 0 {
+			f = 0
+		}
 		if hi > lo {
 			f = (v - lo) / (hi - lo)
 			if !finite(hi - lo) {
@@ -568,14 +713,35 @@ func Plot(pts [][2]float64, start, end time.Time, step time.Duration, lo, hi flo
 		return min(max(int(math.Round(f*float64(dy-1))), 0), dy-1)
 	}
 	set := func(cx, cy int) { grid[dy-1-cy][cx] = true }
+	s := step.Seconds()
+	// joined says point i is joined to the one before.
+	joined := func(i int) bool { return i > 0 && i < len(pts) && !(pts[i][0]-pts[i-1][0] > s) }
 	for i, pt := range pts {
 		cx, cy := x(pt[0]), y(pt[1])
 		set(cx, cy)
-		if i == 0 || pt[0]-pts[i-1][0] > step.Seconds() {
+		left := cx
+		if !joined(i) && !joined(i+1) {
+			// Alone: across its step's span, at its height.
+			left = x(math.Max(pt[0]-s+1, float64(start.Unix())))
+			for xx := left; xx < cx; xx++ {
+				set(xx, cy)
+			}
+		}
+		if i == 0 {
+			continue
+		}
+		px, py := x(pts[i-1][0]), y(pts[i-1][1])
+		if !joined(i) {
+			if bridged(stored, pts[i-1][0], pt[0], s) {
+				// No request between: a dot every fourth column (every
+				// second cell) on the line between, none beside either.
+				for xx := px + 4; xx < left-1; xx += 4 {
+					set(xx, lerp(px, py, cx, cy, xx))
+				}
+			}
 			continue
 		}
 		// Joined to the one before: a line of dots between the two.
-		px, py := x(pts[i-1][0]), y(pts[i-1][1])
 		if px == cx {
 			// In one column (more points than dots): every dot between.
 			for yy := min(py, cy); yy <= max(py, cy); yy++ {
@@ -618,6 +784,20 @@ func Plot(pts [][2]float64, start, end time.Time, step time.Duration, lo, hi flo
 // brailleBit is the dot of a braille cell at its column and its row
 // from the top (Unicode's dots 1 to 8).
 var brailleBit = [2][4]rune{{0x01, 0x02, 0x04, 0x40}, {0x08, 0x10, 0x20, 0x80}}
+
+// bridged says every step between the points at a and b, more than a
+// step apart, is in stored.
+func bridged(stored map[int64]bool, a, b, step float64) bool {
+	if stored == nil || step <= 0 || !(b-a > step) {
+		return false
+	}
+	for t := a + step; t < b; t += step {
+		if !stored[int64(t)] {
+			return false
+		}
+	}
+	return true
+}
 
 // lerp is the height at x of the line from (x0, y0) to (x1, y1).
 func lerp(x0, y0, x1, y1, x int) int {

@@ -101,6 +101,14 @@ func seriesView(s wire.Series, app, host string) render.Series {
 		steps = int(model.SeriesSpan(s.Window)/v.Step) + 1
 	}
 	at := func(pt [2]float64) time.Time { return time.Unix(int64(pt[0]), 0) }
+	// Beside a requests panel, the 5xx share's and the p95's steps with a
+	// point are those that had requests, as the screen counts them.
+	requests := false
+	for _, p := range s.Panels {
+		if p.Name == wire.PanelRequests && p.Unit == wire.UnitPerSecond {
+			requests = true
+		}
+	}
 	for _, p := range s.Panels {
 		label, known := model.SeriesLabel(p.Name, p.Unit)
 		// A panel this client does not know may be one the box's filter
@@ -108,7 +116,8 @@ func seriesView(s wire.Series, app, host string) render.Series {
 		if p.Name == wire.PanelRequests && known || !known {
 			v.NoRequests = false
 		}
-		pn := render.SeriesPanel{Label: label, Name: tx(p.Name), Unit: tx(p.Unit), Known: known, Points: len(p.Points), Steps: steps}
+		pn := render.SeriesPanel{Label: label, Name: tx(p.Name), Unit: tx(p.Unit), Known: known, Points: len(p.Points), Steps: steps,
+			HadRequests: known && requests && (p.Name == wire.Panel5xx || p.Name == wire.PanelP95)}
 		if known && len(p.Points) > 0 {
 			lo, hi := p.Points[0], p.Points[0]
 			for _, pt := range p.Points {
@@ -120,8 +129,10 @@ func seriesView(s wire.Series, app, host string) render.Series {
 				}
 			}
 			newest := p.Points[len(p.Points)-1]
-			pn.Min = render.SeriesPoint{V: model.SeriesValue(p.Name, lo[1], false), T: at(lo)}
-			pn.Max = render.SeriesPoint{V: model.SeriesValue(p.Name, hi[1], false), T: at(hi)}
+			// The two written alike until they differ, as the screen's.
+			maxV, minV := model.SeriesExtremes(p.Name, hi[1], lo[1], false)
+			pn.Min = render.SeriesPoint{V: minV, T: at(lo)}
+			pn.Max = render.SeriesPoint{V: maxV, T: at(hi)}
 			pn.Newest = render.SeriesPoint{V: model.SeriesValue(p.Name, newest[1], false), T: at(newest)}
 		}
 		v.Panels = append(v.Panels, pn)

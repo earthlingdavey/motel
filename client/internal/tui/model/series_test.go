@@ -551,7 +551,7 @@ func TestPlot(t *testing.T) {
 	for m := 40; m <= 50; m++ {
 		pts = append(pts, [2]float64{at(m), 2})
 	}
-	rows := model.Plot(pts, start, end, step, 1, 2, 30, 4)
+	rows := model.Plot(pts, nil, start, end, step, 1, 2, 30, 4)
 	if len(rows) != 4 {
 		t.Fatalf("%d rows", len(rows))
 	}
@@ -573,7 +573,7 @@ func TestPlot(t *testing.T) {
 	// A step joined: two points a step apart at the two ends, a line of
 	// dots between them in every row.
 	two := [][2]float64{{at(0), 0}, {at(1), 10}}
-	for _, r := range model.Plot(two, start, start.Add(time.Minute), step, 0, 10, 4, 4) {
+	for _, r := range model.Plot(two, nil, start, start.Add(time.Minute), step, 0, 10, 4, 4) {
 		if strings.TrimSpace(r) == "" {
 			t.Errorf("two points a step apart not joined: %q", r)
 		}
@@ -583,7 +583,7 @@ func TestPlot(t *testing.T) {
 	for _, w := range []int{1, 2, 10, 51, 300} {
 		for _, h := range []int{1, 3, 10} {
 			for _, lohi := range [][2]float64{{-math.MaxFloat64, math.MaxFloat64}, {0, 0}, {5, 1}, {math.Inf(-1), math.Inf(1)}, {math.NaN(), 1}} {
-				rs := model.Plot(weird, start, end, step, lohi[0], lohi[1], w, h)
+				rs := model.Plot(weird, nil, start, end, step, lohi[0], lohi[1], w, h)
 				if len(rs) != h {
 					t.Fatalf("%dx%d: %d rows", w, h, len(rs))
 				}
@@ -595,7 +595,7 @@ func TestPlot(t *testing.T) {
 			}
 		}
 	}
-	if model.Plot(pts, start, end, step, 1, 2, 0, 3) != nil || model.Plot(pts, end, start, step, 1, 2, 5, 3) == nil {
+	if model.Plot(pts, nil, start, end, step, 1, 2, 0, 3) != nil || model.Plot(pts, nil, end, start, step, 1, 2, 5, 3) == nil {
 		t.Error("a plot of no width is no rows; one of a window backwards is drawn")
 	}
 }
@@ -613,14 +613,18 @@ func TestSeriesValue(t *testing.T) {
 		{wire.PanelMemory, 3 << 30, true, "3G"},
 		{wire.PanelMemory, 1.5 * (1 << 30), false, "1.50 GiB"},
 		{wire.PanelCPU, 0.004, false, "0.004 cores"},
-		{wire.PanelCPU, 0.0004, true, "<0.001"},
+		{wire.PanelCPU, 0.0004, true, "0.0004"},
+		{wire.PanelCPU, 0.000123, false, "0.00012 cores"},
+		{wire.PanelCPU, 1e-9, false, "<0.000001 cores"},
 		{wire.PanelCPU, 0, true, "0.000"},
 		{wire.PanelCPU, 12.5, true, "12.5"},
 		{wire.PanelRequests, 2.5, false, "2.50/s"},
-		{wire.PanelRequests, 0.004, false, "<0.01/s"},
+		{wire.PanelRequests, 0.004, false, "0.004/s"},
+		{wire.PanelRequests, 0.0033333, false, "0.0033/s"},
 		{wire.Panel5xx, 0.0123, false, "1.2%"},
 		{wire.Panel5xx, 0, false, "0%"},
-		{wire.Panel5xx, 0.0004, false, "<0.1%"},
+		{wire.Panel5xx, 0.0004, false, "0.04%"},
+		{wire.Panel5xx, 0.00001, false, "<0.01%"},
 		{wire.PanelP95, 80.1, false, "80.1 ms"},
 		{wire.PanelP95, 1250, true, "1.2s"},
 		{wire.PanelP95, 80.1, true, "80ms"},
@@ -735,7 +739,7 @@ func TestMetricsHeadsAndBreaksAtTheEdges(t *testing.T) {
 			min = l.Text()
 		}
 	}
-	if !strings.Contains(max, "max <0.01/s 2026-12-27 20:30") || !strings.Contains(min, "min 0.00/s 2026-12-27 20:00") || strings.Contains(max+min, "…") {
+	if !strings.Contains(max, "max 0.002/s 2026-12-27 20:30") || !strings.Contains(min, "min 0.00/s 2026-12-27 20:00") || strings.Contains(max+min, "…") {
 		t.Errorf("max %q, min %q", max, min)
 	}
 
@@ -777,5 +781,255 @@ func TestMetricsHeadsAndBreaksAtTheEdges(t *testing.T) {
 	}
 	if got := text(s.MetricsViewFit("blog", "24h", now, 0, 30, nil)); strings.Contains(got, "observe") || !strings.Contains(got, "requests    none in this window") {
 		t.Errorf("no point at all: %q", got)
+	}
+}
+
+// TestPlotQuiet: a point joined to neither neighbour is drawn across
+// its step's span, at its height; two points further apart than a step
+// with every step between them stored are bridged by a dot every second
+// cell on the line between, none beside either point; a stored step
+// missing between them, or no steps stored at all, leaves the gap
+// blank; and every point of zero is on the bottom row, every point of
+// one other value on the middle.
+func TestPlotQuiet(t *testing.T) {
+	end := t0
+	start := end.Add(-time.Hour)
+	step := time.Minute
+	at := func(min int) float64 { return float64(start.Add(time.Duration(min) * time.Minute).Unix()) }
+	stored := map[int64]bool{}
+	for m := 0; m <= 60; m++ {
+		stored[int64(at(m))] = true
+	}
+	// 61 steps on 91 cells: a step is three dots. Two points at minutes 10
+	// and 40, at 0 and 1.
+	pts := [][2]float64{{at(10), 0}, {at(40), 1}}
+	cell := func(min int) int { return int(math.Round(float64(min)/60*181)) / 2 }
+	cols := func(rows []string) []bool {
+		out := make([]bool, 91)
+		for _, r := range rows {
+			for i, c := range []rune(r) {
+				out[i] = out[i] || c != ' '
+			}
+		}
+		return out
+	}
+	rows := model.Plot(pts, stored, start, end, step, 0, 1, 91, 4)
+	got := cols(rows)
+	// Each point across its step's span: the cell of the step before it
+	// up to its own.
+	for _, m := range []int{10, 40} {
+		if !got[cell(m)] || !got[cell(m)-1] {
+			t.Errorf("the point at minute %d is not drawn across its step:\n%s", m, strings.Join(rows, "\n"))
+		}
+	}
+	// The bridge: every second cell between, and so none two cells in a
+	// row, the first two cells clear of the point before it.
+	var dots []int
+	for c := cell(10) + 1; c < cell(40)-1; c++ {
+		if got[c] {
+			dots = append(dots, c)
+		}
+	}
+	if len(dots) < 10 || dots[0] < cell(10)+2 {
+		t.Fatalf("the bridge's dots in cells %v:\n%s", dots, strings.Join(rows, "\n"))
+	}
+	for i := 1; i < len(dots); i++ {
+		if dots[i]-dots[i-1] != 2 {
+			t.Errorf("the bridge's dots in cells %v, not every second cell", dots)
+			break
+		}
+	}
+	// It climbs: its first dot on the bottom row, its last above it.
+	first, last := []rune(rows[3])[dots[0]], []rune(rows[3])[dots[len(dots)-1]]
+	if first == ' ' || last != ' ' {
+		t.Errorf("the bridge does not climb from 0 to 1:\n%s", strings.Join(rows, "\n"))
+	}
+	// A step between them not stored, or none stored: no bridge.
+	delete(stored, int64(at(25)))
+	for _, st := range []map[int64]bool{stored, nil} {
+		got := cols(model.Plot(pts, st, start, end, step, 0, 1, 91, 4))
+		for c := cell(10) + 1; c < cell(40)-1; c++ {
+			if got[c] {
+				t.Errorf("a dot in cell %d between points a store gap apart (stored %v)", c, st != nil)
+				break
+			}
+		}
+	}
+	// Points a step apart: joined by the solid line, not spread.
+	two := model.Plot([][2]float64{{at(10), 0}, {at(11), 0}}, stored, start, end, step, 0, 0, 91, 4)
+	if got := strings.TrimSpace(two[3]); utf8.RuneCountInString(got) != cell(11)-cell(10)+1 {
+		t.Errorf("two points a step apart: %q", two[3])
+	}
+	// Flat: zero on the bottom row, another value on the middle.
+	for _, c := range []struct {
+		v   float64
+		row int
+	}{{0, 3}, {0.5, 1}} {
+		rows := model.Plot([][2]float64{{at(10), c.v}, {at(11), c.v}}, nil, start, end, step, c.v, c.v, 91, 4)
+		for i, r := range rows {
+			if (strings.TrimSpace(r) != "") != (i == c.row) {
+				t.Errorf("every point %v: drawn on rows\n%s\nwant row %d alone", c.v, strings.Join(rows, "\n"), c.row)
+				break
+			}
+		}
+	}
+}
+
+// TestSeriesExtremes: a panel's highest and lowest are written alike
+// until they differ, within a plot label's seven cells when compact,
+// never a "<" floor or a zero for a value above it; cores too small for
+// seven cells in millicores; one value once; and two values no writing
+// in seven cells tells apart, or a panel the client does not know, as
+// SeriesValue writes them.
+func TestSeriesExtremes(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		hi, lo       float64
+		compact      bool
+		wantHi, want string
+	}{
+		{wire.PanelCPU, 0.0007, 0.0001, true, "0.0007", "0.0001"},
+		{wire.PanelCPU, 0.0012, 0.0001, true, "0.001", "0.0001"},
+		{wire.PanelCPU, 0.000043, 0.000041, true, "0.043m", "0.041m"},
+		{wire.PanelCPU, 0.5, 0.0002, true, "0.500", "0.0002"},
+		{wire.PanelCPU, 0.5, 0.0, true, "0.500", "0.000"},
+		{wire.PanelCPU, 12.51, 12.54, true, "12.51", "12.54"},
+		{wire.PanelCPU, 0.000043, 0.000041, false, "0.000043 cores", "0.000041 cores"},
+		{wire.PanelCPU, 0.0004, 0.0004, true, "0.0004", "0.0004"},
+		{wire.Panel5xx, 0.0004, 0.0002, true, "0.04%", "0.02%"},
+		{wire.Panel5xx, 0.0123, 0.0121, true, "1.23%", "1.21%"},
+		{wire.Panel5xx, 0.0123, 0.0121, false, "1.23%", "1.21%"},
+		{wire.Panel5xx, 0, 0, true, "0%", "0%"},
+		{wire.PanelP95, 0.5, 0.3, true, "0.5ms", "0.3ms"},
+		{wire.PanelP95, 0.3, 0.3, true, "0.3ms", "0.3ms"},
+		{wire.PanelP95, 1250, 1240, true, "1.25s", "1.24s"},
+		{wire.PanelP95, 80.1, 25, true, "80ms", "25ms"},
+		{wire.PanelMemory, 190840832, 187695104, true, "182M", "179M"},
+		{wire.PanelMemory, 190840832, 190840000, true, "182M", "182M"},
+		{wire.PanelRequests, 0.0004, 0.0003, true, "0.0004/s", "0.0003/s"},
+		{"disk_bytes", 2, 1, true, "2", "1"},
+	} {
+		if h, l := model.SeriesExtremes(c.name, c.hi, c.lo, c.compact); h != c.wantHi || l != c.want {
+			t.Errorf("%s %v %v %v: %q %q, want %q %q", c.name, c.hi, c.lo, c.compact, h, l, c.wantHi, c.want)
+		}
+	}
+}
+
+// quietHour is a 1 h body of shop's ending at end: CPU at every step;
+// requests at every step but a store gap from minute 35 to 40, none but
+// at minutes 5, 20, 21 and 50; and there alone, the 5xx share, all 0,
+// and the p95 (with no requests panel when requests is false).
+func quietHour(end time.Time, requests bool) string {
+	start := end.Add(-time.Hour)
+	busy := map[int]float64{5: 0.05, 20: 0.4, 21: 0.15, 50: 0.03}
+	var cpu, rps, share, p95 [][2]float64
+	for m := 0; m <= 60; m++ {
+		ts := float64(start.Add(time.Duration(m) * time.Minute).Unix())
+		cpu = append(cpu, [2]float64{ts, 0.0001 + 0.0001*float64(m%7)})
+		if m >= 35 && m <= 40 {
+			continue
+		}
+		rps = append(rps, [2]float64{ts, busy[m]})
+		if _, ok := busy[m]; ok {
+			share = append(share, [2]float64{ts, 0})
+			p95 = append(p95, [2]float64{ts, 0.3 + float64(m%3)/10})
+		}
+	}
+	s := wire.Series{Store: wire.StoreOn, Window: "1h", StepSeconds: 60, End: &end, Panels: []wire.Panel{
+		{Name: wire.PanelCPU, Unit: wire.UnitCores, Points: cpu},
+		{Name: wire.PanelRequests, Unit: wire.UnitPerSecond, Points: rps},
+		{Name: wire.Panel5xx, Unit: wire.UnitShare, Points: share},
+		{Name: wire.PanelP95, Unit: wire.UnitMs, Points: p95},
+	}}
+	if !requests {
+		s.Panels = append(s.Panels[:1], s.Panels[2:]...)
+	}
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// plotOf is the lines of the plot under the head that begins with
+// label: its rows, the axis (its "+" and what follows), the times.
+func plotOf(ls []model.Line, label string) (rows []string, axis, times string) {
+	for i, l := range ls {
+		if !strings.HasPrefix(l.Text(), label) {
+			continue
+		}
+		for _, l := range ls[i+1:] {
+			switch t := l.Text(); {
+			case strings.HasPrefix(t, "        +"):
+				axis = strings.TrimPrefix(t, "        +")
+			case axis != "":
+				return rows, axis, t
+			case strings.Contains(t, " |"):
+				rows = append(rows, t)
+			}
+		}
+	}
+	return rows, axis, times
+}
+
+// TestMetricsQuiet: a quiet app's hour: the 5xx share's and the p95's
+// steps with no point but a requests point are no gap, their axes
+// broken only where the requests' is (the store's gap), and their
+// counts say how many steps had requests; every point 0% is said once
+// and labelled once, on the bottom row; the CPU's and a p95 under a
+// millisecond's labels differ, and no value is a "<" floor. With no
+// requests panel, each step with no point breaks the axis, as before.
+func TestMetricsQuiet(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	f.Body("apps.json", `{"apps": [{"name": "shop"}]}`)
+	end := now.Truncate(time.Minute)
+	f.Body("series/shop/1h.json", quietHour(end, true))
+	s := seriesSession(t, "shop", "1h", f, &now)
+	ls := s.MetricsViewFit("shop", "1h", now, 100, 30, runes)
+	got := text(ls)
+	if strings.Contains(got, "<") {
+		t.Errorf("a floor:\n%s", got)
+	}
+	_, rqAxis, _ := plotOf(ls, "requests")
+	if strings.Count(rqAxis, " ") < 6 {
+		t.Fatalf("the requests' axis is not broken at the store's gap: %q", rqAxis)
+	}
+	for _, label := range []string{"5xx share", "p95"} {
+		_, axis, times := plotOf(ls, label)
+		if axis != rqAxis || !strings.Contains(times, "4 of 61 steps had requests") {
+			t.Errorf("%s: axis %q (the requests' %q), times %q", label, axis, rqAxis, times)
+		}
+	}
+	rows, _, _ := plotOf(ls, "5xx share")
+	if !strings.Contains(got, "5xx share   newest 0% at 13:50 (10m ago)\n            every point 0%\n") || len(rows) < 3 {
+		t.Errorf("5xx share's head:\n%s", got)
+	}
+	for i, r := range rows {
+		label := strings.TrimSpace(strings.Split(r, " |")[0])
+		if want := map[bool]string{true: "0%", false: ""}[i == len(rows)-1]; label != want || (strings.TrimSpace(strings.SplitN(r, " |", 2)[1]) != "") != (i == len(rows)-1) {
+			t.Errorf("every point 0%%: row %d %q", i, r)
+		}
+	}
+	for label, want := range map[string][2]string{"cpu": {" 0.0007 |", " 0.0001 |"}, "p95": {"  0.5ms |", "  0.3ms |"}} {
+		rows, _, _ := plotOf(ls, label)
+		if len(rows) < 3 || !strings.HasPrefix(rows[0], want[0]) || !strings.HasPrefix(rows[len(rows)-1], want[1]) {
+			t.Errorf("%s's labels: %q", label, rows)
+		}
+	}
+	if !strings.Contains(got, "cpu         newest 0.0005 cores at 14:00") || !strings.Contains(got, "max 0.0007 13:06 · min 0.0001 13:00") {
+		t.Errorf("cpu's head:\n%s", got)
+	}
+
+	// No requests panel: each step with no point is a gap.
+	f.Body("series/shop/1h.json", quietHour(end, false))
+	s.Engine.Again(now.Add(time.Minute), seriesJob("shop", "1h"))
+	now = now.Add(time.Minute)
+	for range 6 {
+		if j := step(t, s, f, &now); j.Kind == model.KSeries {
+			break
+		}
+	}
+	ls = s.MetricsViewFit("shop", "1h", now, 100, 30, runes)
+	_, axis, times := plotOf(ls, "5xx share")
+	if strings.Count(axis, "-") > 12 || !strings.Contains(times, "4 of 61 steps ") || strings.Contains(times, "had requests") {
+		t.Errorf("no requests panel: axis %q, times %q", axis, times)
 	}
 }
