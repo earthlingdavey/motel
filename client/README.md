@@ -194,7 +194,8 @@ prints the box's window, step and end, then a line a panel it knows
 and newest value, each with its time (the lowest and highest written
 alike until they differ), and how many of the window's steps have a
 point; for the 5xx share and the p95, beside a requests panel, how
-many had requests, since a step with none has no point of theirs.
+many had requests (a rate above 0), since a step with none has no
+point of theirs.
 Every word and number is the client's own, written from the box's
 numbers. A panel it does not know is named as the box's,
 a word of its grammar, and not drawn; the request panels' absence says
@@ -623,7 +624,8 @@ each), above each its
 newest value with its time and age and, on a row of its own, its
 highest and lowest with their times, those two again at the top and
 the bottom of its axis, written alike to more places until they differ
-(cores too small for the label's seven cells in millicores, `0.04m`);
+(cores too small for the label's seven cells in millicores, `0.04m`,
+and rates in thousandths a second, `0.3m/s`);
 every point of one value is said once (`every point 0%`) and labelled
 once, on its line's row, the bottom one at zero; and under it the time axis with a `^` in each column that holds a
 version's latest deploy that succeeded (from the app's status, which
@@ -635,8 +637,8 @@ with no point is a gap, never a zero or a line across it, and where a
 column holds several steps the axis's break says it. A point joined to
 neither is drawn across its step, so it shows. The 5xx share and the
 p95 have no point at a step with no request: in those two, a step the
-requests panel has a point at is no break, the count says how many
-steps had requests, and two points with only such steps between them
+requests panel has a rate of 0 at is no break, the count says how many
+steps had requests (a rate above 0), and two points with only such steps between them
 are bridged by a dotted line, a dot every second cell (with no
 requests panel, every step with no point is a gap). A panel absent says why (no point in the window; the request
 panels only for an app behind `observe`), and one the client does not

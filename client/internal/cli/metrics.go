@@ -101,12 +101,17 @@ func seriesView(s wire.Series, app, host string) render.Series {
 		steps = int(model.SeriesSpan(s.Window)/v.Step) + 1
 	}
 	at := func(pt [2]float64) time.Time { return time.Unix(int64(pt[0]), 0) }
-	// Beside a requests panel, the 5xx share's and the p95's steps with a
-	// point are those that had requests, as the screen counts them.
-	requests := false
+	// Beside a requests panel, the 5xx share's and the p95's count is of
+	// the steps that had requests (a rate above 0), as the screen's.
+	requests, requested := false, 0
 	for _, p := range s.Panels {
 		if p.Name == wire.PanelRequests && p.Unit == wire.UnitPerSecond {
 			requests = true
+			for _, pt := range p.Points {
+				if pt[1] != 0 {
+					requested++
+				}
+			}
 		}
 	}
 	for _, p := range s.Panels {
@@ -117,7 +122,7 @@ func seriesView(s wire.Series, app, host string) render.Series {
 			v.NoRequests = false
 		}
 		pn := render.SeriesPanel{Label: label, Name: tx(p.Name), Unit: tx(p.Unit), Known: known, Points: len(p.Points), Steps: steps,
-			HadRequests: known && requests && (p.Name == wire.Panel5xx || p.Name == wire.PanelP95)}
+			HadRequests: known && requests && (p.Name == wire.Panel5xx || p.Name == wire.PanelP95), Requested: requested}
 		if known && len(p.Points) > 0 {
 			lo, hi := p.Points[0], p.Points[0]
 			for _, pt := range p.Points {

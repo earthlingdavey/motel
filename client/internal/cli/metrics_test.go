@@ -77,6 +77,12 @@ other      the box's disk_bytes in bytes: not one this client draws
 	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || !strings.Contains(r.stdout, "5xx share  min 1.21% (13:59 UTC)  max 1.23% (13:51 UTC)  newest 1.2% (13:59 UTC)  2 of 61 steps\n") {
 		t.Errorf("5xx, no requests: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
+	// Beside a requests panel, the count is of the steps it has a rate
+	// above 0 at, a 5xx point there or not (every request aborted).
+	fb.series.Panels = append(fb.series.Panels, wire.Panel{Name: wire.PanelRequests, Unit: wire.UnitPerSecond, Points: [][2]float64{{t1(9), 0.05}, {t1(5), 0.02}, {t1(1), 0.1}, {t1(0), 0}}})
+	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || !strings.Contains(r.stdout, "newest 1.2% (13:59 UTC)  3 of 61 steps had requests\n") {
+		t.Errorf("5xx beside requests: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
 	// No point of the app at all: no cause said for the request panels.
 	fb.series.Panels = []wire.Panel{}
 	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || strings.Contains(r.stdout, "observe") || !strings.Contains(r.stdout, "none: the store holds no point of blog") {

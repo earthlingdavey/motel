@@ -878,8 +878,8 @@ func TestPlotQuiet(t *testing.T) {
 // TestSeriesExtremes: a panel's highest and lowest are written alike
 // until they differ, within a plot label's seven cells when compact,
 // never a "<" floor or a zero for a value above it; cores too small for
-// seven cells in millicores; one value once; and two values no writing
-// in seven cells tells apart, or a panel the client does not know, as
+// seven cells in millicores, and rates in thousandths a second; one
+// value once; and two values no writing in seven cells tells apart, or a panel the client does not know, as
 // SeriesValue writes them.
 func TestSeriesExtremes(t *testing.T) {
 	for _, c := range []struct {
@@ -906,7 +906,9 @@ func TestSeriesExtremes(t *testing.T) {
 		{wire.PanelP95, 80.1, 25, true, "80ms", "25ms"},
 		{wire.PanelMemory, 190840832, 187695104, true, "182M", "179M"},
 		{wire.PanelMemory, 190840832, 190840000, true, "182M", "182M"},
-		{wire.PanelRequests, 0.0004, 0.0003, true, "0.0004/s", "0.0003/s"},
+		{wire.PanelRequests, 0.0004, 0.0003, true, "0.4m/s", "0.3m/s"},
+		{wire.PanelRequests, 1.0 / 3600, 0, true, "0.3m/s", "0.0m/s"},
+		{wire.PanelRequests, 1.0 / 3600, 0, false, "0.00028/s", "0.00/s"},
 		{"disk_bytes", 2, 1, true, "2", "1"},
 	} {
 		if h, l := model.SeriesExtremes(c.name, c.hi, c.lo, c.compact); h != c.wantHi || l != c.want {
@@ -917,11 +919,12 @@ func TestSeriesExtremes(t *testing.T) {
 
 // quietHour is a 1 h body of shop's ending at end: CPU at every step;
 // requests at every step but a store gap from minute 35 to 40, none but
-// at minutes 5, 20, 21 and 50; and there alone, the 5xx share, all 0,
-// and the p95 (with no requests panel when requests is false).
+// at minutes 5, 12, 20, 21 and 50; and there alone, but at 12, where
+// every request was aborted, the 5xx share, all 0, and the p95 (with no
+// requests panel when requests is false).
 func quietHour(end time.Time, requests bool) string {
 	start := end.Add(-time.Hour)
-	busy := map[int]float64{5: 0.05, 20: 0.4, 21: 0.15, 50: 0.03}
+	busy := map[int]float64{5: 0.05, 12: 0.02, 20: 0.4, 21: 0.15, 50: 0.03}
 	var cpu, rps, share, p95 [][2]float64
 	for m := 0; m <= 60; m++ {
 		ts := float64(start.Add(time.Duration(m) * time.Minute).Unix())
@@ -930,7 +933,7 @@ func quietHour(end time.Time, requests bool) string {
 			continue
 		}
 		rps = append(rps, [2]float64{ts, busy[m]})
-		if _, ok := busy[m]; ok {
+		if _, ok := busy[m]; ok && m != 12 {
 			share = append(share, [2]float64{ts, 0})
 			p95 = append(p95, [2]float64{ts, 0.3 + float64(m%3)/10})
 		}
@@ -970,9 +973,10 @@ func plotOf(ls []model.Line, label string) (rows []string, axis, times string) {
 }
 
 // TestMetricsQuiet: a quiet app's hour: the 5xx share's and the p95's
-// steps with no point but a requests point are no gap, their axes
-// broken only where the requests' is (the store's gap), and their
-// counts say how many steps had requests; every point 0% is said once
+// steps with no point but a requests point of 0 are no gap, their axes
+// broken only where the requests' is (the store's gap) and at the step
+// that had requests but no point of theirs (every one aborted), and
+// their counts say how many steps had requests; every point 0% is said once
 // and labelled once, on the bottom row; the CPU's and a p95 under a
 // millisecond's labels differ, and no value is a "<" floor. With no
 // requests panel, each step with no point breaks the axis, as before.
@@ -992,10 +996,22 @@ func TestMetricsQuiet(t *testing.T) {
 	if strings.Count(rqAxis, " ") < 6 {
 		t.Fatalf("the requests' axis is not broken at the store's gap: %q", rqAxis)
 	}
+	// The requests' axis, broken too in the cells of minute 12's span.
+	want := []byte(rqAxis)
+	for c := int(math.Round((11*60+1)/3600.0*181)) / 2; c <= int(math.Round(12*60/3600.0*181))/2; c++ {
+		want[c] = ' '
+	}
 	for _, label := range []string{"5xx share", "p95"} {
-		_, axis, times := plotOf(ls, label)
-		if axis != rqAxis || !strings.Contains(times, "4 of 61 steps had requests") {
-			t.Errorf("%s: axis %q (the requests' %q), times %q", label, axis, rqAxis, times)
+		rows, axis, times := plotOf(ls, label)
+		if axis != string(want) || !strings.Contains(times, "5 of 61 steps had requests") {
+			t.Errorf("%s: axis %q, want %q; times %q", label, axis, want, times)
+		}
+		// No bridge across minute 12: nothing between minute 5's cells
+		// and minute 20's.
+		for _, r := range rows {
+			if mid := []rune(strings.SplitN(r, " |", 2)[1])[9:27]; strings.TrimSpace(string(mid)) != "" {
+				t.Errorf("%s: a bridge across the step with requests: %q", label, r)
+			}
 		}
 	}
 	rows, _, _ := plotOf(ls, "5xx share")

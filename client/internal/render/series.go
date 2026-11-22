@@ -36,12 +36,14 @@ type SeriesPanel struct {
 	Name, Unit termtext.Text
 	Known      bool
 	// Min, Max and Newest are formatted values with their times; Points
-	// is how many of the window's Steps have one. HadRequests says those
-	// are the steps that had requests (the 5xx share's and the p95's,
-	// beside a requests panel): a step with none has no point of them.
+	// is how many of the window's Steps have one. HadRequests says the
+	// count is instead Requested, the steps the requests panel has a rate
+	// above 0 at (the 5xx share's and the p95's, beside it): a step with
+	// no request has no point of theirs.
 	Min, Max, Newest SeriesPoint
 	Points, Steps    int
 	HadRequests      bool
+	Requested        int
 }
 
 // SeriesPoint is a value as the client writes it, and its time.
@@ -82,7 +84,7 @@ func WriteSeries(w io.Writer, s Series) error {
 		}
 		count := fmt.Sprintf("%d of %d steps", pn.Points, pn.Steps)
 		if pn.HadRequests {
-			count += " had requests"
+			count = fmt.Sprintf("%d of %d steps had requests", pn.Requested, pn.Steps)
 		}
 		p.line("%-10s min %s (%s)  max %s (%s)  newest %s (%s)  %s", pn.Label, pn.Min.V, at(pn.Min.T), pn.Max.V, at(pn.Max.T),
 			pn.Newest.V, at(pn.Newest.T), count)

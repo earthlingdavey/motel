@@ -165,9 +165,9 @@ func SeriesExtremes(name string, hi, lo float64, compact bool) (string, string) 
 
 // seriesWritings is the ways v of the panel named name is written,
 // coarsest first: as SeriesValue writes it, then in its unit to 0 to 6
-// places, then, compact, cores in millicores (an "m") to 0 to 3 places,
-// the box's six places of a core. Every value of a panel has as many,
-// so the i-th of two values are written alike.
+// places, then, compact, cores and rates in thousandths (an "m", as
+// "k" is thousands) to 0 to 3 places, the box's six places. Every value
+// of a panel has as many, so the i-th of two values are written alike.
 func seriesWritings(name string, v float64, compact bool) []string {
 	out := []string{SeriesValue(name, v, compact)}
 	unit, suffix := 1.0, ""
@@ -215,9 +215,13 @@ func seriesWritings(name string, v float64, compact bool) []string {
 	for p := range 7 {
 		out = append(out, strconv.FormatFloat(v/unit, 'f', p, 64)+suffix)
 	}
-	if name == wire.PanelCPU && compact {
+	if compact && (name == wire.PanelCPU || name == wire.PanelRequests) {
+		milli := "m"
+		if name == wire.PanelRequests {
+			milli = "m/s"
+		}
 		for p := range 4 {
-			out = append(out, strconv.FormatFloat(v*1000, 'f', p, 64)+"m")
+			out = append(out, strconv.FormatFloat(v*1000, 'f', p, 64)+milli)
 		}
 	}
 	return out
@@ -381,14 +385,14 @@ func (s *Session) MetricsViewFit(app, rng string, now time.Time, width, height i
 			known = false
 		}
 	}
-	// The steps the store had: the requests panel's, a point at each, a
-	// rate of 0 where no request came. The 5xx share and the p95 have no
-	// point at a step of none, which is no gap in what the store had.
-	var stored map[int64]bool
+	// The requests panel's rate at each step the store had: 0 where no
+	// request came. The 5xx share and the p95 have no point at a step of
+	// none, which is no gap in what the store had.
+	var rates map[int64]float64
 	if rq := findPanel(v.Panels, seriesPanel{name: wire.PanelRequests, unit: wire.UnitPerSecond}); rq != nil {
-		stored = map[int64]bool{}
+		rates = map[int64]float64{}
 		for _, pt := range inWindow(rq.Points, start, end) {
-			stored[int64(pt[0])] = true
+			rates[int64(pt[0])] = pt[1]
 		}
 	}
 	has := map[string]bool{}
@@ -396,11 +400,11 @@ func (s *Session) MetricsViewFit(app, rng string, now time.Time, width, height i
 		has[p.name] = true
 		out = append(out, nil)
 		out = append(out, heads[i]...)
-		var st map[int64]bool
+		var r map[int64]float64
 		if p.name == wire.Panel5xx || p.name == wire.PanelP95 {
-			st = stored
+			r = rates
 		}
-		out = append(out, panelPlot(p, inWindow(findPanel(v.Panels, p).Points, start, end), st, start, end, step, now, plotW, rows, marks, width, cells)...)
+		out = append(out, panelPlot(p, inWindow(findPanel(v.Panels, p).Points, start, end), r, start, end, step, now, plotW, rows, marks, width, cells)...)
 	}
 	ran := has[wire.PanelMemory] || has[wire.PanelCPU]
 	switch {
@@ -495,11 +499,11 @@ func extremes(in [][2]float64) (lo, hi [2]float64) {
 // the row of its line); then the time axis, broken (a space) in each
 // column whose span holds a step with no point and marked ^ at each
 // deploy; and the window's two ends under it, with how many of its
-// steps have a point. stored, when not nil, is the steps the store had
-// a point at (the requests panel's): a step of them with no point here
-// had no request, so it breaks no column, and the count says how many
-// steps had requests.
-func panelPlot(p seriesPanel, in [][2]float64, stored map[int64]bool, start, end time.Time, step time.Duration, now time.Time, plotW, rows int, marks []int, width int, cells Cells) []Line {
+// steps have a point. rates, when not nil, is the requests panel's rate
+// at each step the store had: a step of rate 0 with no point here had
+// no request, so it breaks no column, and the count is of the steps
+// that had requests (a rate above 0), a point here or not.
+func panelPlot(p seriesPanel, in [][2]float64, rates map[int64]float64, start, end time.Time, step time.Duration, now time.Time, plotW, rows int, marks []int, width int, cells Cells) []Line {
 	if len(in) == 0 {
 		return nil
 	}
@@ -507,11 +511,23 @@ func panelPlot(p seriesPanel, in [][2]float64, stored map[int64]bool, start, end
 	// over 14 days) is left unbroken, and drawn with no bridge.
 	many := end.Sub(start)/step > 4096
 	if many {
-		stored = nil
+		rates = nil
+	}
+	var quiet map[int64]bool
+	requested := 0
+	if rates != nil {
+		quiet = map[int64]bool{}
+		for t, r := range rates {
+			if r == 0 {
+				quiet[t] = true
+			} else {
+				requested++
+			}
+		}
 	}
 	lo, hi := extremes(in)
 	var out []Line
-	plot := Plot(in, stored, start, end, step, lo[1], hi[1], plotW, rows)
+	plot := Plot(in, quiet, start, end, step, lo[1], hi[1], plotW, rows)
 	hiS, loS := SeriesExtremes(p.name, hi[1], lo[1], true)
 	flat := -1
 	if hi[1] == lo[1] {
@@ -553,7 +569,7 @@ func panelPlot(p seriesPanel, in [][2]float64, stored map[int64]bool, start, end
 				hits++
 				continue
 			}
-			if stored[t.Unix()] {
+			if quiet[t.Unix()] {
 				continue
 			}
 			// A step with no point breaks every cell its span (the step up
@@ -572,8 +588,8 @@ func panelPlot(p seriesPanel, in [][2]float64, stored map[int64]bool, start, end
 	// point, which the breaks in the axis show where.
 	from, to := clock(start, now, false), clock(end, now, false)
 	count := strconv.Itoa(hits) + " of " + strconv.Itoa(int(end.Sub(start)/step)+1) + " steps"
-	if stored != nil {
-		count += " had requests"
+	if rates != nil {
+		count = strconv.Itoa(requested) + " of " + strconv.Itoa(int(end.Sub(start)/step)+1) + " steps had requests"
 	}
 	room := plotW - len(from) - len(to)
 	mid := strings.Repeat(" ", max(room, 1))
@@ -674,13 +690,13 @@ func roughSpan(d time.Duration) string {
 // and hi, the top; two points a step or less apart joined by a line,
 // so a step with no point is a gap, never a zero or a line across it.
 // A point joined to neither is drawn across its step's span (the step
-// up to its time), so it shows. stored, when not nil, is the steps the
-// store had a point at: two points further apart than a step with every
-// step between them stored (no request then, not a gap) are bridged by
-// a dotted line, a dot every second cell. An empty cell is a space.
+// up to its time), so it shows. quiet, when not nil, is the steps the
+// store had with no request: two points further apart than a step with
+// every step between them quiet (not a gap) are bridged by a dotted
+// line, a dot every second cell. An empty cell is a space.
 // Values outside lo and hi are drawn at the edge; with lo equal to hi,
 // every point on the middle row, or at zero on the bottom row.
-func Plot(pts [][2]float64, stored map[int64]bool, start, end time.Time, step time.Duration, lo, hi float64, w, rows int) []string {
+func Plot(pts [][2]float64, quiet map[int64]bool, start, end time.Time, step time.Duration, lo, hi float64, w, rows int) []string {
 	if w <= 0 || rows <= 0 {
 		return nil
 	}
@@ -732,7 +748,7 @@ func Plot(pts [][2]float64, stored map[int64]bool, start, end time.Time, step ti
 		}
 		px, py := x(pts[i-1][0]), y(pts[i-1][1])
 		if !joined(i) {
-			if bridged(stored, pts[i-1][0], pt[0], s) {
+			if bridged(quiet, pts[i-1][0], pt[0], s) {
 				// No request between: a dot every fourth column (every
 				// second cell) on the line between, none beside either.
 				for xx := px + 4; xx < left-1; xx += 4 {
@@ -786,13 +802,13 @@ func Plot(pts [][2]float64, stored map[int64]bool, start, end time.Time, step ti
 var brailleBit = [2][4]rune{{0x01, 0x02, 0x04, 0x40}, {0x08, 0x10, 0x20, 0x80}}
 
 // bridged says every step between the points at a and b, more than a
-// step apart, is in stored.
-func bridged(stored map[int64]bool, a, b, step float64) bool {
-	if stored == nil || step <= 0 || !(b-a > step) {
+// step apart, is in quiet.
+func bridged(quiet map[int64]bool, a, b, step float64) bool {
+	if quiet == nil || step <= 0 || !(b-a > step) {
 		return false
 	}
 	for t := a + step; t < b; t += step {
-		if !stored[int64(t)] {
+		if !quiet[int64(t)] {
 			return false
 		}
 	}
