@@ -106,7 +106,10 @@ func TestFixedRulesAreMotelsStateAlerts(t *testing.T) {
 // The second source deduplicates only if, for every failure motel's
 // channel_failed can see (a receiver of the render and an integration
 // among its channels), the rules that fire carry exactly the label sets
-// motel's own posts carry: the same alerts, to the same channels.
+// motel's own posts carry: the same alerts, to the same channels. The
+// read-only copy is motel's alone: it has no rule (DESIGN-metrics.md,
+// "ChannelFailed, a second source"), and none of the rules carries its
+// notify_channel.
 func TestChannelFailedRulesCarryMotelsLabels(t *testing.T) {
 	a := notifyApp(t)
 	rules := channelFailedRules(a).Rules
@@ -137,7 +140,7 @@ func TestChannelFailedRulesCarryMotelsLabels(t *testing.T) {
 			body = metricsHead + failedLine(in, recv, "clientError", 1)
 			te.scrapeFailed(context.Background(), read)
 			var want []string
-			for _, al := range te.drain() {
+			for _, al := range told(te.drain()) {
 				want = append(want, key(al.Labels))
 			}
 			var got []string
@@ -148,6 +151,9 @@ func TestChannelFailedRulesCarryMotelsLabels(t *testing.T) {
 				}
 				if r.Labels["integration"] != in || !regexp.MustCompile("^(?:"+m[1]+")$").MatchString(recv) {
 					continue
+				}
+				if r.Labels[labelChannel] == readOnlyChannel {
+					t.Fatalf("a rule for the read-only copy: %+v", r)
 				}
 				l := maps.Clone(r.Labels)
 				l["alertname"] = r.Alert

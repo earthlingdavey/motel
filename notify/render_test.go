@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -512,6 +514,8 @@ func TestRenderRoutesWithAmtool(t *testing.T) {
 	}{
 		{[]string{"alertname=Watchdog", "severity=none"}, "heartbeat"},
 		{[]string{"alertname=ChannelFailed", "notify_channel=pager", "severity=warning"}, "ch-pager"},
+		// The read-only copy: route 2, no leaf, its blackhole.
+		{[]string{"alertname=ChannelFailed", "notify_channel=-", "severity=warning", "subject=box", "integration=slack", "suspects=ops"}, "blackhole"},
 		{[]string{"alertname=NotifyTest", "notify_channel=alice", "severity=info"}, "ch-alice"},
 		{[]string{"alertname=deploy_in_progress", "kind=mute", "app=blog", "severity=none"}, "blackhole"},
 		{[]string{"alertname=deploy_failed", "kind=event", "app=blog", "severity=warning"}, "event-warning-ops,event-warning-alice"},
@@ -879,5 +883,104 @@ func TestRenderHeartbeatRepeatsEveryFlush(t *testing.T) {
 	}
 	if interval != 5*time.Minute || repeat >= interval {
 		t.Fatalf("group_interval %v, repeat_interval %v: want a 5m interval and a repeat under it", interval, repeat)
+	}
+}
+
+// routeOf is where Alertmanager's routing sends labels on the rendered
+// tree cfg: a route's children in order, the first that matches taken
+// and the next ones too while each matched one says continue, and the
+// route's own receiver (or the one it inherits) when no child matches.
+// The matchers are the forms render writes: name="v" and name=~"re".
+func routeOf(t *testing.T, cfg []byte, labels map[string]string) []string {
+	t.Helper()
+	var c amConfig
+	if err := yaml.Unmarshal(cfg, &c); err != nil {
+		t.Fatal(err)
+	}
+	matchRe := regexp.MustCompile(`^([a-z_]+)(=~|=)(".*")$`)
+	matches := func(ms []string) bool {
+		for _, m := range ms {
+			p := matchRe.FindStringSubmatch(m)
+			if p == nil {
+				t.Fatalf("a matcher render does not write: %s", m)
+			}
+			v, err := strconv.Unquote(p[3])
+			if err != nil {
+				t.Fatalf("matcher %s: %v", m, err)
+			}
+			got := labels[p[1]]
+			if p[2] == "=" && got != v || p[2] == "=~" && !regexp.MustCompile("^(?:"+v+")$").MatchString(got) {
+				return false
+			}
+		}
+		return true
+	}
+	var walk func(r amRoute, inherited string) []string
+	walk = func(r amRoute, inherited string) []string {
+		recv := r.Receiver
+		if recv == "" {
+			recv = inherited
+		}
+		var out []string
+		for _, ch := range r.Routes {
+			if !matches(ch.Matchers) {
+				continue
+			}
+			out = append(out, walk(ch, recv)...)
+			if !ch.Continue {
+				break
+			}
+		}
+		if len(out) == 0 {
+			out = []string{recv}
+		}
+		return out
+	}
+	return walk(c.Route, "")
+}
+
+// TestRenderReadOnlyCopyReachesNoChannel: on every tree render writes,
+// the one-channel box's, four channels', one with apps and bindings, one
+// with no heartbeat line, the read-only ChannelFailed (any integration,
+// any suspects) reaches the blackhole alone, a receiver with no
+// integration: no channel is told it, and no counter moves for it. The
+// walk is checked against what amtool says of the same tree
+// (TestRenderRoutesWithAmtool) on the addressed copies.
+func TestRenderReadOnlyCopyReachesNoChannel(t *testing.T) {
+	noHeartbeat := strings.Replace(oneChannelBlock, "\theartbeat {secret.NOTIFY_HC_URL}\n", "", 1)
+	for name, block := range map[string]string{"full": fullBlock, "one channel": oneChannelBlock, "four channels": fourChannelBlock, "no heartbeat": noHeartbeat} {
+		a := mustParse(t, block)
+		r, err := a.resolve(testTrust(), testSecrets())
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, receivers := render(r, testStateDir)
+		var c amConfig
+		if err := yaml.Unmarshal(cfg, &c); err != nil {
+			t.Fatal(err)
+		}
+		for _, rc := range c.Receivers {
+			if rc.Name == "blackhole" && (len(rc.WebhookConfigs)+len(rc.SlackConfigs)+len(rc.DiscordConfigs) != 0) {
+				t.Fatalf("%s: the blackhole has an integration: %+v", name, rc)
+			}
+		}
+		if _, ok := receivers["blackhole"]; ok {
+			t.Fatalf("%s: the blackhole is a channel's receiver, whose deliveries would end a hold", name)
+		}
+		for _, n := range r.order {
+			got := routeOf(t, cfg, map[string]string{"alertname": alertChannelFailed, labelChannel: n, "severity": SeverityWarning, "subject": "box"})
+			if !slices.Equal(got, []string{"ch-" + n}) {
+				t.Fatalf("%s: the copy addressed to %s goes to %v", name, n, got)
+			}
+			for _, in := range []string{"webhook", "slack", "discord"} {
+				for _, sus := range []string{n, "", n + ",other"} {
+					l := map[string]string{"alertname": alertChannelFailed, labelChannel: readOnlyChannel, "severity": SeverityWarning,
+						"subject": "box", "integration": in, "suspects": sus}
+					if got := routeOf(t, cfg, l); !slices.Equal(got, []string{"blackhole"}) {
+						t.Fatalf("%s: the read-only copy %v goes to %v", name, l, got)
+					}
+				}
+			}
+		}
 	}
 }

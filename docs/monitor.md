@@ -598,14 +598,22 @@ other channels about a failure as `ChannelFailed` (DESIGN-notify.md,
 own in Alertmanager's config (`ch-ops`, `event-warning-ops`,
 `state-critical-ops`, `fallback-ops`, …), so a failure names the one
 channel that failed, and every other operator channel that takes
-warnings hears it, whatever its kind.
+warnings hears it, whatever its kind. motel posts one more copy too,
+addressed to no channel (`notify_channel="-"`), which Alertmanager
+holds and sends nowhere: it is the one `GET /_motel/alerts` shows, so
+the TUI's `:alerts` and `motel monitor alerts` list a failure once,
+however many channels were told, and list it on a box with one channel
+too, where no channel can be.
 
 With no other channel to tell (a single operator channel, or the
 others set to `severity critical`), motel **holds the heartbeat**
 instead: once the failure has stood 5 minutes with nothing delivered
 through that channel since, it stops pinging, and the heartbeat's
 check off the box reports the box down through its own channels (its
-email, say). The journal says why:
+email, say). The copy addressed to no channel stays in
+`GET /_motel/alerts` from the failure until the channel delivers
+again, so the TUI shows the failure for as long as it stands. The
+journal says why:
 
 ```
 {"level":"warn","logger":"monitor","msg":"monitor: heartbeat held: a failed delivery no channel was told of; the heartbeat's check off the box will report this box down","suspects":["ops"],"failed_at":"…","resumes":"at the next delivery through the channel: mend it, then moteld monitor test ops"}

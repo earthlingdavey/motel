@@ -524,6 +524,27 @@ With no channel (a `metrics` line alone) every group is empty
 (vmalert refuses a rule file with no group at all); so are they after a
 reload takes the `metrics` line away ("The metrics line").
 
+**The read-only copy has no rule.** motel's `ChannelFailed` read-only
+copy (`notify_channel="-"`, DESIGN-notify.md, "Failed delivery") is
+motel's alone. A twin rule with its labels was measured on 2026-11-21
+(Debian's Alertmanager 0.28.1 and vmalert 1.112.0 with the units'
+flags, one operator channel failing three times in two minutes, the
+TUI's 15 s read): it rang the TUI's bell 18 times where motel's copy
+alone rang once. vmalert's first firing post carries the minute of its
+evaluation as `startsAt`, which was earlier than motel's and moved the
+held start (a new alert to the TUI). About 6.6 minutes after the last
+failure vmalert resolves the alert, with `endsAt` that evaluation's
+time, and sends the resolve again at every evaluation for 15 minutes.
+Each resolve, the younger post, ended the merged alert, and motel's
+re-post while the heartbeat was held brought it back a minute later:
+the row left the read for about 23 s of every minute, and each return
+rang. What the twin would buy is narrow: the copy while moteld itself
+is not running (vmalert reads the counter then, motel cannot), and the
+copy of a failure all of whose attempts fall in that time, which
+moteld's start, reloading Alertmanager, takes out of the counter
+(DESIGN-notify.md, "Owed"). A twin that does not resolve while motel
+holds would need motel to push a series saying so; it is not built.
+
 **Not the Watchdog.** The fresh-slate draft and DESIGN-notify.md's
 "Later slices" had vmalert's `Watchdog` beside motel's, deduplicated.
 It cannot be, either way it is written. With motel's labels and an

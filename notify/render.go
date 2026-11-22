@@ -53,6 +53,13 @@ const (
 	// labelChannel addresses one channel directly: ChannelFailed (to
 	// each of the operator's other channels) and NotifyTest.
 	labelChannel = "notify_channel"
+	// readOnlyChannel is labelChannel's value on ChannelFailed's
+	// read-only copy (readOnlyCopy). No channel can be named it
+	// (channelNameRe starts with a letter or digit), so route 2 matches
+	// it and no leaf of route 2 does: it ends at route 2's blackhole on
+	// every tree render writes, an older one's too, with no route of its
+	// own that a render could lose.
+	readOnlyChannel = "-"
 )
 
 // amConfig is the part of Alertmanager's configuration motel writes.

@@ -16,9 +16,11 @@
 #   watchdog_throttled blog       → nothing: inhibited by deploy_in_progress
 #   watchdog_throttled shop       → /ops, after the 30 s group_wait
 #   a box state (monitor send)    → /ops at +30 s; its recovery within a minute of motel's hold
-#   oncall (answers 400)          → ChannelFailed to /ops, naming oncall
+#   oncall (answers 400)          → ChannelFailed to /ops, naming oncall, and its
+#                                   read-only copy held at the blackhole, told to no one
 #   blog-deployer failing         → ChannelFailed to /ops (json beside its ntfy), naming it alone
-#   oncall the only operator      → the heartbeat held after 5 m, resumed by a delivery
+#   oncall the only operator      → the heartbeat held after 5 m, resumed by a delivery;
+#                                   ChannelFailed's read-only copy held all the while
 #   a person's key's first use      → person_new_network to /ops, at warning, its summary
 #   the same network again          → nothing
 #   another /24                     → person_new_network again, as a new network
@@ -297,6 +299,14 @@ r=$(failing_receivers)
 	&& pass "the failed counter names oncall's receivers alone: $(echo $r)" || fail "failing receivers: $(echo $r)"
 am 'http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22&filter=notify_channel%3D%22ops%22' | grep -q '"suspects":"oncall"' \
 	&& pass "ChannelFailed to ops names oncall alone (suspects=oncall)" || fail "ChannelFailed: $(am 'http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22' | head -c 400)"
+# The read-only copy (notify/DESIGN-notify.md, "Failed delivery"): held
+# beside the one told to ops, active, at the blackhole alone, and never
+# delivered anywhere.
+ro=$(am 'http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22&filter=notify_channel%3D%22-%22&filter=suspects%3D%22oncall%22')
+printf '%s' "$ro" | grep -q '"state":"active"' && printf '%s' "$ro" | grep -q '"receivers":\[{"name":"blackhole"}\]' \
+	&& pass "the read-only copy naming oncall is held, active, at the blackhole alone" || fail "the read-only copy: $(printf '%s' "$ro" | head -c 400)"
+n=$(sinklog | awk '$4=="ChannelFailed" && $7=="-"' | wc -l)
+[ "$n" -eq 0 ] && pass "no channel was delivered the read-only copy" || fail "the read-only copy was delivered $n times"
 
 }
 
@@ -926,11 +936,24 @@ else
 fi
 journalctl -u moteld --since "@$s_15" -o cat --no-pager | grep 'monitor: channel failed' | grep '"suspects":\["oncall"\]' | grep -q '"told":\[\]' \
 	&& pass "journal: monitor: channel failed told no channel" || fail "channel failed: $(journalctl -u moteld --since "@$s_15" -o cat --no-pager | grep 'monitor: channel failed' | tail -1)"
+# No channel was told, and the read-only copy holds the failure for the
+# people's reads: active at the blackhole, from the hold's start, which
+# the re-post at each read while the hold stands keeps.
+ro_q='http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22&filter=notify_channel%3D%22-%22&filter=suspects%3D%22oncall%22'
+ro_start() { am "$ro_q" | sed -n 's/.*"startsAt":"\([^"]*\)".*/\1/p' | head -1; }
+r0=$(ro_start)
+printf '%s' "$(am "$ro_q")" | grep -q '"state":"active"' && printf '%s' "$(am "$ro_q")" | grep -q '"receivers":\[{"name":"blackhole"}\]' \
+	&& [ -n "$r0" ] && pass "while held, the read-only copy naming oncall is held, active, at the blackhole (from $r0)" \
+	|| fail "the read-only copy while held: $(am "$ro_q" | head -c 400)"
 e0=$(wd_ends)
 sleep 75
 e1=$(wd_ends)
 [ -z "$e1" ] || [ "$e1" = "$e0" ] \
 	&& pass "no Watchdog posted while held (endsAt '$e0', then '$e1')" || fail "Watchdog posted while held: endsAt $e0 → $e1"
+r1=$(ro_start)
+[ -n "$r1" ] && [ "$r1" = "$r0" ] && pass "75 s on, the read-only copy is still held from $r0" || fail "the read-only copy's start: '$r0', then '$r1'"
+n=$(sinklog | awk '$4=="ChannelFailed" && $7=="-"' | wc -l)
+[ "$n" -eq 0 ] && pass "no channel was delivered the read-only copy" || fail "the read-only copy was delivered $n times"
 cp -p /etc/motel/secrets/_box.env /tmp/_box.env.15
 sed -i 's#^NOTIFY_ONCALL_URL=.*#NOTIFY_ONCALL_URL="http://e2e-sink:8080/oncall"#' /etc/motel/secrets/_box.env
 s_mend=$(date +%s)
@@ -943,6 +966,13 @@ until journalctl -u moteld --since "@$s_mend" -o cat --no-pager | grep -q 'monit
 done
 journalctl -u moteld --since "@$s_mend" -o cat --no-pager | grep -q 'monitor: heartbeat resumed' \
 	&& pass "journal: monitor: heartbeat resumed, $(( $(date +%s) - s_mend )) s after the mend" || fail "no monitor: heartbeat resumed within 90 s"
+# The record ends with the hold, and its read-only copy is resolved:
+# Alertmanager's list no longer has it.
+i=0
+until [ "$(am "$ro_q")" = "[]" ]; do
+	i=$((i + 1)); [ "$i" -ge 30 ] && break; sleep 1
+done
+[ "$(am "$ro_q")" = "[]" ] && pass "the read-only copy is resolved with the hold" || fail "the read-only copy after the hold: $(am "$ro_q" | head -c 400)"
 i=0
 until [ -n "$(wd_ends)" ] && { [ -z "$e1" ] || expr "$(wd_ends)" \> "$e1" >/dev/null; }; do
 	i=$((i + 1)); [ "$i" -ge 75 ] && break; sleep 1

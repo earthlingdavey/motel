@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -375,5 +377,59 @@ func TestAlertsSourceIsTheView(t *testing.T) {
 	var src liveswap.AlertsSource = alertsSource{view: v, logger: zap.NewNop()}
 	if held, ok := src.Alerts(context.Background()); !ok || len(held.Alerts) != 1 || held.Alerts[0].App != "blog" {
 		t.Errorf("%v %+v", ok, held)
+	}
+}
+
+// TestHeldAlertsFoldChannelFailed: a ChannelFailed's copies addressed to
+// each channel leave the people's reads only when Alertmanager holds the
+// read-only copy of the same failure (integration and suspects): then
+// the read carries that one row. With no read-only copy (an older
+// moteld's failure, or vmalert's rules alone) they stay, as before; and
+// a read-only copy of another failure folds none of them.
+func TestHeldAlertsFoldChannelFailed(t *testing.T) {
+	cf := func(channel, integration, suspects, summary string) string {
+		return `{"labels":{"alertname":"ChannelFailed","notify_channel":"` + channel + `","severity":"warning","subject":"box","integration":"` + integration +
+			`","suspects":"` + suspects + `"},"annotations":{"summary":"` + summary + `"},"startsAt":"2026-11-21T17:00:00Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[]}}`
+	}
+	other := `{"labels":{"alertname":"disk_low","subject":"box","instance":"/","severity":"warning"},"annotations":{"summary":"disk"},"startsAt":"2026-11-21T16:00:00Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[]}}`
+	addressed := cf("oncall", "webhook", "ops", "told") + "," + cf("pager", "webhook", "ops", "told") + "," + cf("chat", "webhook", "ops", "told")
+	cases := []struct {
+		name, held string
+		want       []string // the ChannelFailed rows' summaries, in order
+	}{
+		{"three told and the read-only copy: one row", other + "," + addressed + "," + cf("-", "webhook", "ops", "read-only"), []string{"read-only"}},
+		{"the read-only copy first", cf("-", "webhook", "ops", "read-only") + "," + addressed, []string{"read-only"}},
+		{"three told, no read-only copy: three rows, as before", other + "," + addressed, []string{"told", "told", "told"}},
+		{"one channel: the read-only copy alone", cf("-", "webhook", "ops", "read-only"), []string{"read-only"}},
+		{"a read-only copy of another channel's failure folds nothing", addressed + "," + cf("-", "webhook", "oncall", "read-only"),
+			[]string{"told", "told", "told", "read-only"}},
+		{"nor one of another integration with the same suspects", addressed + "," + cf("-", "slack", "ops", "read-only"),
+			[]string{"told", "told", "told", "read-only"}},
+		{"two failures, one with its copy", addressed + "," + cf("ops", "discord", "alice", "alice told") + "," + cf("-", "webhook", "ops", "read-only"),
+			[]string{"alice told", "read-only"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			am := &fakeAMReads{alerts: "[" + c.held + "]", silences: `[]`, alertsCode: 200, silCode: 200}
+			held, err := newAMClient(am.serve(t)).heldAlerts(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			others := 0
+			for _, a := range held.Alerts {
+				if a.Name == alertChannelFailed {
+					got = append(got, a.Summary)
+				} else {
+					others++
+				}
+			}
+			if !slices.Equal(got, c.want) {
+				t.Errorf("ChannelFailed rows %q, want %q", got, c.want)
+			}
+			if want := strings.Count(c.held, `"disk_low"`); others != want {
+				t.Errorf("%d other alerts, want %d", others, want)
+			}
+		})
 	}
 }

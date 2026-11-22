@@ -97,6 +97,10 @@ func TestCaddyfileRefusals(t *testing.T) {
 		{"secret lowercase", `channel ops slack {secret.NOTIFY_ops}`, "NOTIFY_"},
 		{"unknown kind", `channel ops teams {secret.NOTIFY_OPS_URL}`, "is not one of json, ntfy, slack, discord"},
 		{"bad name", `channel Ops slack {secret.NOTIFY_OPS_URL}`, "lowercase letters"},
+		// readOnlyChannel, the read-only ChannelFailed's notify_channel:
+		// a channel of that name would be told every copy of it.
+		{"the read-only copy's name", `channel - slack {secret.NOTIFY_OPS_URL}`, "lowercase letters"},
+		{"a leading dash", `channel -ops slack {secret.NOTIFY_OPS_URL}`, "lowercase letters"},
 		{"bad severity", `channel ops slack {secret.NOTIFY_OPS_URL} severity page`, "not critical, warning or info"},
 		{"option after URL", `channel ops slack {secret.NOTIFY_OPS_URL} floor critical`, "only severity follows"},
 		{"too few", `channel ops slack`, "channel takes"},

@@ -106,6 +106,8 @@ func (s amHeldSilence) wireSilence() wire.Silence {
 // networks and addresses, and would tell a thief who holds a box
 // viewer's key that it was seen; a silence of either is left out of the
 // list too, for the same reasons: its comment, its key and its end),
+// and the copies of a ChannelFailed addressed to each channel when its
+// read-only copy is held (foldChannelFailed),
 // and each alert's silences read for when the last of them ends; and
 // every silence that has not expired, which the box-wide read lists, so
 // the silence list is asked for on every fetch, whatever the alerts.
@@ -121,6 +123,7 @@ func (c *amClient) heldAlerts(ctx context.Context) (liveswap.HeldAlerts, error) 
 	held = slices.DeleteFunc(held, func(a amHeld) bool {
 		return slices.Contains(notSilenceable, a.Labels["alertname"]) || slices.Contains(personAlerts, a.Labels["alertname"])
 	})
+	held = foldChannelFailed(held)
 	data, err = c.do(ctx, http.MethodGet, "/api/v2/silences", nil)
 	if err != nil {
 		return liveswap.HeldAlerts{}, err
@@ -154,6 +157,29 @@ func (c *amClient) heldAlerts(ctx context.Context) (liveswap.HeldAlerts, error) 
 		out = append(out, al)
 	}
 	return liveswap.HeldAlerts{Alerts: out, Silences: kept}, nil
+}
+
+// foldChannelFailed leaves out of the people's reads each ChannelFailed
+// addressed to a channel when Alertmanager holds the read-only copy of
+// the same failure (the same integration and suspects): the reads carry
+// no notify_channel, so the copies told to each channel would be as many
+// identical rows beside it. A failure with no read-only copy held (an
+// older moteld's, or vmalert's rule's alone while moteld was not
+// running) keeps its addressed copies, as before.
+func foldChannelFailed(held []amHeld) []amHeld {
+	failure := func(a amHeld) string { return a.Labels["integration"] + "\x00" + a.Labels["suspects"] }
+	readOnly := map[string]bool{}
+	for _, a := range held {
+		if a.Labels["alertname"] == alertChannelFailed && a.Labels[labelChannel] == readOnlyChannel {
+			readOnly[failure(a)] = true
+		}
+	}
+	if len(readOnly) == 0 {
+		return held
+	}
+	return slices.DeleteFunc(held, func(a amHeld) bool {
+		return a.Labels["alertname"] == alertChannelFailed && a.Labels[labelChannel] != readOnlyChannel && readOnly[failure(a)]
+	})
 }
 
 // alertsFetch is one fetch of what Alertmanager holds: heldAlerts, a

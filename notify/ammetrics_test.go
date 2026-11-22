@@ -179,7 +179,7 @@ func TestScrapeFailedKeepsTheBaselineOverABadRead(t *testing.T) {
 	for i, b := range bodies {
 		body := b
 		te.scrapeFailed(context.Background(), func(context.Context) ([]byte, error) { return []byte(body), nil })
-		got := te.drain()
+		got := told(te.drain())
 		switch i {
 		case 0, 1, 2:
 			if len(got) != 0 {
@@ -224,7 +224,7 @@ func TestReloadCancelIsNoFailure(t *testing.T) {
 	for i, b := range bodies {
 		body := b
 		te.scrapeFailed(context.Background(), func(context.Context) ([]byte, error) { return []byte(body), nil })
-		got := te.drain()
+		got := told(te.drain())
 		switch i {
 		case 0, 1:
 			if len(got) != 0 {
