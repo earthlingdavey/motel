@@ -827,9 +827,13 @@ const (
 	failedBeforeAnyPhase = `{"error":"` + linkRefusal + `","status":{"app":"demo","phase":"idle","current_version":"v1","running":true,"deploys":[{"version":"v2","status":"failed","phase":"starting","started_at":"t","finished_at":"t"}],"last_deploy":{"version":"v3","status":"failed","error":"` + linkRefusal + `","started_at":"t","finished_at":"t","artifact_entries":0,"artifact_bytes":0},"available_versions":["v1"]}}`
 	// v3 failed in starting, as a stream's last line.
 	failedInStarting = `{"at":"t","event":"phase","phase":"downloading"}` + "\n" + `{"error":"start failed: boom","status":{"app":"demo","phase":"idle","current_version":"v1","running":true,"deploys":[{"version":"v3","status":"failed","phase":"starting","started_at":"t","finished_at":"t"}],"last_deploy":{"version":"v3","status":"failed","error":"start failed: boom","phase":"starting","started_at":"t","finished_at":"t","artifact_entries":0,"artifact_bytes":0},"available_versions":["v1"]},"event":"done","http_status":500}`
-	// A body the filter changed: its top level re-marshalled with its
-	// keys sorted, redacted_env among them; v1 failed in starting.
+	// A body an older moteld's filter changed: its top level
+	// re-marshalled with its keys sorted, redacted_env among them; v1
+	// failed in starting.
 	failedRedacted = `{"error":"start failed: [redacted]","redacted_env":["API_KEY"],"status":{"app":"demo","phase":"idle","current_version":"v0","running":true,"deploys":[{"version":"v0","status":"failed","phase":"soaking","started_at":"t","finished_at":"t"}],"last_deploy":{"version":"v1","status":"failed","error":"start failed: [redacted]","phase":"starting","started_at":"t","finished_at":"t","artifact_entries":0,"artifact_bytes":0},"available_versions":["v0"]}}`
+	// The same failure as this moteld writes it: the wire type's order,
+	// redacted_env last.
+	failedRedactedNow = `{"error":"start failed: [redacted]","status":{"app":"demo","phase":"idle","current_version":"v0","running":true,"deploys":[{"version":"v0","status":"failed","phase":"soaking","started_at":"t","finished_at":"t"}],"last_deploy":{"version":"v1","status":"failed","error":"start failed: [redacted]","phase":"starting","started_at":"t","finished_at":"t","artifact_entries":0,"artifact_bytes":0},"available_versions":["v0"]},"redacted_env":["API_KEY"]}`
 )
 
 func TestDeployShNamesTheFailureOfTheVersionSent(t *testing.T) {
@@ -849,6 +853,7 @@ func TestDeployShNamesTheFailureOfTheVersionSent(t *testing.T) {
 		{"a failure before the first phase", failedBeforeAnyPhase, "v3", "", false, linkRefusal, "demo v3 failed, "},
 		{"a failure in starting, streamed", failedInStarting, "v3", "", true, "in starting: start failed: boom", "demo v3 failed in `starting`, "},
 		{"a filtered body", failedRedacted, "v1", "", false, "in starting: start failed: [redacted]", "demo v1 failed in `starting`, "},
+		{"a filtered body in the wire type's order", failedRedactedNow, "v1", "", false, "in starting: start failed: [redacted]", "demo v1 failed in `starting`, "},
 		{"a rollback to last_deploy's version", failedRedacted, "v3", "v1", false, "in starting: start failed: [redacted]", "demo rollback to v1 failed in `starting`, "},
 		{"a rollback to another version", failedRedacted, "v3", "v0", false, "start failed: [redacted]", "demo rollback to v0 failed, "},
 		// What Go's JSON escapes reads as written; an escaped backslash

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
@@ -419,12 +421,30 @@ func (ma *managedApp) errText(s string, read bool, names ...string) (wire.ErrTex
 
 // netError is err through the error net (errText), for the error a
 // deploy or a probe ends with, whose text the answer, last_deploy, the
-// record and moteld's journal line all then carry; and the env_file's
-// own read error when the door could not read it, which the journal
-// line names beside the filter's sentence.
+// record and moteld's journal line all then carry. When the door could
+// not read the env_file, the text is the filter's sentence, saying that
+// the error is in moteld's journal, and the journal line names the
+// error and the env_file's own read error beside it (logFields).
 func (ma *managedApp) netError(err error, read bool, names ...string) *doorError {
 	d := ma.door(read, names...)
-	return &doorError{err: err, msg: d.errText(err.Error()), keys: d.keys(), unread: d.unreadErr}
+	de := &doorError{err: err, msg: d.errText(err.Error()), keys: d.keys(), unread: d.unreadErr}
+	if de.unread != nil {
+		de.msg = "[withheld: " + wire.ErrText(d.unread) + "; moteld's journal has this error]"
+	}
+	return de
+}
+
+// logFields is what moteld's journal line about err says of it: its
+// text, which passed the error net, and when the net could not read
+// the app's env_file, the error as it came and the file's read error.
+// The journal is the operator's, which an older moteld gave every
+// error as it came.
+func logFields(err error) []zap.Field {
+	fields := []zap.Field{zap.Error(err)}
+	if de, ok := err.(*doorError); ok && de.unread != nil { //nolint:errorlint // the outermost error alone: the one netError made
+		fields = append(fields, zap.NamedError("cause", de.err), zap.NamedError("env_file", de.unread))
+	}
+	return fields
 }
 
 // errText is the net for a place that holds the app's door already.

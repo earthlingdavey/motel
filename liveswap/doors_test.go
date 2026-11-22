@@ -706,8 +706,9 @@ func TestFailureNamesItsOwnErrorsKeys(t *testing.T) {
 }
 
 // With its env_file unreadable, a failed deploy's answer and record say
-// the filter's sentence, and moteld's journal line names the file's own
-// read error beside it.
+// the filter's sentence and that moteld's journal has the error, and
+// the journal line names the error as it came and the file's own read
+// error beside it.
 func TestDeployFailedJournalNamesTheEnvFilesError(t *testing.T) {
 	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
 	core, logs := observer.New(zap.ErrorLevel)
@@ -720,7 +721,18 @@ func TestDeployFailedJournalNamesTheEnvFilesError(t *testing.T) {
 		t.Fatalf("%d %s", code, body)
 	}
 	lines := logs.FilterMessage("deploy failed").All()
-	if len(lines) != 1 || !strings.Contains(fmt.Sprint(lines[0].ContextMap()["env_file"]), "not KEY=VALUE") {
+	if len(lines) != 1 || !strings.Contains(fmt.Sprint(lines[0].ContextMap()["env_file"]), "not KEY=VALUE") ||
+		!strings.Contains(fmt.Sprint(lines[0].ContextMap()["cause"]), "not KEY=VALUE") || !strings.Contains(fmt.Sprint(lines[0].ContextMap()["error"]), "moteld's journal has this error") {
+		t.Errorf("the journal line: %v", lines)
+	}
+	// A deploy that fails for another reason meanwhile: its cause is in
+	// the journal, the answer says where.
+	logs.TakeAll()
+	b.rig.fetch.err = errors.New("downloading https://example.test/v3.tgz: HTTP 404")
+	if code, body := b.post(t, "v3", false); code != http.StatusInternalServerError || !strings.Contains(body, "moteld's journal has this error") {
+		t.Fatalf("%d %s", code, body)
+	}
+	if lines := logs.FilterMessage("deploy failed").All(); len(lines) != 1 || !strings.Contains(fmt.Sprint(lines[0].ContextMap()["cause"]), "HTTP 404") {
 		t.Errorf("the journal line: %v", lines)
 	}
 }

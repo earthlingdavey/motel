@@ -684,11 +684,10 @@ func (ma *managedApp) superviseInstance(ctx context.Context, c collaborators, in
 			}
 			n, err := ma.probeFailed(inst.version, err)
 			ma.noteUnhealthy(c, inst.version)
-			c.logger.Warn("watchdog: health probe failed",
+			c.logger.Warn("watchdog: health probe failed", append([]zap.Field{
 				zap.String("kind", classifyProbeErr(err)),
 				zap.Int("consecutive", n),
-				zap.Int("threshold", spec.wdFailures),
-				zap.Error(err))
+				zap.Int("threshold", spec.wdFailures)}, logFields(err)...)...)
 			if n >= spec.wdFailures {
 				return ma.handleFailure(ctx, c, inst, failureHealth)
 			}

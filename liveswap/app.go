@@ -934,11 +934,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		}
 		ma.mu.Unlock()
 		if err != nil {
-			fields := []zap.Field{zap.Error(err)}
-			if de, ok := err.(*doorError); ok && de.unread != nil { //nolint:errorlint // the one deployLocked made above
-				fields = append(fields, zap.NamedError("env_file", de.unread))
-			}
-			logger.Error("deploy failed", fields...)
+			logger.Error("deploy failed", logFields(err)...)
 		} else {
 			logger.Info("deploy succeeded")
 		}
