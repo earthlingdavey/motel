@@ -15,10 +15,53 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
+// TestRecordNotFoundIsThePlainSentence: the 404 is the handler's own
+// sentence and the version, whatever else is so: an env_file value that
+// is one of the sentence's own words does not stand as a marker in it,
+// a version that is a commit id or is shaped like a token is the
+// caller's own and reads as sent, and neither it nor the status (moteld's
+// own) is withheld while the app's env_file does not read; nor is the
+// 422 of a query that does not parse.
+func TestRecordNotFoundIsThePlainSentence(t *testing.T) {
+	const app = "billingapp"
+	r := newAppsRig(t, app)
+	ma := r.apps[app]
+	must(t, os.WriteFile(ma.spec.envFile, []byte("MODE_WORD=recorded\n"), 0o600))
+	get := func(target string) (int, string) {
+		w := sendTo(t, r.h, http.MethodGet, target, token(r.people.carol))
+		return w.Code, w.Body.String()
+	}
+	for _, version := range []string{
+		"v9",
+		"recorded",
+		strings.Repeat("0a1b2c3d", 5),
+		"ghp_" + strings.Repeat("a1B2c3D4e5", 4)[:36], // gitleaks:allow — made up for this test: a version shaped like a token
+	} {
+		if code, body := get("/" + app + "?deploy=" + version); code != http.StatusNotFound || body != `{"error":"no deploy recorded for version `+version+`"}`+"\n" {
+			t.Errorf("?deploy=%s: %d %s", version, code, body)
+		}
+	}
+	must(t, os.WriteFile(ma.spec.envFile, []byte("this line is no assignment\n"), 0o600))
+	ma.secretsMu.Lock()
+	ma.secretsLoaded = false
+	ma.secretsMu.Unlock()
+	if code, body := get("/" + app); code != http.StatusOK || !strings.HasPrefix(body, `{"app":"`+app+`"`) {
+		t.Errorf("the status while the env_file does not read: %d %s, want it sent: it is moteld's own", code, body)
+	}
+	if code, body := get("/" + app + "?deploy=v9"); code != http.StatusNotFound || body != `{"error":"no deploy recorded for version v9"}`+"\n" {
+		t.Errorf("?deploy=v9 while the env_file does not read: %d %s", code, body)
+	}
+	// Nor is the 422 of a query that does not parse, which holds the
+	// parser's words and three bytes of the request at most.
+	if code, body := get("/" + app + "?x=%ZZ"); code != http.StatusUnprocessableEntity || body != `{"error":"malformed query: invalid URL escape \"%ZZ\""}`+"\n" {
+		t.Errorf("a query that does not parse while the env_file does not read: %d %s", code, body)
+	}
+}
+
 // TestRecordNotReadTellsNothingOfTheEnv: when GET /<app>?deploy=<version>
 // reads no record, its answer is the handler's words and the version
 // as it was asked, whoever asks and whatever the app's env_file holds
-// (redact.go, rule 6): the same bytes for an app that holds the values
+// (wire.OwnText: no app's filter sees it): the same bytes for an app that holds the values
 // guessed and for one that holds none. Through the app's filter the
 // version came back as a marker naming the key whenever it held one of
 // the app's values, as written, inside a longer string, as base64 or
@@ -35,7 +78,7 @@ func TestRecordNotReadTellsNothingOfTheEnv(t *testing.T) {
 	}
 	// The app's filter does know the values: any body of the app's
 	// would have them replaced.
-	if got := ma.redactorFor(ma.status()).redactJSON([]byte(`{"x":"correcthorse s3cretpw9"}`)); !strings.Contains(got, "[redacted:DB_PASSWORD]") || !strings.Contains(got, "[redacted:DATABASE_URL]") {
+	if got := string(ma.door(true).text("correcthorse s3cretpw9")); !strings.Contains(got, "[redacted:DB_PASSWORD]") || !strings.Contains(got, "[redacted:DATABASE_URL]") {
 		t.Fatalf("the app's filter does not know the test's values: %s", got)
 	}
 	callers := map[string]func(method, target, body string) (int, string){
@@ -111,63 +154,21 @@ func TestRecordNotReadTellsNothingOfTheEnv(t *testing.T) {
 		}
 	}
 
-	// The exemption is those bodies', not the string's. A version an
-	// earlier request stored, here one named after a value, is text the
-	// app's filter still replaces: in the status and in the record, for
-	// both callers, and in a deploy's refusal that names it.
+	// A version an earlier request stored, here one named after a
+	// value, is the deployer's text, which no filter meets: the status
+	// and the record name it as named (an older moteld replaced it). A
+	// deploy's refusal that names it is an error's text, which passes
+	// the app's filter (the error net): only a deploy token reads it.
 	must(t, ma.Deploy(context.Background(), deployRequest{url: "https://x/2.tgz", version: "correcthorse", by: "ci"}))
 	for who, ask := range callers {
 		for _, target := range []string{"/" + secret, "/" + secret + "?deploy=correcthorse"} {
 			code, body := ask(http.MethodGet, target, "")
-			if code != http.StatusOK || strings.Contains(body, "correcthorse") || !strings.Contains(body, "[redacted:DB_PASSWORD]") {
-				t.Errorf("%s, GET %s after a deploy named for a value: %d %s, want the value replaced", who, target, code, body)
+			if code != http.StatusOK || !strings.Contains(body, `"version":"correcthorse"`) || strings.Contains(body, "redacted") {
+				t.Errorf("%s, GET %s after a deploy named for a value: %d %s, want the version as named", who, target, code, body)
 			}
 		}
 	}
 	if code, body := callers["a deploy token"](http.MethodPost, "/"+secret, `{"url":"https://x/3.tgz","version":"correcthorse"}`); code != http.StatusUnprocessableEntity || strings.Contains(body, "correcthorse") || !strings.Contains(body, "[redacted:DB_PASSWORD]") {
 		t.Errorf("a deploy of that version again: %d %s, want a 422 with the value replaced", code, body)
-	}
-}
-
-// TestRecordNotFoundIsThePlainSentence: the 404 is the handler's own
-// sentence and the version, whatever else is so: an env_file value that
-// is one of the sentence's own words does not stand as a marker in it,
-// a version that is a commit id or is shaped like a token is the
-// caller's own and reads as sent, and the answer is not withheld while
-// the app's env_file does not read, as every body of the app's is; nor
-// is the 422 of a query that does not parse.
-func TestRecordNotFoundIsThePlainSentence(t *testing.T) {
-	const app = "billingapp"
-	r := newAppsRig(t, app)
-	ma := r.apps[app]
-	must(t, os.WriteFile(ma.spec.envFile, []byte("MODE_WORD=recorded\n"), 0o600))
-	get := func(target string) (int, string) {
-		w := sendTo(t, r.h, http.MethodGet, target, token(r.people.carol))
-		return w.Code, w.Body.String()
-	}
-	for _, version := range []string{
-		"v9",
-		"recorded",
-		strings.Repeat("0a1b2c3d", 5),
-		"ghp_" + strings.Repeat("a1B2c3D4e5", 4)[:36], // gitleaks:allow — made up for this test: a version shaped like a token
-	} {
-		if code, body := get("/" + app + "?deploy=" + version); code != http.StatusNotFound || body != `{"error":"no deploy recorded for version `+version+`"}`+"\n" {
-			t.Errorf("?deploy=%s: %d %s", version, code, body)
-		}
-	}
-	must(t, os.WriteFile(ma.spec.envFile, []byte("this line is no assignment\n"), 0o600))
-	ma.secretsMu.Lock()
-	ma.secretsLoaded = false
-	ma.secretsMu.Unlock()
-	if code, body := get("/" + app); code != http.StatusOK || !strings.Contains(body, "response withheld") {
-		t.Errorf("the status while the env_file does not read: %d %s, want it withheld", code, body)
-	}
-	if code, body := get("/" + app + "?deploy=v9"); code != http.StatusNotFound || body != `{"error":"no deploy recorded for version v9"}`+"\n" {
-		t.Errorf("?deploy=v9 while the env_file does not read: %d %s", code, body)
-	}
-	// Nor is the 422 of a query that does not parse, which holds the
-	// parser's words and three bytes of the request at most.
-	if code, body := get("/" + app + "?x=%ZZ"); code != http.StatusUnprocessableEntity || body != `{"error":"malformed query: invalid URL escape \"%ZZ\""}`+"\n" {
-		t.Errorf("a query that does not parse while the env_file does not read: %d %s", code, body)
 	}
 }

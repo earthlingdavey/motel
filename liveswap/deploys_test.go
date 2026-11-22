@@ -323,34 +323,6 @@ func TestDeployRecordMustNameItsVersion(t *testing.T) {
 	}
 }
 
-// The record is filtered with the deploy's own spec and the values
-// known at the time, never withheld: a reload to an unreadable
-// env_file while the deploy ran must not turn its outcome into a
-// placeholder nothing can recover.
-func TestDeployRecordIsNotWithheldByALaterUnreadableEnvFile(t *testing.T) {
-	rig := newTestRig(t)
-	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
-	must(t, os.WriteFile(rig.spec.envFile, []byte("SECRET=hunter2hunter2hunter2\n"), 0o600))
-	rig.ma.rememberSecrets(rig.spec.envFile, []string{"SECRET=hunter2hunter2hunter2"})
-	c := rig.ma.snapshot() // the deploy's snapshot, env_file readable
-	// The reload: the live spec now names an env_file that does not
-	// exist, so the response filter would withhold every body.
-	live := *rig.spec
-	live.envFile = filepath.Join(t.TempDir(), "missing.env")
-	rig.ma.spec = &live
-	rig.ma.recordDeploy(c, deployResult{Version: "v1", Status: "failed", Error: "pre_start failed: SECRET=hunter2hunter2hunter2 refused"})
-	rec, err := readDeployRecord(c.spec.dirs, "v1")
-	if err != nil {
-		t.Fatalf("the record was withheld or not written: %v", err)
-	}
-	if s := string(rec); !strings.Contains(s, `"status":"failed"`) || strings.Contains(s, "hunter2") || !strings.Contains(s, "[redacted:SECRET]") {
-		t.Fatalf("record = %s", s)
-	}
-	if w := rig.ma.redactorFor(rig.ma.status()); w.withhold == "" {
-		t.Fatal("the test's premise: the live filter withholds while the env_file is unreadable")
-	}
-}
-
 // An ancestor that is a link — `<root>/blog -> <root>/shop`, an
 // operator's mistake — is not followed either: blog's records are
 // not written, read or listed from shop's directory.
@@ -397,45 +369,6 @@ func TestDeployRecordsRefuseAPlantedAncestorLink(t *testing.T) {
 	}
 }
 
-// A record planted under a name equal to a known env value must not
-// let that value through the response filter: the status keeps the
-// value redacted even though the same string is a "version".
-func TestARecordedVersionEqualToAKnownValueIsStillRedacted(t *testing.T) {
-	rig := newTestRig(t)
-	secret := "q7Wm2xK9pL4vB8nR3tY6zH5c" // gitleaks:allow — a made-up value for this test
-	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
-	must(t, os.WriteFile(rig.spec.envFile, []byte("TOKEN="+secret+"\n"), 0o600))
-	must(t, writeDeployRecord(rig.spec.dirs, secret, []byte(`{"version":"`+secret+`","status":"succeeded"}`)))
-	if err := deployOnceV1(t, rig); err != nil {
-		t.Fatal(err)
-	}
-	s := rig.ma.status()
-	if len(s.Deploys) == 0 {
-		t.Fatal("the planted record is listed (its version matches its name); the filter is what must catch it")
-	}
-	raw, err := json.Marshal(s)
-	must(t, err)
-	body := rig.ma.redactorFor(s).redactJSON(raw)
-	if strings.Contains(body, secret) || !strings.Contains(body, "[redacted:TOKEN]") {
-		t.Fatalf("the known value leaked through a recorded version: %s", body)
-	}
-}
-
-// A release directory named after a known env value — plantable while
-// the app dir was writable — does not exempt that value from the
-// record's filter.
-func TestRecordFilterDoesNotTrustAReleaseNameEqualToAKnownValue(t *testing.T) {
-	rig := newTestRig(t)
-	secret := "q7Wm2xK9pL4vB8nR3tY6zH5c" // gitleaks:allow — a made-up value for this test
-	rig.ma.rememberSecrets("/etc/app.env", []string{"TOKEN=" + secret})
-	must(t, os.MkdirAll(rig.spec.dirs.release(secret), 0o755))
-	rd, _ := rig.ma.recordRedactor(rig.ma.snapshot(), deployResult{Version: "v1"})
-	rec := rd.redactJSON([]byte(`{"version":"v1","error":"got ` + secret + `"}`))
-	if strings.Contains(rec, secret) || !strings.Contains(rec, "[redacted:TOKEN]") {
-		t.Fatalf("a planted release name exempted the value: %s", rec)
-	}
-}
-
 // A deploy that failed before its launch remembered no env_file
 // values, and its error can still carry one: the record's filter
 // reads the deploy's own env_file, so the value is not written.
@@ -458,12 +391,12 @@ func TestDeployRecordFiltersACurrentValueBeforeAnyLaunch(t *testing.T) {
 	}
 }
 
-// A known value that is a fragment of the record's own JSON makes the
-// filter withhold the whole body; the record is then an envelope that
-// still names the version and status, readable and listed — and made
-// only of values that cannot carry source data, so a second known
-// value that the result held (here the deployer label) is not in it.
-func TestDeployRecordSurvivesTheFiltersWholeBodyFallback(t *testing.T) {
+// A known value that is a fragment of the record's own JSON (which
+// made an older moteld's whole-body filter withhold the record) changes
+// nothing of it: the record is the result as marshalled, its error
+// through the app's filter, its deployer as written (the deployer's
+// text, which an env value equal to it does not make the app's).
+func TestDeployRecordIsWholeWhateverAValueSpells(t *testing.T) {
 	rig := newTestRig(t)
 	label := "local:/shared/deploy-2f7e9c1a4b.pub"
 	rig.ma.rememberSecrets("/etc/app.env", []string{`WEIRD="status":"failed","error"`, "LABEL=" + label})
@@ -475,27 +408,13 @@ func TestDeployRecordSurvivesTheFiltersWholeBodyFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the record must be readable as v1's: %v", err)
 	}
-	if s := string(rec); !strings.Contains(s, `"version":"v1"`) || !strings.Contains(s, `"status":"failed"`) || !strings.Contains(s, "record withheld") || strings.Contains(s, "boom") || strings.Contains(s, label) {
-		t.Fatalf("envelope = %s", s)
+	var got deployResult
+	must(t, json.Unmarshal(rec, &got))
+	if got.Version != "v1" || got.Status != "failed" || got.Error != "start failed: boom" || got.By != label || !got.FilteredAtEntry {
+		t.Fatalf("record = %s", rec)
 	}
 	if d := rig.ma.status().Deploys; len(d) != 1 || d[0].Version != "v1" || d[0].Status != "failed" {
 		t.Fatalf("deploys = %+v", d)
-	}
-}
-
-// A release directory named after a known value — off the filesystem,
-// like a record's name — does not exempt that value from the response
-// filter either.
-func TestAnOnDiskVersionEqualToAKnownValueIsStillRedacted(t *testing.T) {
-	rig := newTestRig(t)
-	secret := "q7Wm2xK9pL4vB8nR3tY6zH5c" // gitleaks:allow — a made-up value for this test
-	rig.ma.rememberSecrets("/etc/app.env", []string{"TOKEN=" + secret})
-	must(t, os.MkdirAll(rig.spec.dirs.release(secret), 0o755))
-	s := rig.ma.status()
-	raw, err := json.Marshal(s)
-	must(t, err)
-	if body := rig.ma.redactorFor(s).redactJSON(raw); strings.Contains(body, secret) || !strings.Contains(body, "[redacted:TOKEN]") {
-		t.Fatalf("a planted release name exempted the value: %s", body)
 	}
 }
 
@@ -538,74 +457,6 @@ func TestStatusDoesNotCreateTheRecordsDir(t *testing.T) {
 	}
 	if _, err := os.Lstat(rig.spec.dirs.deploys); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("a read created the records dir: %v", err)
-	}
-}
-
-// A known value equal to a word of the outcome vocabulary — a secret
-// spelled "succeeded", a phase's name — does not rewrite a record's
-// status or phase, on disk or when read back; the record's other text
-// is still filtered.
-func TestDeployRecordOutcomeSurvivesAVocabularySecret(t *testing.T) {
-	rig := newTestRig(t)
-	rig.ma.rememberSecrets("/etc/app.env", []string{"WORD=succeeded", "STEP=preparing"})
-	if err := deployOnceV1(t, rig); err != nil {
-		t.Fatal(err)
-	}
-	rec, err := readDeployRecord(rig.spec.dirs, "v1")
-	must(t, err)
-	if !strings.Contains(string(rec), `"status":"succeeded"`) {
-		t.Fatalf("status rewritten on disk: %s", rec)
-	}
-	base := time.Now().Add(-time.Hour) // dated as in TestDeployRecordsAreWrittenAndListed
-	stampRecord(t, rig.spec.dirs, "v1", base)
-	rig.spec.preStart = []string{"./migrate"}
-	rig.runner.runOnceErr = runOnceExit("exit status 1", "u", "failed", 0)
-	if err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://example.test/v2.tgz", version: "v2", by: "test"}); err == nil {
-		t.Fatal("v2 should have failed")
-	}
-	stampRecord(t, rig.spec.dirs, "v2", base.Add(time.Minute))
-	rec, err = readDeployRecord(rig.spec.dirs, "v2")
-	must(t, err)
-	if s := string(rec); !strings.Contains(s, `"status":"failed"`) || !strings.Contains(s, `"phase":"preparing"`) {
-		t.Fatalf("outcome rewritten on disk: %s", s)
-	}
-	d := rig.ma.status().Deploys
-	if len(d) != 2 || d[0].Status != "failed" || d[0].Phase != "preparing" || d[1].Status != "succeeded" {
-		t.Fatalf("summaries = %+v", d)
-	}
-	// Read back through the live filter: the words stand outside it
-	// there too, and the same word as text does not.
-	served := rig.ma.redactorFor(rig.ma.status()).redactJSON(rec)
-	if !strings.Contains(served, `"status":"failed"`) || !strings.Contains(served, `"phase":"preparing"`) || !strings.Contains(served, `"name":"preparing"`) {
-		t.Fatalf("outcome rewritten when served: %s", served)
-	}
-	rec = []byte(`{"version":"v2","status":"failed","phase":"preparing","error":"preparing: migrate failed"}`)
-	if served := rig.ma.redactorFor(rig.ma.status()).redactJSON(rec); !strings.Contains(served, `"error":"[redacted:STEP]: migrate failed"`) {
-		t.Fatalf("a vocabulary word as text was not filtered: %s", served)
-	}
-}
-
-// A version named exactly as an env_file value is redacted like the
-// value (redact.go, rule 1), so its record could not name itself: it
-// is written as the envelope, which says why, and is listed and served
-// like any record — with the version redacted where the filter sees it.
-func TestDeployRecordOfAVersionEqualToAValueIsAnEnvelope(t *testing.T) {
-	rig := newTestRig(t)
-	rig.ma.rememberSecrets("/etc/app.env", []string{"RELEASE=2026.09.14"})
-	rig.runner.startErr = errors.New("boom")
-	if err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://example.test/r.tgz", version: "2026.09.14", by: "test"}); err == nil {
-		t.Fatal("the deploy should have failed")
-	}
-	rec, err := readDeployRecord(rig.spec.dirs, "2026.09.14")
-	must(t, err)
-	if s := string(rec); !strings.Contains(s, `"version":"2026.09.14"`) || !strings.Contains(s, "record withheld: the version equals an env_file value") || strings.Contains(s, "boom") {
-		t.Fatalf("record = %s", s)
-	}
-	if d := rig.ma.status().Deploys; len(d) != 1 || d[0].Version != "2026.09.14" || d[0].Status != "failed" {
-		t.Fatalf("deploys = %+v", d)
-	}
-	if served := rig.ma.redactorFor(rig.ma.status()).redactJSON(rec); strings.Contains(served, "2026.09.14") || !strings.Contains(served, `"version":"[redacted:RELEASE]"`) {
-		t.Fatalf("served = %s", served)
 	}
 }
 
@@ -724,29 +575,33 @@ func TestDeployRecordSizeBoundCountsTheNewline(t *testing.T) {
 }
 
 // An env_file that cannot be parsed whole leaves the values before the
-// bad line unknown to the filter — and the error that says so can
-// carry one (a short name-shaped one, invalidEnvKeyMsg's residual);
-// the record is then the envelope, never the error.
-func TestDeployRecordIsAnEnvelopeWhenTheEnvFileWillNotParseWhole(t *testing.T) {
+// bad line unknown to the filter, and the error that says so can carry
+// one (a short name-shaped one, invalidEnvKeyMsg's residual): its text
+// is then the filter's sentence, in the answer and the record alike,
+// and the record is whole otherwise.
+func TestDeployErrorOfAnEnvFileThatWillNotParseWhole(t *testing.T) {
 	rig := newTestRig(t)
 	secret := "q7Wm2xK9pL4vB8nR3t" // gitleaks:allow — a made-up value for this test
 	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
 	must(t, os.WriteFile(rig.spec.envFile, []byte("TOKEN="+secret+"\n"+secret+"-=x\n"), 0o600))
 	err := deployOnceV1(t, rig)
-	if err == nil || !strings.Contains(err.Error(), secret) {
-		t.Fatalf("the premise: the deploy fails on the bad line and the error names it: %v", err)
+	if err == nil || strings.Contains(err.Error(), secret) || !strings.HasPrefix(err.Error(), "[withheld: the app's env_file could not be read") {
+		t.Fatalf("the deploy fails on the bad line, its text withheld: %v", err)
+	}
+	if errors.Unwrap(err) == nil || !strings.Contains(errors.Unwrap(err).Error(), secret) {
+		t.Fatalf("the premise: the chain under the text names the bad line: %v", errors.Unwrap(err))
 	}
 	rec, rerr := readDeployRecord(rig.spec.dirs, "v1")
 	must(t, rerr)
-	if s := string(rec); strings.Contains(s, secret) || !strings.Contains(s, "record withheld") || !strings.Contains(s, `"status":"failed"`) {
+	if s := string(rec); strings.Contains(s, secret) || strings.Contains(s, "record withheld") || !strings.Contains(s, `"status":"failed"`) || !strings.Contains(s, `"error":"[withheld: the app's env_file could not be read`) {
 		t.Fatalf("record = %s", s)
 	}
 }
 
 // With the env_file unread past a bad line, the values are not all
-// known, so an envelope cannot tell a pin from one of them: it names
-// none, even one that sits before the bad line.
-func TestDeployRecordEnvelopeDropsThePinWhenValuesAreUnknown(t *testing.T) {
+// known: the error is the filter's sentence, and the pin, moteld's own
+// data, is kept as the deployer gave it, whatever value it equals.
+func TestDeployRecordKeepsThePinWhenValuesAreUnknown(t *testing.T) {
 	rig := newTestRig(t)
 	sum := sha256.Sum256([]byte("a digest that is also a secret"))
 	pin := hex.EncodeToString(sum[:])
@@ -757,15 +612,15 @@ func TestDeployRecordEnvelopeDropsThePinWhenValuesAreUnknown(t *testing.T) {
 	}
 	rec, err := readDeployRecord(rig.spec.dirs, "v1")
 	must(t, err)
-	if s := string(rec); strings.Contains(s, pin) || !strings.Contains(s, "record withheld") {
+	if s := string(rec); !strings.Contains(s, `"sha256":"`+pin+`"`) || !strings.Contains(s, `"error":"[withheld:`) {
 		t.Fatalf("record = %s", s)
 	}
 }
 
-// An envelope keeps the pin, so a withheld record still says what the
-// deploy was pinned to and a rollback can carry it — unless the pin
-// equals a known value or holds one, which no envelope names
-// (redact.go, rule 1).
+// An envelope keeps the pin, so a record too large to keep still says
+// what the deploy was pinned to and a rollback can carry it, whatever
+// known value the pin equals or holds: it is moteld's own data, which
+// no filter changes.
 func TestDeployRecordEnvelopeKeepsThePin(t *testing.T) {
 	t.Parallel()
 	sum := sha256.Sum256([]byte("what CI built"))
@@ -775,8 +630,8 @@ func TestDeployRecordEnvelopeKeepsThePin(t *testing.T) {
 		want      bool
 	}{
 		{"no known value", "", true},
-		{"pin is a known value", "TOKEN=" + pin + "\n", false},
-		{"pin holds a known value", "TOKEN=" + pin[10:40] + "\n", false},
+		{"pin is a known value", "TOKEN=" + pin + "\n", true},
+		{"pin holds a known value", "TOKEN=" + pin[10:40] + "\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -799,42 +654,9 @@ func TestDeployRecordEnvelopeKeepsThePin(t *testing.T) {
 	}
 }
 
-// A pin equal to an env_file value is no name (redact.go, rule 1): the
-// record and the status keep the value redacted, the record stays in
-// the list with the placeholder where the pin was, and a rollback,
-// which can read no digest there, records the version as unpinned.
-func TestAPinEqualToAKnownValueIsStillRedacted(t *testing.T) {
-	rig := newTestRig(t)
-	sum := sha256.Sum256([]byte("a digest that is also a secret"))
-	pin := hex.EncodeToString(sum[:])
-	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
-	must(t, os.WriteFile(rig.spec.envFile, []byte("TOKEN="+pin+"\n"), 0o600))
-	if err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://example.test/v1.tgz", version: "v1", sha256: pin, by: "test"}); err != nil {
-		t.Fatal(err)
-	}
-	rec, err := readDeployRecord(rig.spec.dirs, "v1")
-	must(t, err)
-	if s := string(rec); strings.Contains(s, pin) || !strings.Contains(s, `"sha256":"[redacted:TOKEN]"`) {
-		t.Fatalf("the record must redact a pin equal to a known value: %s", s)
-	}
-	s := rig.ma.status()
-	if len(s.Deploys) != 1 || string(s.Deploys[0].SHA256) != `"[redacted:TOKEN]"` {
-		t.Fatalf("the record must stay listed with its redacted pin: %+v", s.Deploys)
-	}
-	raw, err := json.Marshal(s)
-	must(t, err)
-	if body := rig.ma.redactorFor(s).redactJSON(raw); strings.Contains(body, pin) {
-		t.Fatalf("the known value leaked through a pin: %s", body)
-	}
-	if got := recordedPin(rig.spec.dirs, "v1"); got != "" {
-		t.Fatalf("recordedPin = %q, want none: the record's pin is a placeholder", got)
-	}
-}
-
 // A record is read off disk, so its sha256 field names nothing until
-// it is a digest: a planted string of another shape is not exempt from
-// the filter's heuristics, and is no pin for a rollback to carry; a
-// pin that is not a string at all is not a record.
+// it is a digest: a planted string of another shape is no pin for a
+// rollback to carry; a pin that is not a string at all is not a record.
 func TestARecordedPinMustBeADigest(t *testing.T) {
 	rig := newTestRig(t)
 	token := "Zq7Wm2xK9pL4vB8nR3tY6zH5cJ1dF0gS" // gitleaks:allow — a made-up value for this test
@@ -843,11 +665,6 @@ func TestARecordedPinMustBeADigest(t *testing.T) {
 	s := rig.ma.status()
 	if len(s.Deploys) != 1 || s.Deploys[0].Version != "v8" {
 		t.Fatalf("only v8 is a record: %+v", s.Deploys)
-	}
-	raw, err := json.Marshal(s)
-	must(t, err)
-	if body := rig.ma.redactorFor(s).redactJSON(raw); strings.Contains(body, token) {
-		t.Fatalf("a planted non-digest pin was exempted from the filter: %s", body)
 	}
 	if got := recordedPin(rig.spec.dirs, "v8"); got != "" {
 		t.Fatalf("recordedPin = %q, want none", got)

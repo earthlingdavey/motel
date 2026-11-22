@@ -23,56 +23,29 @@ import (
 // back; the status lists each recorded version's outcome.
 //
 // The store is a trust boundary in both directions, and these are its
-// rules; every function here holds them, and the filter's own rules
-// (redact.go) hold the second and third.
+// rules; every function here holds them.
 //
-//  1. A record is bytes motel wrote once, through the filter, into
-//     a directory it verified as its own. Anything read back is text
-//     from disk: it may be served only through the filter, and it is
-//     trusted for nothing else — not as a name, not as a retention
-//     slot — unless it proves itself a record: a regular file, under
-//     a valid version name, whose object names that version. One
+//  1. A record is bytes motel wrote once into a directory it verified
+//     as its own: the deploy's result as the answer carried it, the
+//     app's text in it already through the app's filter where it
+//     entered (redact.go), and marked so (filtered_at_entry). Anything
+//     read back is text from disk: it is served only when it proves
+//     itself a record (a regular file, under a valid version name,
+//     whose object names that version and an outcome of the
+//     vocabulary), as it stands when it bears the mark, and with its
+//     error and detail through the app's filter when it does not
+//     (servedRecord); and it is trusted for nothing else. One
 //     value of a record is read back as a value: the pin, which a
-//     rollback carries into the record that replaces it
-//     (recordedPin) — only a digest-shaped string. It lands in the
-//     new record, which goes through the filter again, and in
-//     last_deploy, where like every pin it is a safe string
-//     (redactorFor) until the next deploy replaces it. And one fact
-//     about a record is read back, with its outcome: its write time,
-//     off the open file and only for a record that proves itself one
+//     rollback carries into the record that replaces it (recordedPin),
+//     only a digest-shaped string. And one fact about a record is read
+//     back, with its outcome: its write time, off the open file
 //     (recordedDeploy), which is its version's place in the release
-//     order that retention and available_versions follow (state.go) —
-//     a key the app cannot write.
-//  2. Nothing from disk reaches a response except through the filter
-//     as body text, but a record's times and numbers: held out of its
-//     layers, a time while it has a time's shape (rule 3). A recorded
-//     version is a safe
-//     string like any other name, and no safe string equals a known
-//     value (redact.go, rule 1). Nothing is appended to a body after
-//     the filter's final pass but the times and numbers it held, put back
-//     (redact.go, rule 7), and withField's merge of what the filtered
-//     body already reports, which adds nothing else.
-//  3. Whatever the filter does to a body, the record on disk names
-//     its version and outcome, from values that cannot carry source
-//     data: the version the deployer named and the digest it was
-//     pinned to (unless the filter would change it, or the values
-//     are not all known), vocabulary, timestamps. The times are the
-//     box's clock, which the filter holds out of its layers (redact.go,
-//     rule 7): an env_file value that is a piece of one (a date)
-//     rewrites none, but in the bodies that rule sends whole. Read
-//     back, a record's time is held out of the filter only while it
-//     has a time's shape (heldTimeRe), as a version read off disk is
-//     used only once it is valid. Its numbers (an artifact's size, a
-//     phase's seconds, a probe's status) are held too, so a value that
-//     is a piece of one no longer leaves the record no JSON, which was
-//     written as the envelope below; nor does the same value's marker
-//     in the record's detail make it the envelope (the filter's rule 7).
-//     The vocabulary (status, phase) stands outside the filter in
-//     every body (redact.go, rule 3), so a value equal to a word of
-//     it rewrites nothing; a record the filter leaves unreadable as
-//     one, or too large to read back, is an envelope, never an
+//     order that retention and available_versions follow (state.go), a
+//     key the app cannot write.
+//  2. A record no reader would accept is not written: one too large to
+//     read back is an envelope (version, outcome, times, why), never an
 //     unreadable file.
-//  4. The store never blocks a deploy or a status — a failure here is
+//  3. The store never blocks a deploy or a status — a failure here is
 //     a warning, a missing store is an empty list — and never follows
 //     a link (`deploys -> ..`, a record name pointing elsewhere, an
 //     ancestor pointing at another app): no app can plant one, but
@@ -81,14 +54,14 @@ import (
 //     (ownfile.go). The bind sources' check draws the same line
 //     (resolveBindSources, sandbox.go).
 //
-// The file holds the result as the record filter left it, with the
-// env_file values known at the time already replaced, but where a time
-// or a number holds one, which stays on disk as in a response (the
-// filter's rule 7): a secret rotated later is not in an old record for
-// the new filter to miss, but in such a token. A record written before
-// the filter held times (#604) keeps the marker it put in a time, the
-// date gone from it, until the version is deployed again or the record
-// is pruned. Records
+// The file holds the result with the env_file values known at the
+// deploy already replaced in the app's text: a secret rotated later is
+// not in an old record. A value added to env_file later is, if the app
+// had printed it: no read filters a marked record again (an accepted
+// row, DESIGN-liveswap.md). A record an older moteld wrote has no mark:
+// that moteld filtered it whole when it wrote it and again at each
+// read, so it is filtered when read here too, its error and detail
+// alone. Records
 // are pruned with the releases: one is kept for every version still on
 // disk, plus the newest `keep` others — failed deploys, whose release
 // is removed at once, and versions release GC has pruned — so the
@@ -107,10 +80,12 @@ func summaryPin(s deploySummary) string {
 	return d
 }
 
-// recordDeploy writes result's filtered form as the record of its
-// version, then prunes. Failures are logged, not fatal: the deploy's
-// outcome is already known and the response must say it.
+// recordDeploy writes result as the record of its version, marked as
+// filtered where its app text entered, then prunes. Failures are
+// logged, not fatal: the deploy's outcome is already known and the
+// response must say it.
 func (ma *managedApp) recordDeploy(c collaborators, result deployResult) {
+	result.FilteredAtEntry = true
 	dir, err := recordsDir(c.spec.dirs, true)
 	if err != nil {
 		c.logger.Warn("deploy record: not written", zap.Error(err))
@@ -121,59 +96,27 @@ func (ma *managedApp) recordDeploy(c collaborators, result deployResult) {
 		c.logger.Warn("deploy record: cannot encode", zap.Error(err))
 		return
 	}
-	rd, unknown := ma.recordRedactor(c, result)
-	filtered := rd.redactJSON(raw)
-	// Rule 3's envelope. The filter's whole-body fallback — a known
-	// value that is a fragment of the record's own JSON — leaves an
-	// object that is not a record of this version (recordHead: no
-	// version, or an outcome the filter reached); and a record larger
-	// than a reader accepts would be written only to be refused.
-	// Either way the record is the version the deployer named, the
-	// digest they pinned it to, the outcome vocabulary, the times,
-	// and why the rest is missing —
-	// nothing that could carry source data, so nothing the filter
-	// would have had to see.
-	why := ""
-	switch _, isRecord := recordHead([]byte(filtered), result.Version+".json"); {
-	case unknown != "":
-		why = unknown
-	case !isRecord && !rd.safeExact[result.Version]:
-		// Redacted like the value it equals (redact.go, rule 1), so
-		// the record could not name itself; the envelope does. (A
-		// value too short to be a secret drops the version from the
-		// safe list too, but redacts nothing: the record stands.)
-		why = "the version equals an env_file value"
-	case !isRecord:
-		why = "a redacted value overlapped the record's own structure or outcome"
-	case len(filtered)+1 > deployRecordMaxBytes: // +1: the newline the file ends with
-		why = "larger than a record can be"
-	}
-	if why != "" {
+	if len(raw)+1 > deployRecordMaxBytes { // +1: the newline the file ends with
+		// Rule 2's envelope: a record larger than a reader accepts
+		// would be written only to be refused.
 		envelope := map[string]any{
 			"version": result.Version, "status": result.Status,
 			"started_at": result.StartedAt, "finished_at": result.FinishedAt,
-			"error": "record withheld: " + why,
+			"error":             "record withheld: larger than a record can be",
+			"filtered_at_entry": true,
 		}
 		if result.Phase != "" { // absent, as a marshalled result has it, not ""
 			envelope["phase"] = result.Phase
 		}
-		// The pin is digest-shaped (validated, or read back by
-		// recordedPin); kept only as the filter would leave it whole —
-		// not equal to a known value, and none inside it (rule 1
-		// redacts a known value within a safe string too) — and only
-		// when every value is known: with the env_file unread past a
-		// bad line, that cannot be decided.
-		if filteredPin, _ := rd.Redact(result.SHA256); unknown == "" && result.SHA256 != "" && filteredPin == result.SHA256 {
+		if result.SHA256 != "" {
 			envelope["sha256"] = result.SHA256
 		}
-		env, err := json.Marshal(envelope)
-		if err != nil {
+		if raw, err = json.Marshal(envelope); err != nil {
 			c.logger.Warn("deploy record: cannot encode the envelope", zap.Error(err))
 			return
 		}
-		filtered = string(env)
 	}
-	if err := writeDeployRecord(c.spec.dirs, result.Version, []byte(filtered)); err != nil {
+	if err := writeDeployRecord(c.spec.dirs, result.Version, raw); err != nil {
 		c.logger.Warn("deploy record: cannot write", zap.String("version", result.Version), zap.Error(err))
 		return
 	}
@@ -205,49 +148,62 @@ func releaseNames(releasesDir string) ([]string, error) {
 	return names, nil
 }
 
-// recordRedactor is the filter a record is written through: the
-// deploy's own spec and every value the filter knows — remembered at
-// any launch, and read from the deploy's own env_file now. It does
-// not withhold on the *live* env_file as the response filter does (a
-// record is about a deploy that is over, and a reload to an
-// unreadable file while it ran must not turn its outcome into a
-// placeholder nothing can recover once the file is fixed); but when
-// the deploy's own env_file is there and cannot be parsed whole, the
-// values before the bad line are unknown to the filter and could be
-// in the very error that says so — the second result names that, and
-// the record is the envelope (rule 3). A file that is absent holds no
-// values to know. Its safe strings are the names the response filter
-// exempts: the version and its pin, the app's dirs, the releases on
-// disk — and none equal to a known value (redact.go, rule 1).
-func (ma *managedApp) recordRedactor(c collaborators, result deployResult) (*Redactor, string) {
-	ma.secretsMu.Lock()
-	kvs := append([]string(nil), ma.secrets...)
-	ma.secretsMu.Unlock()
-	// The values remembered so far are those of every launch, and a
-	// deploy that failed before its launch — a download that did not
-	// complete — remembered nothing: read the deploy's own env_file
-	// too, so what it holds now is known to the filter that writes
-	// the record. Unreadable, the remembered values are all there is.
-	unknown := ""
-	if c.spec != nil && c.spec.envFile != "" {
-		switch now, err := parseEnvFile(c.spec.envFile); {
-		case err == nil:
-			kvs = mergeSecrets(kvs, now)
-		case !errors.Is(err, fs.ErrNotExist):
-			unknown = "the deploy's env_file could not be read whole, so its values are unknown to the filter"
+// servedRecord is rec, the bytes of version's record as
+// readDeployRecord proved them one, as GET /<app>?deploy= sends them.
+// A record that bears the mark (filtered_at_entry) is sent as it
+// stands. One an older moteld wrote does not: that moteld filtered a
+// record whole when it wrote it and again whenever it was read, so its
+// error and detail pass the app's filter here, as the app's text and
+// an error's text do where they enter now, with what the filter knows
+// today (a value learnt since the record was written is hidden). Its
+// other fields are sent as they stand, its keys in sorted order, and
+// the keys the filter replaced are added to its redacted_env. An error
+// or a detail that is not of its type in such a record is not sent:
+// it could not be filtered as one.
+func (ma *managedApp) servedRecord(rec []byte, version string) []byte {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(rec, &top) != nil {
+		return rec // readDeployRecord parsed it: not reached
+	}
+	if marked, ok := top["filtered_at_entry"]; ok && string(marked) == "true" {
+		return rec
+	}
+	names := []string{version}
+	var pin string
+	if json.Unmarshal(top["sha256"], &pin) == nil {
+		names = append(names, pin)
+	}
+	d := ma.door(true, names...)
+	if raw, ok := top["error"]; ok {
+		var e string
+		if json.Unmarshal(raw, &e) != nil {
+			delete(top, "error")
+		} else {
+			top["error"], _ = json.Marshal(d.errText(e)) // a string: nothing to fail
 		}
 	}
-	safe := []string{ma.name, result.Version, result.SHA256}
-	if c.spec != nil {
-		safe = append(safe, c.spec.dirs.root, c.spec.dirs.app, c.spec.dirs.releases, c.spec.dirs.shared, c.spec.dirs.run)
-		onDisk, _ := listReleases(c.spec.dirs) // names only: the order is not this filter's concern
-		safe = append(safe, onDisk...)
+	if raw, ok := top["detail"]; ok {
+		var det deployDetail
+		if json.Unmarshal(raw, &det) != nil {
+			delete(top, "detail")
+		} else {
+			top["detail"], _ = json.Marshal(d.again(det)) // strings, bools, an int: nothing to fail
+		}
 	}
-	return NewRedactor(kvs, safe), unknown
+	if keys := d.keys(); len(keys) > 0 {
+		var had []string
+		_ = json.Unmarshal(top["redacted_env"], &had) // a key that is not a list is replaced
+		top["redacted_env"], _ = json.Marshal(union(had, keys))
+	}
+	out, err := json.Marshal(top)
+	if err != nil {
+		return rec // raw values that parsed: not reached
+	}
+	return out
 }
 
 // recordsDir is the records directory as the directory it names
-// (rule 4): with create, made if absent; refused when the app dir or it
+// (rule 3): with create, made if absent; refused when the app dir or it
 // is a link, is not a directory, or cannot be checked for one
 // (appDirs.linkAt, the rule every dir motel deletes in is held to) —
 // `<root>/blog -> <root>/shop` would have blog's deploys list, serve
@@ -277,8 +233,7 @@ func recordsDir(d appDirs, create bool) (string, error) {
 }
 
 // recordHead is what proves a file a record (rule 1): a valid version
-// equal to the name it was read under. The rest of the object is body
-// text for the filter.
+// equal to the name it was read under.
 func recordHead(b []byte, name string) (deploySummary, bool) {
 	var s deploySummary
 	if json.Unmarshal(b, &s) != nil || !validVersion(s.Version) || s.Version+".json" != name {
@@ -286,7 +241,7 @@ func recordHead(b []byte, name string) (deploySummary, bool) {
 	}
 	// And an outcome in the vocabulary: a status that is one, and a
 	// phase — the one a failure reached — only on a failure, and one
-	// of the vocabulary. The writer guarantees all of it (rule 3), so
+	// of the vocabulary. The writer guarantees all of it, so
 	// a file without is not a record of ours.
 	if !outcomeStatuses[s.Status] || (s.Phase != "" && (s.Status != "failed" || !outcomePhases[s.Phase])) {
 		return deploySummary{}, false
@@ -311,12 +266,12 @@ func recordHead(b []byte, name string) (deploySummary, bool) {
 // state.json: a record carries the app's own lines, filtered but
 // still the app's, and nothing but motel reads records — the
 // webhook is the interface.
-func writeDeployRecord(d appDirs, version string, filtered []byte) error {
+func writeDeployRecord(d appDirs, version string, record []byte) error {
 	dir, err := recordsDir(d, true)
 	if err != nil {
 		return err
 	}
-	return writeOwnFile(deployRecordPath(dir, version), ".record-*.tmp", append(filtered, '\n'))
+	return writeOwnFile(deployRecordPath(dir, version), ".record-*.tmp", append(record, '\n'))
 }
 
 // deployRecordMaxBytes bounds a record read: one holds a bounded
@@ -324,7 +279,7 @@ func writeDeployRecord(d appDirs, version string, filtered []byte) error {
 const deployRecordMaxBytes = 1 << 20
 
 // openRecord reads a record under the read rule every store in the app
-// dir shares (readOwnFile): no link followed (rule 4), no FIFO held,
+// dir shares (readOwnFile): no link followed (rule 3), no FIFO held,
 // nothing but a regular file of a record's size; the modification time
 // comes from the same open file as the bytes, so a record replaced
 // between two lookups cannot pair one outcome with another's time.
@@ -339,8 +294,8 @@ func deployRecordPath(dir, version string) string {
 // recordedPin is the digest the version's record says it was pinned
 // to, or "" when there is no record, it does not prove
 // itself one (rule 1), or its pin is absent or not a digest — a pin
-// the filter redacted (equal to an env_file value) included, which a
-// rollback then records as unpinned.
+// an older moteld's filter redacted (equal to an env_file value)
+// included, which a rollback then records as unpinned.
 //
 // Known limit: nothing ties the record to the release's bytes. A
 // version whose release GC pruned can be deployed again; if that
@@ -443,8 +398,6 @@ func listDeploySummaries(d appDirs) []deploySummary {
 		if err != nil {
 			continue // a link, or not a record
 		}
-		// What its version then does in a response is rule 2's, in
-		// redactorFor.
 		s, ok := recordHead(b, e.Name())
 		if !ok {
 			continue
