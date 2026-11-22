@@ -52,7 +52,7 @@ func TestMetrics(t *testing.T) {
 	}
 	const want = `127.0.0.1 holds blog's numbers over 24h, a point every 5 m, to 2026-11-19 14:00 UTC:
 memory     min 150.0 MiB (11-18 14:05 UTC)  max 306.0 MiB (05:40 UTC)  newest 182.0 MiB (14:00 UTC)  3 of 289 steps
-cpu        min 0.0004 cores (13:10 UTC)  max 0.250 cores (14:00 UTC)  newest 0.250 cores (14:00 UTC)  2 of 289 steps
+cpu        min 0.0004 cores (13:10 UTC)  max 0.2500 cores (14:00 UTC)  newest 0.2500 cores (14:00 UTC)  2 of 289 steps
 requests   min 2.50/s (14:00 UTC)  max 2.50/s (14:00 UTC)  newest 2.50/s (14:00 UTC)  1 of 289 steps
 5xx share  min 1.2% (14:00 UTC)  max 1.2% (14:00 UTC)  newest 1.2% (14:00 UTC)  1 of 289 steps had requests
 p95        min 80.1 ms (14:00 UTC)  max 80.1 ms (14:00 UTC)  newest 80.1 ms (14:00 UTC)  1 of 289 steps had requests

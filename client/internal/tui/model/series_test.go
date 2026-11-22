@@ -739,7 +739,7 @@ func TestMetricsHeadsAndBreaksAtTheEdges(t *testing.T) {
 			min = l.Text()
 		}
 	}
-	if !strings.Contains(max, "max 0.002/s 2026-12-27 20:30") || !strings.Contains(min, "min 0.00/s 2026-12-27 20:00") || strings.Contains(max+min, "…") {
+	if !strings.Contains(max, "max 0.002/s 2026-12-27 20:30") || !strings.Contains(min, "min 0.000/s 2026-12-27 20:00") || strings.Contains(max+min, "…") {
 		t.Errorf("max %q, min %q", max, min)
 	}
 
@@ -876,7 +876,8 @@ func TestPlotQuiet(t *testing.T) {
 }
 
 // TestSeriesExtremes: a panel's highest and lowest are written alike
-// until they differ, never coarser than their plain writing, within a plot label's seven cells when compact,
+// until they differ, to as many places in one unit, never coarser than
+// their plain writing, within a plot label's seven cells when compact,
 // never a "<" floor or a zero for a value above it; cores too small for
 // seven cells in millicores, and rates in thousandths a second; one
 // value once; and two values no writing in seven cells tells apart, or a panel the client does not know, as
@@ -889,9 +890,11 @@ func TestSeriesExtremes(t *testing.T) {
 		wantHi, want string
 	}{
 		{wire.PanelCPU, 0.0007, 0.0001, true, "0.0007", "0.0001"},
-		{wire.PanelCPU, 0.0012, 0.0001, true, "0.001", "0.0001"},
+		{wire.PanelCPU, 0.0012, 0.0001, true, "0.0012", "0.0001"},
+		{wire.PanelCPU, 0.0016, 0.0009, false, "0.0016 cores", "0.0009 cores"},
+		{wire.Panel5xx, 0.0015, 0.0009, true, "0.15%", "0.09%"},
 		{wire.PanelCPU, 0.000043, 0.000041, true, "0.043m", "0.041m"},
-		{wire.PanelCPU, 0.5, 0.0002, true, "0.500", "0.0002"},
+		{wire.PanelCPU, 0.5, 0.0002, true, "0.5000", "0.0002"},
 		{wire.PanelCPU, 0.5, 0.0, true, "0.500", "0.000"},
 		{wire.PanelCPU, 12.51, 12.54, true, "12.51", "12.54"},
 		{wire.PanelCPU, 0.000043, 0.000041, false, "0.000043 cores", "0.000041 cores"},
@@ -910,7 +913,7 @@ func TestSeriesExtremes(t *testing.T) {
 		{wire.PanelRequests, 1.0 / 3600, 0, true, "0.28m/s", "0.00m/s"},
 		{wire.Panel5xx, 0.0151, 0.0149, true, "1.51%", "1.49%"},
 		{wire.PanelMemory, 150.51 * (1 << 20), 150.49 * (1 << 20), false, "150.51 MiB", "150.49 MiB"},
-		{wire.PanelRequests, 1.0 / 3600, 0, false, "0.00028/s", "0.00/s"},
+		{wire.PanelRequests, 1.0 / 3600, 0, false, "0.00028/s", "0.00000/s"},
 		{"disk_bytes", 2, 1, true, "2", "1"},
 	} {
 		if h, l := model.SeriesExtremes(c.name, c.hi, c.lo, c.compact); h != c.wantHi || l != c.want {
@@ -925,9 +928,10 @@ func TestSeriesExtremes(t *testing.T) {
 	}{
 		{wire.Panel5xx, 0.0121, 0.0123, 0.0121, "1.21%"},
 		{wire.Panel5xx, 0.0122, 0.0123, 0.0121, "1.22%"},
-		{wire.Panel5xx, 0, 0.0123, 0, "0%"},
+		{wire.Panel5xx, 0, 0.0123, 0, "0.0%"},
 		{wire.PanelCPU, 0.0005, 0.0007, 0.0001, "0.0005 cores"},
 		{wire.PanelMemory, 182 << 20, 186 << 20, 179 << 20, "182.0 MiB"},
+		{wire.PanelCPU, 0.0012, 0.0016, 0.0009, "0.0012 cores"},
 	} {
 		if got := model.SeriesNewest(c.name, c.v, c.hi, c.lo); got != c.want {
 			t.Errorf("newest %s %v of %v..%v: %q, want %q", c.name, c.v, c.lo, c.hi, got, c.want)

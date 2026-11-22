@@ -146,8 +146,9 @@ func figures(v float64, most int) string {
 
 // SeriesExtremes is hi and lo, a panel's highest and lowest, written as
 // a pair, compactly for a plot's axis: in the first of their writings
-// (seriesWritings) in which the two differ, or are one value, and each
-// tells its value. With none, their plain writings.
+// (seriesWritings) in which the two differ, or are one value, are to
+// as many places when in one unit, and each tells its value. With none,
+// their plain writings.
 func SeriesExtremes(name string, hi, lo float64, compact bool) (string, string) {
 	h, l, _ := seriesPair(name, hi, lo, compact)
 	return h, l
@@ -169,11 +170,22 @@ func SeriesNewest(name string, v, hi, lo float64) string {
 func seriesPair(name string, hi, lo float64, compact bool) (string, string, int) {
 	hs, ls := seriesWritings(name, hi, compact), seriesWritings(name, lo, compact)
 	for i := range hs {
-		if (hs[i] != ls[i] || hi == lo) && tells(hs[i], hi, compact) && tells(ls[i], lo, compact) {
+		hp, hu := placesOf(hs[i])
+		lp, lu := placesOf(ls[i])
+		alike := hu != lu || hp == lp
+		if (hs[i] != ls[i] || hi == lo) && alike && tells(hs[i], hi, compact) && tells(ls[i], lo, compact) {
 			return hs[i], ls[i], i
 		}
 	}
 	return hs[0], ls[0], 0
+}
+
+// placesOf is the places of s's number, and what follows it (its unit).
+func placesOf(s string) (int, string) {
+	s = strings.TrimPrefix(s, "<")
+	n := len(s) - len(strings.TrimLeft(s, "0123456789."))
+	_, frac, _ := strings.Cut(s[:n], ".")
+	return len(frac), s[n:]
 }
 
 // tells says s, a writing of v, tells v: it is one (not coarser than
@@ -234,10 +246,7 @@ func seriesWritings(name string, v float64, compact bool) []string {
 	}
 	// The first's places: none fewer, or a narrow spread rounds wide
 	// (1.51 % and 1.49 % to 2 % and 1 %).
-	first := 0
-	if _, frac, ok := strings.Cut(out[0], "."); ok {
-		first = len(frac) - len(strings.TrimLeft(frac, "0123456789"))
-	}
+	first, _ := placesOf(out[0])
 	at := func(v float64, p, least int, suffix string) string {
 		if p < least {
 			return ""
