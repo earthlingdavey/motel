@@ -37,9 +37,14 @@ import (
 //
 // The text is filtered there, once, as text, before any cap cuts it,
 // and lands in a field whose type says so: wire.AppText for the app's
-// text, wire.ErrText for an error's. Only this file converts a string
-// to either (TestAppTextOnlyFromTheDoor, TestErrTextMakers), so Go
-// refuses an unfiltered string in such a field. An answer is then
+// text, wire.ErrText for an error's. Go refuses a string variable in
+// such a field, so one gets there by a conversion or a decode. A
+// conversion is written in this file alone (and wire.OwnText's), which
+// TestAppTextOnlyFromTheDoor and TestErrTextMakers hold for the forms a
+// walk of the source sees: the type named under any import name, in
+// parentheses, through a declared type or an alias, or instantiating a
+// generic function. A decode (json.Unmarshal into such a field) makes
+// one with nothing written, and only review sees it. An answer is then
 // marshalled from its typed struct and sent: no filter runs over a
 // finished body, so motel's own data (a key, a word of its vocabulary,
 // a version, a time, a number, the app's name) is never replaced, and a

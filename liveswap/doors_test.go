@@ -486,94 +486,144 @@ func TestOldRecordIsFilteredWhenRead(t *testing.T) {
 	}
 }
 
-// madeIn is every place in the Go files under dir (none of them tests)
-// where an AppText or an ErrText is made from something that is not a
-// constant: a conversion, by the file it is in, and a call of
-// wire.OwnText, by the function it is in.
-func madeIn(t *testing.T, root string) (conversions, ownText map[string][]string) {
+// wirePath is the wire package's import path.
+const wirePath = "github.com/smallhoursorg/motel/liveswap/wire"
+
+// madeIn is every place in the Go files under dirs (none of them tests),
+// each named relative to base, where an AppText or an ErrText is made
+// from something that is not a constant: a conversion (written with the
+// package's name or any name it is imported under, in parentheses or
+// not, a generic function instantiated with the type, a type declared
+// as or over it), by the file it is in; and a call of OwnText, by the
+// function it is in. What a walk of the source cannot see is a decode:
+// json.Unmarshal into such a field makes one with nothing written
+// (servedRecord's decode of an older record's detail is the one, and
+// passes the door again).
+func madeIn(t *testing.T, base string, dirs ...string) (conversions, ownText map[string][]string) {
 	t.Helper()
 	conversions, ownText = map[string][]string{}, map[string][]string{}
 	fset := gotoken.NewFileSet()
-	err := filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
-		if err != nil || e.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return err
-		}
-		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(root, path)
-		for _, decl := range f.Decls {
-			fn, _ := decl.(*ast.FuncDecl)
-			ast.Inspect(decl, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
+	base, err := filepath.Abs(base)
+	must(t, err)
+	for _, root := range dirs {
+		root, err := filepath.Abs(root)
+		must(t, err)
+		err = filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
+			if err != nil || e.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(base, path)
+			wireNames := map[string]bool{}
+			for _, imp := range f.Imports {
+				if p, _ := strconv.Unquote(imp.Path.Value); p == wirePath {
+					if imp.Name != nil {
+						wireNames[imp.Name.Name] = true
+					} else {
+						wireNames["wire"] = true
+					}
 				}
-				name := ""
-				switch x := call.Fun.(type) {
+			}
+			// textType is whether e names AppText or ErrText (and which).
+			textType := func(e ast.Expr) string {
+				for {
+					p, ok := e.(*ast.ParenExpr)
+					if !ok {
+						break
+					}
+					e = p.X
+				}
+				switch x := e.(type) {
 				case *ast.SelectorExpr:
-					if pkg, ok := x.X.(*ast.Ident); ok && pkg.Name == "wire" {
-						name = x.Sel.Name
+					if pkg, ok := x.X.(*ast.Ident); ok && wireNames[pkg.Name] && (x.Sel.Name == "AppText" || x.Sel.Name == "ErrText") {
+						return x.Sel.Name
 					}
 				case *ast.Ident:
-					if f.Name.Name == "wire" {
-						name = x.Name
+					if f.Name.Name == "wire" && (x.Name == "AppText" || x.Name == "ErrText") {
+						return x.Name
 					}
 				case *ast.ArrayType: // []wire.AppText(…)
-					if s, ok := x.Elt.(*ast.SelectorExpr); ok {
-						name = s.Sel.Name
+					if s, ok := x.Elt.(*ast.SelectorExpr); ok && wireNames[fmt.Sprint(s.X)] && (s.Sel.Name == "AppText" || s.Sel.Name == "ErrText") {
+						return s.Sel.Name
 					}
 				}
-				switch {
-				case name == "AppText" || name == "ErrText":
-					if len(call.Args) == 1 {
-						if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == gotoken.STRING {
-							return true // a constant: needs no filter
-						}
-					}
-					conversions[name] = append(conversions[name], rel)
-				case name == "OwnText" && fn != nil:
-					where := fn.Name.Name
-					if fn.Recv != nil && len(fn.Recv.List) == 1 {
-						recv := fn.Recv.List[0].Type
-						if s, ok := recv.(*ast.StarExpr); ok {
-							recv = s.X
-						}
-						if id, ok := recv.(*ast.Ident); ok {
-							where = id.Name + "." + where
-						}
-					}
-					ownText[rel] = append(ownText[rel], where)
+				return ""
+			}
+			isWire := func(e ast.Expr, name string) bool {
+				if s, ok := e.(*ast.SelectorExpr); ok {
+					pkg, ok := s.X.(*ast.Ident)
+					return ok && wireNames[pkg.Name] && s.Sel.Name == name
 				}
-				return true
-			})
+				id, ok := e.(*ast.Ident)
+				return ok && f.Name.Name == "wire" && id.Name == name
+			}
+			for _, decl := range f.Decls {
+				fn, _ := decl.(*ast.FuncDecl)
+				ast.Inspect(decl, func(n ast.Node) bool {
+					switch x := n.(type) {
+					case *ast.TypeSpec: // type x = wire.AppText, type x wire.ErrText
+						if name := textType(x.Type); name != "" && f.Name.Name != "wire" {
+							conversions[name] = append(conversions[name], rel)
+						}
+					case *ast.IndexExpr: // conv[wire.AppText](s)
+						if name := textType(x.Index); name != "" {
+							conversions[name] = append(conversions[name], rel)
+						}
+					case *ast.IndexListExpr:
+						for _, ix := range x.Indices {
+							if name := textType(ix); name != "" {
+								conversions[name] = append(conversions[name], rel)
+							}
+						}
+					case *ast.CallExpr:
+						if name := textType(x.Fun); name != "" {
+							if len(x.Args) == 1 {
+								if lit, ok := x.Args[0].(*ast.BasicLit); ok && lit.Kind == gotoken.STRING {
+									return true // a constant: needs no filter
+								}
+							}
+							conversions[name] = append(conversions[name], rel)
+						} else if isWire(x.Fun, "OwnText") && fn != nil {
+							where := fn.Name.Name
+							if fn.Recv != nil && len(fn.Recv.List) == 1 {
+								recv := fn.Recv.List[0].Type
+								if s, ok := recv.(*ast.StarExpr); ok {
+									recv = s.X
+								}
+								if id, ok := recv.(*ast.Ident); ok {
+									where = id.Name + "." + where
+								}
+							}
+							ownText[rel] = append(ownText[rel], where)
+						}
+					}
+					return true
+				})
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	return conversions, ownText
 }
+
+// The modules that fill an answer's text fields: liveswap, the box
+// webhook, and notify (wire.Metrics.Error, an app's alerts).
+var guardDirs = []string{".", filepath.Join("..", "box"), filepath.Join("..", "notify")}
 
 // The app's text has a type only the filter makes: no conversion to
 // wire.AppText is written anywhere on the box but in redact.go, so a
 // field of that type cannot be given the app's bytes as they came. A
 // door added elsewhere fails here.
 func TestAppTextOnlyFromTheDoor(t *testing.T) {
-	conv, _ := madeIn(t, ".")
-	for _, f := range conv["AppText"] {
-		if f != "redact.go" {
-			t.Errorf("%s converts to wire.AppText: the app's text is made by the door alone (redact.go)", f)
-		}
-	}
-	if len(conv["AppText"]) == 0 {
-		t.Error("no conversion found at all: the walk sees nothing")
-	}
-	boxConv, _ := madeIn(t, filepath.Join("..", "box"))
-	if len(boxConv["AppText"]) != 0 {
-		t.Errorf("the box makes wire.AppText in %v", boxConv["AppText"])
+	conv, _ := madeIn(t, "..", guardDirs...)
+	if !allAre(conv["AppText"], filepath.Join("liveswap", "redact.go")) || len(conv["AppText"]) == 0 {
+		t.Errorf("wire.AppText is converted to in %v; want liveswap/redact.go alone (the door)", conv["AppText"])
 	}
 }
 
@@ -584,16 +634,18 @@ func TestAppTextOnlyFromTheDoor(t *testing.T) {
 // decision written down here, and an error's text from under an app's
 // directories goes through errText instead.
 func TestErrTextMakers(t *testing.T) {
-	conv, own := madeIn(t, ".")
-	if c := conv["ErrText"]; len(c) == 0 || !allAre(c, "redact.go", filepath.Join("wire", "wire.go")) {
-		t.Errorf("wire.ErrText is converted to in %v; want redact.go (the net) and wire.go (OwnText) alone", c)
+	conv, own := madeIn(t, "..", guardDirs...)
+	if c := conv["ErrText"]; len(c) == 0 || !allAre(c, filepath.Join("liveswap", "redact.go"), filepath.Join("liveswap", "wire", "wire.go")) {
+		t.Errorf("wire.ErrText is converted to in %v; want liveswap/redact.go (the net) and liveswap/wire/wire.go (OwnText) alone", c)
 	}
 	want := map[string][]string{
 		// The request's own name, query, body, version and the box's
 		// figures; never an error from under an app's directories.
-		"handler.go":         {"Handler.ServeHTTP", "Handler.servePerson", "ForbiddenBody", "Handler.getStatus", "Handler.getStatus", "Handler.deployURL", "Handler.deployURL", "Handler.deployURL", "Handler.deployPush", "Handler.deployPush", "Handler.deployPush", "Handler.deployRollback", "Handler.deployRecord", "Handler.deployRecord"},
-		"motel_approutes.go": {"Handler.serveMotelApp", "Handler.serveMotelApp"},
-		"people.go":          {"AdmitPerson"},
+		filepath.Join("liveswap", "handler.go"):         {"Handler.ServeHTTP", "Handler.servePerson", "ForbiddenBody", "Handler.getStatus", "Handler.getStatus", "Handler.deployURL", "Handler.deployURL", "Handler.deployURL", "Handler.deployPush", "Handler.deployPush", "Handler.deployPush", "Handler.deployRollback", "Handler.deployRecord", "Handler.deployRecord"},
+		filepath.Join("liveswap", "motel_approutes.go"): {"Handler.serveMotelApp", "Handler.serveMotelApp"},
+		filepath.Join("liveswap", "people.go"):          {"AdmitPerson"},
+		// The box's catalogue, its state's paths and the push's id.
+		filepath.Join("box", "handler.go"): {"errorBody"},
 	}
 	for f := range own {
 		sort.Strings(own[f])
@@ -619,20 +671,27 @@ func allAre(got []string, allowed ...string) bool {
 	return true
 }
 
-// The guards see what they are for: a conversion of the app's text and
-// a new caller of OwnText, written in a file of a package of the box's,
-// are each found.
+// The guards see what they are for, in the forms a walk can see: a
+// conversion with the package's name, in parentheses, under a renamed
+// import, through a declared type or alias and through a generic
+// function, and a new caller of OwnText.
 func TestGuardsSeeANewMaker(t *testing.T) {
 	dir := t.TempDir()
 	must(t, os.WriteFile(filepath.Join(dir, "door.go"), []byte(`package liveswap
-import "github.com/smallhoursorg/motel/liveswap/wire"
-func f(s string, err error) (wire.AppText, wire.ErrText, wire.Error) {
-	return wire.AppText(s), wire.ErrText(err.Error()), wire.Error{Error: wire.OwnText(err.Error())}
+import (
+	"github.com/smallhoursorg/motel/liveswap/wire"
+	w "github.com/smallhoursorg/motel/liveswap/wire"
+)
+type mine = wire.AppText
+type also w.ErrText
+func conv[T ~string](s string) T { return T(s) }
+func f(s string, err error) (wire.AppText, wire.ErrText, wire.Error, wire.AppText, w.ErrText, wire.AppText) {
+	return wire.AppText(s), wire.ErrText(err.Error()), wire.Error{Error: wire.OwnText(err.Error())}, (wire.AppText)(s), w.ErrText(s), conv[wire.AppText](s)
 }
 func g() wire.AppText { return wire.AppText("a constant") }
 `), 0o600))
-	conv, own := madeIn(t, dir)
-	if fmt.Sprint(conv) != "map[AppText:[door.go] ErrText:[door.go]]" || fmt.Sprint(own) != "map[door.go:[f]]" {
+	conv, own := madeIn(t, dir, dir)
+	if fmt.Sprint(conv) != "map[AppText:[door.go door.go door.go door.go] ErrText:[door.go door.go door.go]]" || fmt.Sprint(own) != "map[door.go:[f]]" {
 		t.Errorf("found %v and %v", conv, own)
 	}
 }

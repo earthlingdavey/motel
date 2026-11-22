@@ -31,6 +31,7 @@ func classed(t *testing.T) map[string]string {
 	}
 	out := map[string]string{}
 	fset := token.NewFileSet()
+	var parsed []*ast.File
 	for _, name := range files {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
@@ -39,13 +40,28 @@ func classed(t *testing.T) map[string]string {
 		if err != nil {
 			t.Fatal(err)
 		}
+		parsed = append(parsed, f)
+	}
+	// The package's struct types, which the walk classes field by field.
+	structs := map[string]bool{}
+	for _, f := range parsed {
+		ast.Inspect(f, func(n ast.Node) bool {
+			if ts, ok := n.(*ast.TypeSpec); ok {
+				if _, ok := ts.Type.(*ast.StructType); ok {
+					structs[ts.Name.Name] = true
+				}
+			}
+			return true
+		})
+	}
+	for _, f := range parsed {
 		ast.Inspect(f, func(n ast.Node) bool {
 			ts, ok := n.(*ast.TypeSpec)
 			if !ok {
 				return true
 			}
 			if st, ok := ts.Type.(*ast.StructType); ok {
-				fields(t, ts.Name.Name, st, out)
+				fields(t, ts.Name.Name, st, structs, out)
 			}
 			return false
 		})
@@ -54,8 +70,11 @@ func classed(t *testing.T) map[string]string {
 }
 
 // fields adds st's text fields to out under prefix, and those of every
-// struct type written inline in it.
-func fields(t *testing.T, prefix string, st *ast.StructType, out map[string]string) {
+// struct type written inline in it. A field whose type the walk cannot
+// class (an interface, a named type of another package or of this one
+// that is no struct, a func) is out[key] = "?", which fails the test:
+// its text could be anything.
+func fields(t *testing.T, prefix string, st *ast.StructType, structs map[string]bool, out map[string]string) {
 	for _, fld := range st.Fields.List {
 		var tag reflect.StructTag
 		if fld.Tag != nil {
@@ -75,7 +94,11 @@ func fields(t *testing.T, prefix string, st *ast.StructType, out map[string]stri
 			key := prefix + "." + id.Name
 			holds, typed, inline := text(fld.Type)
 			if inline != nil {
-				fields(t, key, inline, out)
+				fields(t, key, inline, structs, out)
+			}
+			if !holds && inline == nil && !knownType(fld.Type, structs) {
+				out[key] = "?"
+				continue
 			}
 			class, tagged := tag.Lookup("text")
 			switch {
@@ -92,6 +115,32 @@ func fields(t *testing.T, prefix string, st *ast.StructType, out map[string]stri
 			}
 		}
 	}
+}
+
+// knownType is whether e is a type that holds no text the walk could
+// miss: a number, a bool, a time, one of the package's own structs (each
+// classed on its own), or a slice, array, pointer or map of them.
+func knownType(e ast.Expr, structs map[string]bool) bool {
+	switch x := e.(type) {
+	case *ast.Ident:
+		switch x.Name {
+		case "bool", "int", "int64", "uint64", "float64":
+			return true
+		}
+		return structs[x.Name]
+	case *ast.SelectorExpr:
+		pkg, ok := x.X.(*ast.Ident)
+		return ok && pkg.Name == "time" && (x.Sel.Name == "Time" || x.Sel.Name == "Duration")
+	case *ast.StarExpr:
+		return knownType(x.X, structs)
+	case *ast.ArrayType:
+		return knownType(x.Elt, structs)
+	case *ast.MapType:
+		kh, _, _ := text(x.Key)
+		vh, _, _ := text(x.Value)
+		return (kh || knownType(x.Key, structs)) && (vh || knownType(x.Value, structs))
+	}
+	return false
 }
 
 // text reports whether a field of type e holds text on the wire: a
@@ -145,6 +194,11 @@ func TestEveryStringFieldIsClassed(t *testing.T) {
 	for _, k := range none {
 		t.Errorf(`%s holds text and is not classed: type it AppText or ErrText, or tag it text:"moteld" or text:"passes"`, k)
 	}
+	for k, v := range got {
+		if v == "?" {
+			t.Errorf("%s has a type the test cannot class (an interface, another package's or a named non-struct type): give it a type the walk reads", k)
+		}
+	}
 	// The walk sees the fields it must: one of each class, and the
 	// kinds of type a field can hold text in.
 	for k, want := range map[string]string{
@@ -180,6 +234,12 @@ type T struct {
 	G struct {
 		H string ` + "`json:\"h\"`" + `
 	} ` + "`json:\"g\"`" + `
+	I any ` + "`json:\"i\"`" + `
+	J []any ` + "`json:\"j\"`" + `
+	K Names ` + "`json:\"k\"`" + `
+	L other.Type ` + "`json:\"l\"`" + `
+	M int ` + "`json:\"m\"`" + `
+	N time.Time ` + "`json:\"n\"`" + `
 }`
 	f, err := parser.ParseFile(token.NewFileSet(), "t.go", src, 0)
 	if err != nil {
@@ -187,8 +247,8 @@ type T struct {
 	}
 	out := map[string]string{}
 	st := f.Decls[0].(*ast.GenDecl).Specs[0].(*ast.TypeSpec).Type.(*ast.StructType)
-	fields(t, "T", st, out)
-	want := map[string]string{"T.A": "", "T.B": "moteld", "T.C": "AppText", "T.D": "", "T.E": "", "T.G.H": ""}
+	fields(t, "T", st, map[string]bool{}, out)
+	want := map[string]string{"T.A": "", "T.B": "moteld", "T.C": "AppText", "T.D": "", "T.E": "", "T.G.H": "", "T.I": "?", "T.J": "?", "T.K": "?", "T.L": "?"}
 	if !reflect.DeepEqual(out, want) {
 		t.Errorf("got %v, want %v", out, want)
 	}
