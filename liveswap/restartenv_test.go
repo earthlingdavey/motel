@@ -60,33 +60,37 @@ func restartedLogsRig(t *testing.T, launched string, change func(t *testing.T, s
 // cannot be read (gone, unreadable), every body is withheld as before:
 // the journal holds lines of the app's other units too, which the
 // reattach did not read (a candidate launched from the file as it was
-// later). The record's filter withholds nothing for that, and knows the
-// launched value; and the moment the file reads again, so does every
-// body.
+// later). The record's filter knows the launched value whatever the
+// file's state (a record whose own file is there but does not parse is
+// written as its envelope, recordRedactor's own rule); and the moment
+// the file reads again, every body does.
 func TestReattachKnowsTheLaunchedValues(t *testing.T) {
 	launched := "API_TOKEN=" + launchedToken + "\nOTHER=kept-value-0000\n"
 	rotated := "API_TOKEN=" + rotatedToken + "\nOTHER=kept-value-0000\n"
 	for _, c := range []struct {
 		name   string
 		unread bool
-		change func(t *testing.T, spec *appSpec)
+		// unparsed: the file is there and does not read whole, so the
+		// record's filter names that and the record is its envelope.
+		unparsed bool
+		change   func(t *testing.T, spec *appSpec)
 	}{
-		{"the value changed in the file", false, func(t *testing.T, spec *appSpec) {
+		{"the value changed in the file", false, false, func(t *testing.T, spec *appSpec) {
 			must(t, os.WriteFile(spec.envFile, []byte(rotated), 0o600))
 		}},
-		{"the key taken out of the file", false, func(t *testing.T, spec *appSpec) {
+		{"the key taken out of the file", false, false, func(t *testing.T, spec *appSpec) {
 			must(t, os.WriteFile(spec.envFile, []byte("OTHER=kept-value-0000\n"), 0o600))
 		}},
-		{"the file gone", true, func(t *testing.T, spec *appSpec) {
+		{"the file gone", true, false, func(t *testing.T, spec *appSpec) {
 			must(t, os.Remove(spec.envFile))
 		}},
-		{"the file unreadable", true, func(t *testing.T, spec *appSpec) {
+		{"the file unreadable", true, true, func(t *testing.T, spec *appSpec) {
 			// A directory where the file was: unreadable as root too,
 			// which the test container runs as.
 			must(t, os.Remove(spec.envFile))
 			must(t, os.Mkdir(spec.envFile, 0o700))
 		}},
-		{"the spec naming another file", false, func(t *testing.T, spec *appSpec) {
+		{"the spec naming another file", false, false, func(t *testing.T, spec *appSpec) {
 			other := filepath.Join(t.TempDir(), "other.env")
 			must(t, os.WriteFile(other, []byte(rotated), 0o600))
 			spec.envFile = other
@@ -96,11 +100,9 @@ func TestReattachKnowsTheLaunchedValues(t *testing.T) {
 			h, people, ma, err := restartedLogsRig(t, launched, c.change)
 			must(t, err)
 			line := "token " + launchedToken
-			// The record's filter withholds nothing for an unread live
-			// file, and holds the launched value either way.
-			rd, _ := ma.recordRedactor(ma.snapshot(), deployResult{Version: "v2"})
-			if out, _ := rd.Redact(line); out != "token [redacted:API_TOKEN]" {
-				t.Errorf("the record's filter: %q", out)
+			rd, unknown := ma.recordRedactor(ma.snapshot(), deployResult{Version: "v2"})
+			if out, _ := rd.Redact(line); out != "token [redacted:API_TOKEN]" || (unknown != "") != c.unparsed {
+				t.Errorf("the record's filter: %q, unknown %q", out, unknown)
 			}
 			if c.unread {
 				w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))

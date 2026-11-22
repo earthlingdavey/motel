@@ -97,12 +97,14 @@ type systemdConn interface {
 	// Never its environment, which holds env_file values: a status is
 	// read on every poll, stop and sweep, and kept (systemdHandle.exit).
 	UnitStatus(ctx context.Context, name string) (unitStatus, error)
-	// UnitEnvironment reads the unit's own Environment=, KEY=VALUE
-	// pairs as the manager holds them (not its defaults, which apply at
-	// exec): the environment the caller built for the launch. Reattach
-	// alone reads it, for the response filter (handle.launchEnv); it
-	// holds env_file values, so it is never logged nor kept elsewhere.
-	UnitEnvironment(ctx context.Context, name string) ([]string, error)
+	// UnitStatusAndEnvironment is UnitStatus plus the unit's own
+	// Environment=, KEY=VALUE pairs as the manager holds them (not its
+	// defaults, which apply at exec): the environment the caller built
+	// for the launch, from the same single read, so either both are
+	// read or the call fails. Reattach alone calls it, for the response
+	// filter (handle.launchEnv); the pairs hold env_file values, so they
+	// are never logged nor kept elsewhere.
+	UnitStatusAndEnvironment(ctx context.Context, name string) (unitStatus, []string, error)
 	// ResetFailedUnit clears a failed unit so the manager unloads it.
 	ResetFailedUnit(ctx context.Context, name string) error
 	// ListUnits returns the loaded units whose names match the glob.
@@ -314,8 +316,8 @@ type systemdHandle struct {
 	done        chan struct{}
 	exit        atomic.Pointer[unitStatus] // final status, set before done closes
 	// env is the unit's environment as read at reattach (launchEnv),
-	// the one place it is kept; nil for a unit this process started, or
-	// when the read failed. Written once, before the handle is shared.
+	// the one place it is kept; nil for a unit this process started.
+	// Written once, before the handle is shared.
 	env []string
 }
 
@@ -1192,7 +1194,10 @@ func (r *systemdRunner) Reattach(st handleState) (handle, bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(r.ctx, startJobTimeout)
 	defer cancel()
-	us, err := r.conn.UnitStatus(ctx, st.Unit)
+	// The environment comes with the status, in one read: a failure of
+	// it is the caller's retry, never an adoption that does not know
+	// what the instance holds (#657).
+	us, env, err := r.conn.UnitStatusAndEnvironment(ctx, st.Unit)
 	if err != nil {
 		return nil, false, fmt.Errorf("reading recorded unit %s: %w", st.Unit, err)
 	}
@@ -1241,14 +1246,7 @@ func (r *systemdRunner) Reattach(st handleState) (handle, bool, error) {
 		}
 		// env: what the instance was launched with, which a moteld
 		// that did not launch it knows from nowhere else, and the
-		// env_file may no longer hold (#657). A failed read is no
-		// reason not to adopt: the handle reports none, and the app's
-		// filter knows the file as it is now (rememberRunningEnv).
-		env, err := r.conn.UnitEnvironment(ctx, st.Unit)
-		if err != nil {
-			r.log().Warn("reading the recorded unit's environment", zap.String("unit", st.Unit), zap.Error(err))
-			env = nil
-		}
+		// env_file may no longer hold (#657).
 		h := &systemdHandle{unit: st.Unit, startedAt: st.StartedAt, stopTimeout: us.StopTimeout, done: make(chan struct{}), env: env}
 		h.pid.Store(int64(us.MainPID))
 		h.setArgv(us.ExecStart)

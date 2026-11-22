@@ -735,21 +735,28 @@ func (c *userManagerClient) ResetFailedUnit(ctx context.Context, name string) er
 // trip (GetAll with an empty interface spans Unit and Service). A unit
 // the manager does not know comes back as not-found, never an error.
 func (c *userManagerClient) UnitStatus(ctx context.Context, name string) (unitStatus, error) {
+	st, _, err := c.UnitStatusAndEnvironment(ctx, name)
+	return st, err
+}
+
+// UnitStatusAndEnvironment is UnitStatus's one read, with the unit's
+// Environment taken out of it as well (envStrings): Reattach's alone.
+func (c *userManagerClient) UnitStatusAndEnvironment(ctx context.Context, name string) (unitStatus, []string, error) {
 	conn, err := c.get()
 	if err != nil {
-		return unitStatus{}, err
+		return unitStatus{}, nil, err
 	}
 	props, err := conn.GetAllPropertiesContext(ctx, name)
 	if err != nil {
 		if isNoSuchUnit(err) {
-			return unitStatus{Name: name, LoadState: "not-found"}, nil
+			return unitStatus{Name: name, LoadState: "not-found"}, nil, nil
 		}
 		c.dropIfDisconnected(conn, err)
-		return unitStatus{}, err
+		return unitStatus{}, nil, err
 	}
 	st := statusFromProps(props)
 	st.Name = name
-	return st, nil
+	return st, envStrings(props["Environment"]), nil
 }
 
 // isNoSuchUnit reports the manager saying it does not know the unit —
@@ -770,7 +777,7 @@ func isNoSuchUnit(err error) bool {
 // full property map (Unit + Service interfaces).
 // Not the unit's Environment, which the map holds too: that holds
 // env_file values, and a status is read and kept everywhere
-// (UnitEnvironment is its one reader).
+// (UnitStatusAndEnvironment hands it to Reattach alone).
 func statusFromProps(props map[string]any) unitStatus {
 	return unitStatus{
 		LoadState:      propString(props, "LoadState"),
@@ -853,25 +860,6 @@ func (c *userManagerClient) ListUnits(ctx context.Context, pattern string) ([]un
 func propString(props map[string]any, key string) string {
 	s, _ := props[key].(string)
 	return s
-}
-
-// UnitEnvironment reads the service's Environment property on its own
-// (statusFromProps leaves it out of every status). A unit the manager
-// does not know has none.
-func (c *userManagerClient) UnitEnvironment(ctx context.Context, name string) ([]string, error) {
-	conn, err := c.get()
-	if err != nil {
-		return nil, err
-	}
-	p, err := conn.GetServicePropertyContext(ctx, name, "Environment")
-	if err != nil {
-		if isNoSuchUnit(err) {
-			return nil, nil
-		}
-		c.dropIfDisconnected(conn, err)
-		return nil, err
-	}
-	return envStrings(p.Value.Value()), nil
 }
 
 // envStrings reads an "as" value as godbus decodes it, a []string, as a

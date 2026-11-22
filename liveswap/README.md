@@ -1539,8 +1539,9 @@ What liveswap does for you:
   itself (the inherited `PATH`, `LANG`, `TZ` and `LC_*`, `HOME`,
   `SOCKET`) and the inline `env` lines as the config has them now are
   not known values. Until that reattach (moteld just started, or its
-  user manager not answering), the filter knows the file only as it
-  is now. While an app's `env_file` cannot be read (a rewrite
+  user manager not answering), or when the environment the manager
+  gives back is not one motel built for that unit (a warning names the
+  unit), the filter knows the file only as it is now. While an app's `env_file` cannot be read (a rewrite
   mid-flight, a mode not yet fixed), every response about that app is
   withheld, since its values are unknown to the filter; the body says
   so, and the next response after the file reads is normal. Past the
