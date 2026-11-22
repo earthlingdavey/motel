@@ -163,18 +163,14 @@ Properties that matter to the model:
   POST deploys, all else 405 — the method switch in
   `Handler.ServeHTTP` (liveswap/handler.go). The status endpoint is
   authenticated — not public.
-- **What the webhook says back is filtered** (liveswap/redact.go,
-  which states the filter's four layers and seven rules; every body passes it —
-  through `RespondJSON` in liveswap/handler.go, the record route's
-  `respondFiltered`, the stream's lines, the record store's write).
-  What it promises, plainly, within the limits below: when an app
-  prints one of its `env_file` values, motel hides it; motel's own
-  figures and times are never hidden for holding one (the fifth text
-  below), though a body the filter withholds, or sends through it
-  whole in one of its fallbacks, takes its figures with it. The
-  response's audience is wider than its caller: the paved road prints
-  it into a GitHub Actions log, readable by everyone with read access
-  to the repository, retained, and public for a public repository.
+- **The app's text is filtered where it enters what the webhook says
+  back** (liveswap/redact.go, which states the places and the four
+  layers). What it promises, plainly, within the limits below: when an
+  app prints one of its `env_file` values, motel hides it; motel's own
+  figures, names and times are never hidden. The response's audience
+  is wider than its caller: the paved road prints it into a GitHub
+  Actions log, readable by everyone with read access to the
+  repository, retained, and public for a public repository.
   The caller is trusted to run code on the box; the log's readers are
   not. A failed deploy's body carries the app's own bytes on purpose
   (liveswap/journal.go, `deployDetail` in liveswap/app.go): the last
@@ -204,149 +200,129 @@ Properties that matter to the model:
   groups and see no journal in their sandbox anyway). What that
   widens is what a compromised moteld reads — every unit's lines —
   which the shipped units keep free of secrets (no `--environ`, the
-  smoke test asserts it). Every body passes
-  four layers before it is written. A streamed deploy (`Accept:
-  application/x-ndjson`) writes two kinds of line, each through the
-  same filter before it is written: phase lines, generated objects
-  holding a phase name and a timestamp and nothing of the app's; and
-  the last line, the single response's body filtered exactly as it
-  would have been, with two fixed fields — `"event":"done"` and
-  `http_status` — appended after the filter so that a body the filter
-  withholds still ends the stream with them. First, exact: every `env_file`
+  smoke test asserts it).
+  The app's text is filtered once, as text, where it enters an answer
+  or a stored record, and nowhere else: a failed deploy's journal tail,
+  its probe's body and `Location`, a line of the app's journal at the
+  logs read, and every error string that becomes a field of an answer
+  or a record (an error can quote what the app answered a probe with,
+  and can name a path the app made: a cleanup that failed, a
+  pre-flight's refusal of a link in a release). Such text has a type of
+  its own that only the filter makes (`wire.AppText`, `wire.ErrText`;
+  `TestAppTextOnlyFromTheDoor`, `TestErrTextMakers`). An answer is then
+  marshalled from its typed struct and sent: no filter runs over a
+  finished body, so a key, a word of motel's vocabulary, a version, the
+  app's name, a time or a number is never replaced, and no answer is
+  withheld whole. Every other string field of an answer is classed as
+  moteld's own or as text that passes as written because it is the
+  caller's, the operator's or another program's, and a test fails for
+  a field nobody classed (`TestEveryStringFieldIsClassed`): nothing is
+  filtered by default, so a new field cannot ship unclassed. A streamed
+  deploy (`Accept: application/x-ndjson`) writes phase lines, a phase
+  name and a time, and the last line, the single response's body with
+  `"event":"done"` and `http_status` appended.
+  The filter's layers, over one text. First, exact: every `env_file`
   value of 8+ characters this process has rendered for a launch (or,
-  after a restart, read from the file for the filter), in each form
-  the filter recognises (as written, JSON-escaped, base64 standard and
-  URL alphabets padded and not, hex, URL-escaped, and a URL value's
-  password on its own), becomes `[redacted:KEY]`, and the body gains
-  `redacted_env` naming the keys. motel is the party that knows
-  these values, which is why the filter lives here and not in CI,
-  where `::add-mask::` can only hide what the job itself knows.
-  Second, an allowlist: the versions the status names and the app's
-  own paths are exempt from the heuristics below — never from the
-  first layer: a safe string equal to a known value is dropped,
-  whoever named it (a request, the config, a name read off disk), so
-  a version, an app name or a path spelled as an `env_file` value is
-  redacted like the value, but in one place: the app's own name in the
-  body's `"app":"<name>"` pair (below). Third, shape rules for
-  credentials with a recognisable form. Fourth, entropy: a run of 20+
-  characters from the base64 or hex alphabet, mixed and with Shannon
-  entropy above the class's bar — one that follows the run's length,
-  since a short run cannot reach a fixed bar — is replaced by
-  `[masked, N chars]`, never by a fingerprint. Markers are chosen so that none contains a
-  known value (a key named for its own value gets a number in
-  brackets), and the first layer runs once more over the finished
-  bytes — any fallback included — so the promise holds for the bytes
-  written, not only for the body as filtered (a body's times and
-  numbers are put back after that pass, and a check across each one's
-  edge holds the promise for them: the fifth text below); the safe strings are
-  held out of the heuristic layers as spans, so a version shaped like
-  a token survives them. The one text outside the promise is the
-  report field's own name, `redacted_env`: it is fixed, in every such
-  response, and so reveals nothing; its key names are filtered. The
-  other is the outcome vocabulary — `succeeded`, `failed`, the phase
-  names — where it stands as a `status`, `phase` or phase `name`: a
-  known form that is a bare word (a value, or a URL value's password,
-  spelled as one) is replaced everywhere but in such a pair, in every
-  body, so a value spelled as one of the words rewrites no outcome.
-  Every other form is replaced wherever it is; a body with fewer
-  such pairs at the end than it had — a value that is part of a word
-  was replaced inside it — is withheld; and the same word in `error`
-  or `detail` is text, and filtered. The third is the app's own name
-  where a JSON body names the app by it, the pair `"app":"<name>"` (the
-  status's, in `GET /<app>` and a deploy's body): an `env_file` value
-  that is the name as written (`DB_NAME=<app>`) is left there and
-  replaced everywhere else, a path and the text of an error included.
-  Only that value: an encoding of another value, or a URL's password,
-  that happens to equal the name is replaced in the pair too; and only
-  in a JSON body, where a quote inside a string is escaped, so the pair
-  is the body's own field and never text an app wrote (the plain-text
-  filter of a notification's summary has no such rule). The name is in
-  the request's path and the config, so the pair tells nothing the
-  caller did not send; a value that holds the name inside it is
-  replaced whole, before the name is looked at. The app list names each
-  app outside the filter, for the same reason. The fourth is a whole
-  body: one made only of the handler's own words and what this request
-  itself sent, which holds nothing of the app's, is written through a
-  filter that knows no `env_file` value. Through the app's filter it
-  was an oracle: the first layer replaces a value wherever a body holds
-  it and names the key, so `GET /<app>?deploy=<guess>`, whose 404 names
-  the version asked for, answered `[redacted:DB_PASSWORD]` for a guess
-  that held that value (as written, inside a longer string, in base64
-  or hex, or a URL value's password alone), and a person with no more
-  than the viewer role could try values until one did. A logs reader
-  reaches the same oracle another way, through an app's logs (`GET
-  /_motel/apps/<app>/logs`), for a `logs` grant alone. A logs reader who
-  can send the app input (a request to its site, which most apps log)
-  can test a guess of an `env_file` value: a line holding a whole value
-  of 8 characters or more comes back as the marker that names its key,
-  and a wrong guess as written. Never a piece of a value, and never a
-  generated one, which cannot be guessed; a weak one (a word, a reused
-  password) can be. The filter cannot close it, since any visible
-  replacement confirms a match. Keep generated values in `env_file`, and
-  give `logs` only to people you would trust with them: the `access:
-  person read logs` line names the keys a read replaced, so a confirmed
-  guess leaves the person's name and the key in the journal (the logs
-  reader's residual, below). That 404 and
-  the 422 of a query that does not parse are the such bodies today;
-  the 500 of the same read, whose error may name the record's file
-  and so the version asked for, now says a fixed sentence and leaves
-  the error to the journal, since the error may also name the app's
-  directory, which a value may equal. The exemption is the body's and never the
-  string's: a string is not safe because a request named it, and text
-  an earlier request stored, a deployed version in a status or a
-  record, passes the app's filter with the app's bytes. The fifth is
-  a body's times and numbers: each time a status, a deploy's answer
-  and its stream's lines, a record or an apps list's row holds under
-  a time's key, written as `encoding/json` writes one, is the box's
-  clock, and each number in a JSON body is a figure `encoding/json`
-  wrote from a Go number (the box's counts, the operator's caps, the
-  metrics store's summary, an artifact's size, a probe's status code),
-  never the app's bytes, which are always in a string. Both pass no
-  layer, so a value that is a piece of one (a date, a clock time,
-  digits of a time's fraction, an app's memory limit in bytes equal
-  to its `memory_max`) stands there whole, naming no key, where a
-  marker inside a time, or a body withheld for a number with the key
-  named, said the value was a piece of it; it is replaced everywhere
-  else, digits in a string included. The figure stands whole beside a
-  marker of the same value too, in the same body (the app printed it,
-  and the filter, or a failed deploy's detail as it was built, replaced
-  it there) or in another answer, and a reader may set the two side by
-  side and take the key's value to be the figure: motel's figures are
-  never hidden for the value they hold (the owner's decision of
-  2026-11-21, an accepted row in liveswap/DESIGN-liveswap.md); and a
-  body in which a value would stand across a token's edge goes
-  through whole as before (liveswap/redact.go, rule 7). A figure the
-  app's behaviour drives (its memory, its request counts) is a channel
-  only for an app that means to send its secret, which can answer any
-  request with it. A
-  body the first layer would leave unparsable (a value made of JSON's
-  own punctuation matching the structure rather than a string) is
-  withheld, with the keys still reported; and while an app's
-  `env_file` cannot be read, its values are unknown to the filter and
-  every body that holds anything of that app's is withheld rather than
-  sent through the heuristics alone. What the filter does **not** promise: an encoding not in
-  the list, a value under 8 characters, a secret split across lines,
-  a secret the app fetched at runtime and printed in a low-entropy
-  form, an inline `env` value (not a secret by policy: the Caddyfile
-  is in a repo), a value the still-running instance was launched
-  with before a moteld restart if the file has changed since, or a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started). Nor that
-  a deploy source cannot confirm a guess of a value: a deploy's
-  refusals echo its version and URL through the app's filter, and a
-  version it deploys is named in the status; it can read the app's
-  environment by deploying code, so it learns nothing it could not.
-  Nor that a value one of motel's figures or times holds stays
-  unknown: it stands there whole, beside the value's marker or not.
-  Nor that a marker hides which key it stands for: it names the key,
-  so where a value is replaced inside text the reader already has (the
-  app's name when a value is part of it, the unit named after the app)
-  the reader learns that key's value by difference
-  (liveswap/DESIGN-liveswap.md, "Accepted residuals").
-  Tested from both sides — a fuzz property that no known value or
-  form survives outside the texts above and the JSON stays valid
-  (`FuzzRedactor`), and a
-  corpus that the diagnostics a reader needs do (`TestRedactorCorpus`)
-  — because a filter with only the first test drifts toward blanking
-  everything.
+  after a restart, read from the file), in each form the filter
+  recognises (as written, JSON-escaped, base64 standard and URL
+  alphabets padded and not, hex, URL-escaped, and a URL value's
+  password on its own), becomes `[redacted:KEY]`, and the answer's
+  `redacted_env` names the keys. motel is the party that knows these
+  values, which is why the filter lives here and not in CI, where
+  `::add-mask::` can only hide what the job itself knows. Second, an
+  allowlist: the app's name, the versions and digests in play, the
+  releases on disk and the app's own paths are exempt from the
+  heuristics below, never from the first layer: a safe string equal to
+  a known value is dropped. Third, shape rules for credentials with a
+  recognisable form. Fourth, entropy: a run of 20+ characters from the
+  base64 or hex alphabet, mixed and with Shannon entropy above the
+  class's bar (one that follows the run's length, since a short run
+  cannot reach a fixed bar), is replaced by `[masked, N chars]`, never
+  by a fingerprint. Markers are chosen so that none contains a known
+  value, and the first layer runs once more over the text, so the
+  promise holds for the text sent. Each run Go quoted inside an error
+  is also filtered as the bytes it quotes. motel's own sentence for a
+  probe that got no answer leaves motel's URL out, so that the error
+  net does not meet `DB_HOST=localhost` in motel's words.
+  While an app's `env_file` cannot be read (after a restart, or a
+  reload to another file), its values are unknown to the filter: each
+  text of the app's, and each error's text, is the filter's sentence
+  (`[withheld: …]`), and moteld's own fields are sent. A deploy whose
+  own launch rendered the file filters its error with the values it
+  launched with. A deploy's record holds the result with its app text
+  and error text already filtered, marked so, and is served as written;
+  a record an older moteld wrote has its error and detail filtered
+  again when it is read.
+  A refusal made only of moteld's words and what the request itself
+  sent passes no app's filter (`wire.OwnText`): the 404 of `GET
+  /<app>?deploy=<version>` for a version with no record, and the 422 of
+  a query that does not parse. Through the app's filter such a body was
+  an oracle: the first layer replaces a value wherever a text holds it
+  and names the key, so a 404 that names the version asked for answered
+  `[redacted:DB_PASSWORD]` for a guess that held that value, and a
+  person with no more than the viewer role could try values until one
+  did. A logs reader reaches the same oracle another way, through an
+  app's logs (`GET /_motel/apps/<app>/logs`), for a `logs` grant alone.
+  A logs reader who can send the app input (a request to its site,
+  which most apps log) can test a guess of an `env_file` value: a line
+  holding a whole value of 8 characters or more comes back as the
+  marker that names its key, and a wrong guess as written. Never a
+  piece of a value, and never a generated one, which cannot be guessed;
+  a weak one (a word, a reused password) can be. The filter cannot
+  close it, since any visible replacement confirms a match. Keep
+  generated values in `env_file`, and give `logs` only to people you
+  would trust with them: the `access: person read logs` line names the
+  keys a read replaced, so a confirmed guess leaves the person's name
+  and the key in the journal (the logs reader's residual, below).
+  **What is no longer searched.** Until the filter moved to where the
+  app's text enters (2026-11), it searched every finished body, and so
+  also hid an `env_file` value in text that is not the app's. That text
+  now passes as written: (1) a deployer's version equal to a value, in
+  the status, the records and the unit's name; (2) `deployed_by`, the
+  operator's key path and a token's claims; (3) the argv the unit runs,
+  from the operator's Caddyfile, a credential passed as a flag
+  included; (4) an alert's summary motel did not write (an operator's
+  rule, an admin's `moteld monitor send`), a silence's comment, and
+  the alert and silence rows as Alertmanager holds them (a summary
+  motel told passed the app's filter when it was told); (5) the
+  heuristics over other programs' and the operator's text: the backups'
+  lines (sqlite3's words about a damaged copy can name a table the app
+  made, which no app's values ever met), the rules, and the box
+  webhook's answers (a refusal quotes the operator's own Caddyfile);
+  (6) moteld's own names, words, times and figures. None of the six is
+  the app printing one of its values while it runs; the first two are
+  the deployer's, who can read the app's environment by deploying.
+  What the filter does **not** promise: an encoding not in the list, a
+  value under 8 characters, a secret split across lines (a value the
+  app prints across two lines at the logs read stays readable), a
+  secret the app fetched at runtime and printed in a low-entropy form,
+  an inline `env` value (not a secret by policy: the Caddyfile is in a
+  repo), a value the still-running instance was launched with before a
+  moteld restart if the file has changed since, a value the app's
+  `env_file` no longer holds, in a line written while it did (a logs
+  read reaches lines of any age, and the filter knows only the file's
+  values now and those moteld has read since it started), or a value
+  added to `env_file` after the app printed it, in a deploy's record
+  written before (no read filters a marked record again). Nor that a
+  deploy source cannot confirm a guess of a value: a deploy's refusals
+  name its version and URL in an error's text, which passes the app's
+  filter, and a version it deploys is named as written in the status;
+  it can read the app's environment by deploying code, so it learns
+  nothing it could not. Nor that a value moteld's own data holds (a
+  figure, a time, a version, a name) stays unknown: it stands there
+  whole, beside the value's marker or not. Nor that a marker hides
+  which key it stands for: it names the key, so where a value is
+  replaced inside text the reader already has, the reader learns that
+  key's value by difference (liveswap/DESIGN-liveswap.md, "Accepted
+  residuals").
+  Tested from both sides: a fuzz property that no known form survives
+  a door, in its text and in the answer that carries it
+  (`FuzzDoorText`); a canary that two values an app prints at every
+  place its bytes reach are in no answer of any reader and no record
+  (`TestCanaryAtEveryDoor`); the attack's three leaks in error strings
+  (`TestErrorNet*`); and a corpus that the diagnostics a reader needs
+  survive (`TestRedactorCorpus`), because a filter with only the first
+  test drifts toward blanking everything.
 - **Auth failures are throttled in the journal**
   (liveswap/deploytrust/limiter.go). Token *forgery* is infeasible (no private
   key), so this is not a guessing oracle; what
@@ -430,7 +406,7 @@ Properties that matter to the model:
   it answers no question about what is running. Artifact URLs *are*
   redacted before logs/errors (`redactURL`, liveswap/download.go), so
   query signatures do not leak.
-  A viewer reads most of this too, through the same filter: `GET /<app>`
+  A viewer reads most of this too, as the deploy token does: `GET /<app>`
   is the body a deploy token reads (liveswap/access/DESIGN-access.md,
   "The answers"), for one app with the viewer role on it, for every app
   with the role on the box. That is the status snapshot above — the
@@ -693,8 +669,8 @@ is closed by the unit's limit — enforced by the kernel under a file
   same `ptrace_may_access` rule, since the app's namespace is owned by
   the motel uid, which holds `CAP_SYS_PTRACE` in it. Not measured.
 - **moteld's own memory**, which keeps every value it has read — for
-  a launch, or for the response filter, which reads the file without
-  one (`managedApp.secrets` and `redactorFor`, liveswap/app.go) — for
+  a launch, or for the app's filter, which reads the file without one
+  (`managedApp.secrets` and `managedApp.door`, liveswap/app.go) — for
   as long as the app stays configured, behind the non-dumpable floor.
 - **Not a core dump.** App units run with `LimitCORE=0` on both the
   soft and the hard limit (`unitProperties`, liveswap/systemd_dbus.go),
@@ -1189,9 +1165,7 @@ scope for the runtime model, in scope for release signing (roadmap).
   and the tarball bytes, unless the pull carries `sha256`, which the
   example workflows do: then other bytes are a 422, and what remains
   is withholding. The pin is kept in the version's deploy record, for
-  as long as the record is, unless the filter would redact it (it
-  equals or holds an `env_file` value, or those values could not be
-  read whole); liveswap/README.md, Deploy records, has the exceptions. Faces `extract.go` and the first-hop SSRF gap.
+  as long as the record is; liveswap/README.md, Deploy records. Faces `extract.go` and the first-hop SSRF gap.
 - **T4 — Unauthenticated network attacker** on the public webhook/proxy.
   Faces the token gate — forgery needs a private key, so there is no
   guessing oracle; the realer wins are log-amplification (bounded by
@@ -1290,7 +1264,7 @@ scope for the runtime model, in scope for release signing (roadmap).
   be used without a touch. A key whose grant is `logs` on the app reads
   all that and the app's logs too: whatever the app printed, its
   customers' data and secrets it made or fetched while it ran among
-  them, which the response filter cannot know to hide (it masks the
+  them, which the app's filter cannot know to hide (it masks the
   app's `env_file` values and some shapes of credential). That is why
   docs/people.md advises a `from` list on every `logs` grant; a `viewer`
   grant never reads logs. With a listed `logs` grant beside an unlisted
@@ -1309,8 +1283,8 @@ scope for the runtime model, in scope for release signing (roadmap).
   (`ofPersonAlert`, notify/alertsview.go), its creator and comment
   included, and every rule.
   This is the operator's viewing key, and the one an address list is
-  most worth having on. It reads what the box webhooks answer through
-  the same filtered bodies, and nothing the webhooks do not answer: not
+  most worth having on. It reads what the box webhooks answer, and
+  nothing the webhooks do not answer: not
   the journal, the backup repository and its credential, or the admin
   socket. With `logs` on the box it also reads every app's logs (the
   apps' own lines of the journal), as T7's `logs` key reads one app's,
@@ -1335,10 +1309,11 @@ or the undoing of a console edit), one bundle in `in/` at a time with
 no age-out and one in root's hands, and the handler's validate on a
 signer's file; a signer's software key gets the box, and — with secrets
 in the repository — every value encrypted to it, offline. For **T7** and
-**T8**: disclosure of what the grant reads, bounded by the response
-filter as every body is ("Webhook endpoint"), but for an app's logs
-under a `logs` grant, which hold what the app printed and which the
-filter bounds only for the values it knows; and the CPU of reads up to
+**T8**: disclosure of what the grant reads, the app's text in it
+bounded by the app's filter where it entered ("Webhook endpoint"), but
+for an app's logs under a `logs` grant, which hold what the app printed
+and which the filter bounds only for the values it knows; and the CPU
+of reads up to
 the rate per person (2 a second, 60 at once).
 
 ## The shared-UID rule
@@ -1653,7 +1628,7 @@ does not isolate the runtime.
 - **A logs reader is sent what the app printed** (`GET
   /_motel/apps/<app>/logs`, a `logs` grant): its customers' data and
   the secrets it made or fetched while it ran, which the box was never
-  told are secret. The response filter is a net under who may read, not
+  told are secret. The app's filter is a net under who may read, not
   the safeguard: each line passes it on its own, which masks the app's
   `env_file` values in the forms it knows and some shapes of
   credential, and nothing else (a value escaped as another runtime
@@ -1887,28 +1862,28 @@ does not isolate the runtime.
   outcome; `TestDeployRecordsAreOutsideTheSandboxView`) and the
   other releases do not exist inside.
 - **The deploy record store is a trust boundary in both directions**
-  (liveswap/deploys.go states its four rules; every function there
-  and both filters hold them). A record is written once, through the
-  filter, into a directory verified as the app's own — so no known
-  secret is on disk in it (a version equal to one is the exception,
-  and is already the record's file name and the release directory's),
-  and a secret rotated later is not in an old record for the new
-  filter to miss. Anything read back is text
-  from disk: served only through the filter, trusted for nothing
-  else unless it proves itself a record (a regular file, a valid
-  version name, an object naming that version). One that does orders
+  (liveswap/deploys.go states its three rules; every function there
+  holds them). A record is written once, into a directory verified as
+  the app's own, as the deploy's result: its app text and error text
+  passed the app's filter where they entered, so no known secret the
+  app printed is on disk in it, and a secret rotated later is not in an
+  old record for the new filter to miss (one added to `env_file` later
+  is, if the app had printed it). Anything read back is text from disk,
+  trusted for nothing unless it proves itself a record (a regular file,
+  a valid version name, an object naming that version and an outcome),
+  and then served as written when it bears the mark of a record
+  filtered where its text entered; an older moteld's record, filtered
+  whole when it was written, has its error and detail filtered again
+  when read. One that does orders
   the releases: its write time is its version's deploy time, which
   release GC and `available_versions` follow, since a release dir's
   own mtime is the running app's to set (liveswap/state.go, "Release
   order"); a release with no record sorts after every recorded one,
   by that mtime among its kind, and is named in the status
-  (`ordered_by_mtime`). Nothing from disk
-  reaches a response except through the filter as body text; a name
-  read off disk — a release directory's, a record's, `state.json`'s —
-  is a safe string like any other and, like any other, never one
-  equal to a known value (nothing on disk says who chose a name);
-  and nothing is appended to a body after the
-  filter's final pass but what the filter's own second rule names.
+  (`ordered_by_mtime`). A name read off disk (a release directory's, a
+  record's, `state.json`'s) is used as a version only once it is one
+  (`validVersion`), and as a safe string of the filter's never one
+  equal to a known value (nothing on disk says who chose a name).
   Nothing there
   follows a link, ancestors included, and the store never blocks a
   deploy or a status.
@@ -2043,3 +2018,11 @@ Dated one-liners; the full text of each is in git.
   motel's own figures and times are never hidden for holding one, now
   beside the value's marker in the same body too (that body was
   withheld until then).
+- 2026-11-22 — The filter moved to where the app's text enters (the
+  owner's choice of "filter at the doors"): the app's text and every
+  error string pass the app's filter once, as text, where they enter an
+  answer or a record, with types only the filter makes; no filter runs
+  over a finished body; every string field of an answer is classed.
+  Six kinds of text that are not the app's printing one of its values
+  are no longer searched ("What is no longer searched", above), among
+  them the box webhook's answers.

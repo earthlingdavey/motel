@@ -1185,8 +1185,8 @@ they land, and that digest is the push's pin. The pin is kept as `sha256`
 in the version's deploy record and in `last_deploy` (see
 [Deploy records](#deploy-records)), so "are the bytes serving the ones
 CI built?" can still be answered after the journal has rotated, for as
-long as the record is kept — with the exceptions listed there (a pin
-the filter redacts, and a rollback onto a re-deployed version).
+long as the record is kept — with the exception listed there (a
+rollback onto a re-deployed version).
 
 **2. Push an uploaded tarball** — no artifact host needed. Stream the
 `.tar.gz` as the request body with a gzip content type; the version is
@@ -1329,9 +1329,10 @@ through with how long it took — and, once a launch happened, `detail`:
   the account, so the apps do not get it). A raw-binary install
   without that grant gets `log_tail_error` instead of a tail.
 
-Every string in it passes the response filter first — `[redacted:KEY]`
-where an `env_file` value was, and `redacted_env` naming the keys —
-because the response lands in a CI log, and `deploy_log_lines 0`
+Every string in it but `exit` passes the app's filter as it is gathered
+— `[redacted:KEY]` where an `env_file` value was, and `redacted_env`
+naming the keys — because the response lands in a CI log, and
+`deploy_log_lines 0`
 keeps the app's output on the box entirely: no `log_tail`, and no
 `probe.body` either (the probe's `status` and `location`, and `exit`,
 are motel's own observations and stay). See
@@ -1372,12 +1373,13 @@ refusal, `{"error": …}`, a push refused before staging among them), `DeployRes
 `GET /<app>?deploy=<version>`), `PhaseEvent` and `DoneEvent` (a
 streamed deploy's lines, below), `Metrics` (the status's `metrics`,
 over one of `MetricsRanges`) and `BoxStatus` (the box webhook's
-`GET /`). The handlers marshal these types (a streamed line is the
-filtered body with the event's fields appended); the order of their
-keys is part of the shape, and `liveswap/testdata/wire` pins every body byte
-for byte. A body the filter changed gains a top-level `redacted_env`
-(see [Secrets and logs](#secrets-and-logs)), which only `DeployResult`
-has a field for.
+`GET /`). The handlers marshal these types and send them as marshalled
+(a streamed line is the body with the event's fields appended); the
+order of their keys is part of the shape, and `liveswap/testdata/wire`
+pins every body byte for byte. A body whose app text the filter
+changed names the keys in its `redacted_env` (see
+[Secrets and logs](#secrets-and-logs)). Every string field of these
+types is classed by a type or a `text` tag (the package's doc).
 
 **No header names motel.** No answer, to any caller, carries a header
 that names motel, its protocol or the release the box runs:
@@ -1407,7 +1409,7 @@ and nothing else: a failed deploy is `"http_status":500` with the
 would have said. A request refused before any phase (401, 404, a 409
 because a deploy is running, a 422 on the request or the version) has
 nothing streamed yet and is the usual single response with its real
-code. Every line passes the response filter. The examples'
+code. The examples'
 `scripts/deploy.sh` streams, prints each line as it arrives, and exits
 on the last line's code — or on the real one when nothing streamed.
 
@@ -1470,70 +1472,69 @@ replaced while it is on disk, and its record is normally written
 with it. Not always — a version whose release GC pruned can be
 deployed again, and if that deploy left bytes on disk without
 rewriting the record (the record write failed, or a cleanup did),
-a rollback carries the old pin onto the new bytes. A pin equal to an
-`env_file` value is redacted like any other, and a rollback then
-records none. It is never a hash the box took of an unpinned
+a rollback carries the old pin onto the new bytes. It is never a hash the box took of an unpinned
 download. Records are kept for every version still on disk plus the
 newest `keep` others (failed deploys, whose release is removed at
 once, and versions release GC has pruned), so the set is bounded by
 about twice `keep`. When a record was written is its version's deploy
-time: the order of `available_versions` and of release GC. They are
-written as the response filter left them
-— a secret rotated later is not in an old record — and pass it again
-when read, like every body. One consequence: a version name equal to
-an `env_file` value is that value wherever it appears —
-`current_version`, `available_versions`, `ordered_by_mtime`, `last_deploy`, `deploys`, a
-record — and shows as `[redacted:KEY]`, and such a version's record
-is only the envelope (version, outcome, times, the pin, and why); so do not
-name versions (or apps) after `env_file` values; a release identifier
-an app needs belongs in inline `env`. The outcome words — `succeeded`, `failed`,
-the phase names — are never redacted where they stand as an outcome,
-whatever `env_file` holds.
+time: the order of `available_versions` and of release GC. A record is
+the deploy's result as the answer carried it, its error and detail
+already through the app's filter, and is served as written: a secret
+rotated later is not in an old record, and one added to `env_file`
+after the app printed it is (nothing filters a record again). A
+record written by a moteld older than this one is filtered again when
+read, its error and detail, as every record then was. A version is
+the deployer's name and motel's own data, never replaced: a version
+equal to an `env_file` value is named as written wherever it appears,
+so do not name versions (or apps) after `env_file` values; a release
+identifier an app needs belongs in inline `env`.
 
 ## Secrets and logs
 
 What liveswap does for you:
 
-- **Every webhook response is filtered before it leaves the box.** A
+- **The app's text is filtered where it enters a webhook response.** A
   response lands in a CI log — readable by everyone with read access
-  to the repository, retained, public for a public repo — so nothing
-  reaches it unfiltered. motel knows the app's secrets by value (it
-  built the environment from `env_file`), so the first layer is exact:
-  every `env_file` value of 8+ characters, as written, JSON-escaped,
-  base64, hex or URL-escaped (and a URL value's password on its own),
-  becomes `[redacted:KEY]`, and the response gains
-  `"redacted_env": ["KEY", …]` naming what it contained. Then
+  to the repository, retained, public for a public repo — so the app's
+  bytes never reach it unfiltered. They enter at a few places: a failed
+  deploy's last lines and its health probe's answer, a line of its
+  journal at the logs read, and an error's text (Go quotes an answer
+  that is no HTTP into one; the system names paths the app made). Each
+  is filtered there, once, as text. motel knows the app's secrets by
+  value (it built the environment from `env_file`), so the first layer
+  is exact: every `env_file` value of 8+ characters, as written,
+  JSON-escaped, base64, hex or URL-escaped (and a URL value's password
+  on its own), becomes `[redacted:KEY]`, and the response's
+  `"redacted_env": ["KEY", …]` names what it contained. Then
   credentials with a recognisable shape (JWTs, bearer tokens, URL
   userinfo and query strings, provider key prefixes, PEM blocks,
   `…PASSWORD=`-style assignments) are replaced by name, and finally
   any 20+-character run that looks generated — base64 or hex alphabet,
   mixed, high entropy for its length — becomes `[masked, N chars]`
   (an assignment keeps its key: `BUILD_ID=[masked, 24 chars]`). The
-  `env_file` values are replaced before the tail and the probe's body
-  are cut to their caps, and the token a read's own bound cut in two
-  is dropped, so a cut never leaves a fragment of one (a value with a
-  space in it, cut by the read bound, is the one exception). The versions the
-  status names and the app's own paths are exempt from the heuristics,
-  so a git SHA used as a version survives — from the heuristics only:
-  one equal to an `env_file` value is redacted like the value. motel's
-  own figures and times (a cap, an artifact's size, a deploy's clock)
-  pass none of these layers: a value equal to one, such as a memory
-  limit in bytes equal to the app's `memory_max`, stands whole in that
-  figure, beside its marker where the app printed it. (A value that
-  runs across a figure's edge into the JSON beside it, or an app's line
-  shaped as the filter's placeholder, sends the whole response through
-  the filter, figures included, and it may then be withheld.) Two
-  consequences for what
-  you put where: `env_file` is for secrets, and every value in it of
-  8+ characters is scrubbed from responses, so a non-secret there (a
-  path, a hostname) gets scrubbed too and belongs in inline `env`
-  instead; and inline `env` values are never treated as secrets,
+  values are replaced before the tail and the probe's body are cut to
+  their caps, and the token a read's own bound cut in two is dropped,
+  so a cut never leaves a fragment of one (a value with a space in it,
+  cut by the read bound, is the one exception). The app's name, the
+  versions in play and the app's own paths are exempt from the
+  heuristics, so a git SHA used as a version survives them — from the
+  heuristics only: one equal to an `env_file` value is replaced in the
+  app's text like the value. Everything else in a response is motel's
+  own, or the deployer's, the operator's or another program's text,
+  and passes as written: no filter runs over a finished response, so a
+  version, a name, a word of motel's, a figure or a time is never
+  replaced, and no response is withheld whole. Two consequences for
+  what you put where: `env_file` is for secrets, and every value in it
+  of 8+ characters is scrubbed from the app's text, so a non-secret
+  there (a path, a hostname) gets scrubbed too and belongs in inline
+  `env` instead; and inline `env` values are never treated as secrets,
   because the Caddyfile lives in a repo. While an app's `env_file`
-  cannot be read (a rewrite mid-flight, a mode not yet fixed), every
-  response about that app is withheld, since its values are unknown
-  to the filter; the body says so, and the next response after the
-  file reads is normal. Past the first layer it is best effort, and
-  the limits are in DESIGN-threat-model.md.
+  cannot be read (a rewrite mid-flight, a mode not yet fixed), the
+  app's text and the error text in a response about that app are the
+  filter's sentence, since its values are unknown to the filter, and
+  the rest is sent; the next response after the file reads is normal.
+  Past the first layer it is best effort, and the limits are in
+  DESIGN-threat-model.md.
 - Deploy logs record the artifact **host only**; download errors go
   through a redactor that drops credentials and query strings (where
   presigned-URL and token secrets live).
@@ -1578,7 +1579,7 @@ What's yours to handle:
   at startup, they end up in the journal — that one's on the app.
 - **A failed deploy's response carries the app's last lines** (up to
   `deploy_log_lines`, 40 by default), the process's exit status and
-  the last health probe's answer, after the response filter. The
+  the last health probe's answer, each through the app's filter. The
   filter knows every `env_file` value and replaces it; what it does
   not know — a secret the app fetched at runtime and printed in a
   low-entropy form — is caught only by the heuristics. Two things

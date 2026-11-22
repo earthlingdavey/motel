@@ -21,7 +21,7 @@ alerts to an Alertmanager that listens on a unix socket only, and
 whose whole configuration motel renders from the Caddyfile's `monitor`
 block, which also holds the metrics store's line (DESIGN-metrics.md). It
 is its own module (`notify/`), importing liveswap (the apps' deploy
-trust, the response filter) and the backup record, never the other way
+trust, the filter it passes summaries through) and the backup record, never the other way
 round: liveswap reports to a `Notifier` interface and knows nothing of
 notify. The requirements are #418's and #137's; #418's own
 "Decisions" were an in-process design this one replaces ("History").

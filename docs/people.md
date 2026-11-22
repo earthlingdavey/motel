@@ -261,9 +261,15 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   `…`; journald itself stores a line over 48 KiB as several), each run
   of bytes that are not UTF-8 is one `U+FFFD`, and control characters
   are as the app wrote them, for your terminal to be kept from.
-- Each line passes the app's filter on its own: the values of its
-  `env_file` in the forms the box knows, and some shapes of
-  credential. `redacted_env` names the keys it replaced. Not a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started):
+- Each line's text passes the app's filter on its own, where it
+  enters the answer: the values of its `env_file` in the forms the box
+  knows, and some shapes of credential. `redacted_env` names the keys
+  it replaced. A line's time and release, the cursor and the other
+  fields are the box's own and pass no filter. While the app's
+  `env_file` cannot be read, each line's text is the filter's sentence
+  (`[withheld: …]`) and the rest is sent. Of a line longer than 4 KiB
+  the filter reads at most 12 KiB, more than is sent. Not a value the
+  app prints across two lines, which are two lines here. Not a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started):
   changing a value does not hide it in lines already written, so
   revoke the old credential.
 - A logs reader who can send the app input (a request to its site, which

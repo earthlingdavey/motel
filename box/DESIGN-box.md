@@ -1229,7 +1229,7 @@ an empty cell means nobody, by design.
 | `/etc/motel/age.pub` | 0644 | root:root | `box key` | `box key` (only when missing, not the identity's, or not 0644 root:root) | handler (`GET /`) | — |
 | `/etc/motel/.age.pub.box-<random>` | 0644 | root:root | `box key` | `box key` | — | `box key` (renamed over `age.pub`, or removed on failure; the next run removes a crash's) |
 | `/etc/motel/secrets/` | 2750 | root:motel | tmpfiles.d | applier | motel, handler, applier | — |
-| `/etc/motel/secrets/<app>.env` | 0640 | root:motel (born in the setgid dir) | applier | applier | motel (each launch of `<app>`, and its response filter), handler (step 4's digest), applier | applier (when `applied.json` lists the app and HEAD has no `secrets/<app>/`) |
+| `/etc/motel/secrets/<app>.env` | 0640 | root:motel (born in the setgid dir) | applier | applier | motel (each launch of `<app>`, and its filter), handler (step 4's digest), applier | applier (when `applied.json` lists the app and HEAD has no `secrets/<app>/`) |
 | `/etc/motel/secrets/_box.env` | 0640 | root:motel (born in the setgid dir) | applier | applier | motel (notify, at each config load; no app), handler (step 4's digest), applier | applier (when `applied.json` lists `_box` and HEAD has no `secrets/_box/`) |
 | `/etc/motel/secrets/.<app>.env.box-<id>` | 0640 | root:motel (born in the setgid dir) | applier | applier | — | applier (renamed over `<app>.env`, or removed on failure; recovery removes a crash's) |
 | `/var/lib/motel-box/` | 2750 | root:motel | tmpfiles.d | — | — | postremove (`apt purge`; the tree whole, with every row under it, unless something is mounted at or under it) |
@@ -1791,24 +1791,20 @@ No answer of any status above carries a header that names motel, its
 protocol or the box's release, as with liveswap's webhook
 (liveswap/README.md, "Webhook API").
 
-Every answer passes liveswap's response filter (the shape and entropy
-layers) with the protocol's own fields on the safe list — `id`,
-`commit`, `sha256`, `box_webhook`, `phase`, `recipient`, each id in
-`named` — since a 32-hex id, a 40-hex commit, a
-64-hex digest and a bech32 key are exactly what the entropy layer
-exists to catch, and a refusal that masked the
-commit it names (the baseline, the unsigned commit on the chain) would
-name nothing. The `secrets_*` fields, names in their grammars
-(`readResultFile`) and never a value, are held out too, but not by the
-safe list, which costs a pass over the body per string — up to 16384
-names over a result of megabytes: the filter reads the result without
-them, and they are added after it, as the result's last fields, onto
-the result it passed and never onto a body it withheld. Only `diff` and
-`error` text, which carry bundle-derived bytes, go through every layer;
-the applier redacted the `diff` with those same two layers before
-writing it — liveswap/redact.go's layers 3 (shape) and 4 (entropy);
-layer 1, known `env_file` values, is primed from a service environment
-the applier does not have, and layer 2 is the safe list.
+No filter runs over an answer (liveswap's `RespondJSON` writes it as
+marshalled), so the protocol's own fields (`id`, `commit`, `sha256`,
+`box_webhook`, `phase`, `recipient`, each id in `named`, the
+`secrets_*` names) are sent as written. The text an answer holds of
+the bundle's bytes passed a filter where it entered: the applier ran
+the `diff` through liveswap/redact.go's layers 3 (shape) and 4
+(entropy) before writing it, and the validate child's line passed the
+same layers with the service environment's values (box/validate.go).
+A refusal's `error` is the catalogue's words over names and paths, and
+never quotes a secret's value (secrets.go). Until 2026-11-22 every
+answer also passed layers 3 and 4 whole, with those fields on a safe
+list; an address shaped like a token in the operator's own Caddyfile,
+quoted in a refusal, was masked then and is sent as written now
+(DESIGN-threat-model.md, "What is no longer searched").
 
 ## Message catalogue
 
@@ -2670,7 +2666,8 @@ Dated one-liners; the full text of each is in git.
   bounded at 120 s; step 6's reachability check moved to its own PR.
 - 2026-10-10 — PR 3d (the e2e lane) found every refusal naming a
   commit other than HEAD answered with that id masked: results gain
-  `named`, the ids a refusal names, held out of the response filter.
+  `named`, the ids a refusal names, held out of the response filter
+  (which no longer runs over an answer, 2026-11-22).
 - 2026-10-10 — The applier's follow-ups: a run that leaves work on disk
   ends with one journal line carrying the restart remedy, and I2 names
   every such exit; each copy of the remedy has the second restart; a
