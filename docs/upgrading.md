@@ -453,6 +453,54 @@ into to see whether backups are set up, and `root 600` of the file
 (`root 400` passes too). For anything else:
 `chown root:root /etc/motel-backup /etc/motel-backup/repository.env && chmod 0755 /etc/motel-backup && chmod 0600 /etc/motel-backup/repository.env`.
 
+## Backup alerts: one per problem status calls
+
+On a box with backups set up and a `monitor` block, the first release
+with this change raises an alert for each problem `motel-backup status`
+calls, and only those: `status` is the one judge. Each kind of problem
+has its own name, all starting `backup_`, at its own level, per app
+where the problem is an app's
+([Backup alerts](../notify/DESIGN-notify.md#backup-alerts-status-is-the-only-judge)
+lists them). A box that
+is unhealthy today without anyone knowing **alerts within five
+minutes of the install**: a repository check that has not come to a
+clean verdict lately, a restore not proven lately, a repository not
+listed for hours, no run since setup, an app whose backups have failed
+since its first run (now critical), and the like. Before the install,
+as root,
+
+```sh
+motel-backup status
+```
+
+and every line it calls a problem is an alert after it, its text the
+line. From a laptop, `motel backup status` reads the same.
+
+What changes for alerts you know:
+
+- `drill_failed` is now `backup_drill_failed`, per app where a drill
+  proved nothing for that app. A silence of `drill_failed` silences
+  nothing any more: add one of the new name.
+- `backup_run_failed` is now per app (`backup_run_failed/<app>`), and
+  one with no app for a run that ended early. A damaged repository is
+  `backup_repository_check_failed`, no longer `drill_failed`.
+- An alert that fires across the install under its old name or shape
+  is told `[RESOLVED]` about five minutes after it, and `[FIRING]`
+  under its new one at the first read.
+- Each summary begins `motel backup status (on the box: motel-backup
+  status) says:`, then status's line.
+- Every name starting `backup_` is motel's now, as `watchdog_` names
+  are: `moteld monitor send --name backup_…` is refused, and so is a
+  `rule backup_…` line, which fails validation and the reload. Before
+  the install, rename such a `rule` line, and resolve any event of
+  yours of such a name that fires (`--state resolved`), then send it
+  under a new name: a firing one would be told again from
+  `/var/lib/motel-notify/external.json` at every start, and its resolve
+  refused.
+
+Going back to a release without it resolves the new alerts within
+minutes, although nothing changed.
+
 ## A person's key, told once after the install
 
 On a box with `person` or `grant` lines, the first release that tells

@@ -42,9 +42,93 @@
       ]
     },
     {
+      "name": "backup_data_missing",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_drill_failed",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_never_complete",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_never_ran",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_no_result",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_not_running",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_repository_check_failed",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_repository_unchecked",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_repository_unlisted",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_restore_proof_old",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_restore_unproven",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
       "name": "backup_run_failed",
       "source": "motel check",
       "severity": "warning",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_snapshot_gone",
+      "source": "motel check",
+      "severity": "critical",
       "subject": "box",
       "kind": "event"
     },
@@ -237,13 +321,6 @@
           "meaning": "the store holds a sample older than 25m: over less history the lines are too short to judge"
         }
       ]
-    },
-    {
-      "name": "drill_failed",
-      "source": "motel check",
-      "severity": "critical",
-      "subject": "box",
-      "kind": "event"
     },
     {
       "name": "errors_high",

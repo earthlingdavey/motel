@@ -36,6 +36,11 @@ type BackupLine struct {
 	// for a warning: line, info for any other.
 	Level string `json:"level"`
 	Text  string `json:"text"`
+	// Alert and Severity are, for a problem line, the alert moteld's
+	// monitor raises while it stands and its level (status.Alerts). Not
+	// in the JSON: only the monitor reads them, inside the box.
+	Alert    string `json:"-"`
+	Severity string `json:"-"`
 }
 
 // BackupApp is what status decides of one app.

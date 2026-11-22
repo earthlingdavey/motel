@@ -2,10 +2,13 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
+	"os"
 	"slices"
 	"sort"
-	"strings"
 	"syscall"
 	"time"
 
@@ -162,10 +165,23 @@ const DefaultBackupRecord = "/var/lib/motel-backup/status.json"
 // backupEvery is how often the record is read (#418).
 const backupEvery = 5 * time.Minute
 
-// backupPoller is #418's backup source. A box with no record has no
-// backups set up, and nothing to say. It is the engine's, and outlives
-// a config load, so what it reported firing is cleared by whichever
-// config is serving when it clears.
+// DefaultBackupEnvFile is the backup credential file, whose presence
+// says backups are set up and whose time says since when. Only its name
+// is looked at (Lstat), as every account's look does (backups/look): its
+// directory is root's 0755, the file root's 0600.
+const DefaultBackupEnvFile = "/etc/motel-backup/repository.env"
+
+// backupPoller is #418's backup source. status is the only judge: each
+// problem line of status.Report, on the look any account on the box
+// takes (backups/look, which GET /_motel/backups and `motel-backup
+// status` read) but for the units the manager holds, which status says
+// and never judges, is an alert of the name and level written at its
+// rule (status.Alerts), with the app as its instance where the line is
+// an app's. A box with no credential file has no backups set up, and
+// nothing to say; one whose file cannot be looked at, or whose record
+// cannot be read, has no verdict: backup_unreadable, beside what fired.
+// It is the engine's, and outlives a config load, so what it reported
+// firing is cleared by whichever config is serving when it clears.
 type backupPoller struct {
 	last time.Time
 	set  stateSet
@@ -176,6 +192,10 @@ type backupPoller struct {
 	readAt time.Time
 	// readPath is the record read is from: another path's is dropped.
 	readPath string
+	// envFile is the credential file looked at: theEngine's is
+	// DefaultBackupEnvFile; a test's none, so a test never judges the
+	// host's backups.
+	envFile string
 }
 
 func (b *backupPoller) poll(now time.Time, path string) []Event {
@@ -186,67 +206,56 @@ func (b *backupPoller) poll(now time.Time, path string) []Event {
 		return nil
 	}
 	b.last = now
-	ev := func(name, sev, instance, summary string) Event {
-		return Event{Name: name, Kind: kindState, Severity: sev, Source: "backup", Instance: instance, Summary: summary}
+	// No verdict puts nothing right: what fired stays fired, beside
+	// backup_unreadable, which says why there is none.
+	unknown := func(why string) []Event {
+		kept := slices.DeleteFunc(slices.Collect(maps.Values(b.set.prev)), func(e Event) bool { return e.Name == alertBackupUnreadable })
+		return b.set.diff(append(kept, Event{Name: alertBackupUnreadable, Kind: kindState, Severity: SeverityWarning, Source: "backup", Summary: why}))
 	}
-	var fire []Event
+	// In look's order: whether backups are set up, then the record.
+	env, err := os.Lstat(b.envFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		b.read = nil
+		return b.set.diff(nil)
+	} else if err != nil {
+		// The client's read is moteld's look, so it says why; root's
+		// look on the box can see the file, and says the backups' health.
+		return unknown(b.envFile + " cannot be looked at by moteld, so the backups' health is not known; " +
+			"motel backup status says why (on the box, as root, motel-backup status says their health)")
+	}
 	st, err := record.Read(path)
 	if err != nil {
-		// What fired stays fired: an unreadable record says nothing has
-		// been put right.
-		for _, prev := range b.set.prev {
-			if prev.Name != "backup_unreadable" {
-				fire = append(fire, prev)
-			}
-		}
-		fire = append(fire, ev("backup_unreadable", SeverityWarning, "", "the backup record cannot be read, so whether the backups are fresh is not known"))
-		return b.set.diff(fire)
+		return unknown("the backup record cannot be read, so whether the backups are fresh is not known")
 	}
-	failed := st.Error != ""
-	var unproven []string
-	apps := make([]string, 0, len(st.Apps))
-	for name := range st.Apps {
-		apps = append(apps, name)
-	}
-	slices.Sort(apps)
 	b.read, b.readAt = map[string]time.Time{}, now
-	for _, name := range apps {
-		a := st.Apps[name]
-		if a == nil {
-			continue
-		}
-		// motel-backup's own rule for a run (`run` exits failed): every
-		// app ok, or pending its first data.
-		if a.Class != record.OK && a.Class != record.Pending {
-			failed = true
-		}
-		// The newest snapshot's drill that proved nothing, as `status`
-		// reads it: not made good by an older proof.
-		if a.RestoreDrill != nil {
-			unproven = append(unproven, name)
-		}
-		if a.LastOK != nil {
+	for name, a := range st.Apps {
+		if a != nil && a.LastOK != nil {
 			b.read[name] = a.LastOK.Time
 		}
-		// A box event about an app: the app is the instance, never
-		// the app label, so it reaches the operator alone.
-		if a.LastOK != nil && now.Sub(a.LastOK.Time) > status.StaleAfter {
-			fire = append(fire, ev("backup_stale", SeverityCritical, name,
-				fmt.Sprintf("the backup of %s is stale: the last complete one is from %s", name, record.When(a.LastOK.Time))))
-		}
 	}
-	if failed {
-		fire = append(fire, ev("backup_run_failed", SeverityWarning, "", "the last backup run failed or ended early; motel-backup status says what"))
-	}
-	if d := st.LastDrill; (d != nil && d.Detail != "") || (st.LastCheck != nil && st.LastCheck.Class == record.CheckDamaged) || len(unproven) > 0 {
-		summary := "the last restore drill proved nothing or found the repository damaged; motel-backup status says what"
-		if len(unproven) > 0 {
-			summary = "the last restore drill did not prove " + strings.Join(unproven, ", ") + "; motel-backup status says why"
+	var fire []Event
+	for _, l := range status.Report(status.Input{Record: st, Now: now, SetUp: env.ModTime()}).Lines {
+		if l.Level != status.Problem {
+			continue
 		}
-		fire = append(fire, ev("drill_failed", SeverityCritical, "", summary))
+		// A box event about an app: the app is the instance, never the
+		// app label, so it reaches the operator alone. The pointer first:
+		// a summary is cut at maxSummary, and the line's tail is what goes.
+		fire = append(fire, Event{Name: l.Alert, Kind: kindState, Severity: l.Severity, Source: "backup", Instance: l.App,
+			Summary: backupPointer + l.Text})
 	}
 	return b.set.diff(fire)
 }
+
+// alertBackupUnreadable is the one backup alert that is no rule of
+// status's: the record does not parse, or the credential file cannot be
+// looked at, so status could not tell.
+const alertBackupUnreadable = "backup_unreadable"
+
+// backupPointer begins each backup alert's summary: where the rest is
+// said, the laptop client's read first (a person with the viewer role
+// on the box), then the box's own command.
+const backupPointer = "motel backup status (on the box: motel-backup status) says: "
 
 // diskPoller is #418's disk source: statfs on the filesystems under
 // motel's directories, one per device, every minute.

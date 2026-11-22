@@ -327,8 +327,7 @@ func checkRuleName(name string) error {
 	if !ruleNameRe.MatchString(name) {
 		return fmt.Errorf("rule %q: a rule's name is lowercase letters, digits and underscores, starting with a letter, at most 48", name)
 	}
-	if slices.ContainsFunc(reservedNames, func(n string) bool { return strings.EqualFold(n, name) }) ||
-		strings.HasPrefix(name, "watchdog_") || strings.HasPrefix(name, "metrics_store_") {
+	if reservedName(name) || strings.HasPrefix(name, "metrics_store_") {
 		return fmt.Errorf("rule %s: %s is one of motel's own alerts; name the rule something else", name, name)
 	}
 	return nil

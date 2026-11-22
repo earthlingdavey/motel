@@ -74,19 +74,27 @@ var (
 
 // reservedNames are what only motel posts: a producer that could post
 // them could mute an app's watchdog alerts, fake the heartbeat, or
-// speak as one of motel's own detectors.
+// speak as one of motel's own detectors. Every name starting watchdog_
+// or backup_ is motel's too (reservedName).
 var reservedNames = []string{
 	"watchdog", alertChannelFailed, alertNotifyTest, alertDeployMute, alertDiskLow, "cert_failed",
 	liveswap.EventWatchdogThrottled, liveswap.EventWatchdogRecovered, liveswap.EventRelaunchRefused,
 	liveswap.EventRelaunchResolved, liveswap.EventDeployFailed, liveswap.EventDeployRefused,
 	liveswap.EventDeploySucceeded, liveswap.EventRollback, liveswap.EventDeployStarted, liveswap.EventDeployEnded,
-	"backup_stale", "backup_run_failed", "backup_unreadable", "drill_failed",
 	// A person's key (liveswap/people_networks.go).
 	liveswap.EventPersonNewNetwork, liveswap.EventPersonOutsideList,
 	// The metrics store's chain and rules (DESIGN-metrics.md).
 	eventStoreDown, eventRulesDown, eventStoreReadOnly, eventStoreKilled, ruleStoreDiskFill, ruleAppMemoryHigh,
 	// The operator's rules' own event (postdeploy.go).
 	eventPostDeployRegressed,
+}
+
+// reservedName is whether name is motel's own: one of reservedNames, in
+// any case, or a watchdog's or a backup alert's (status.Alerts, and
+// backup_unreadable), each of which starts so.
+func reservedName(name string) bool {
+	return slices.ContainsFunc(reservedNames, func(n string) bool { return strings.EqualFold(n, name) }) ||
+		strings.HasPrefix(name, "watchdog_") || strings.HasPrefix(name, "backup_")
 }
 
 const maxDetails = 2 << 10
@@ -108,8 +116,8 @@ func (r SendRequest) Check() error {
 	if !alertRe.MatchString(r.Name) {
 		return errors.New("name is lowercase letters, digits and underscores, starting with a letter, at most 64")
 	}
-	if slices.ContainsFunc(reservedNames, func(n string) bool { return strings.EqualFold(n, r.Name) }) || strings.HasPrefix(r.Name, "watchdog_") {
-		return errors.New("name is one of motel's own events, or starts with watchdog_ as theirs do; name yours something else")
+	if reservedName(r.Name) {
+		return errors.New("name is one of motel's own events, or starts with watchdog_ or backup_ as theirs do; name yours something else")
 	}
 	switch r.State {
 	case "", "firing", "resolved":

@@ -117,7 +117,7 @@ func TestRulesListingWithoutMetrics(t *testing.T) {
 			t.Errorf("%s: %+v", e.Name, e)
 		}
 	}
-	want := "backup_run_failed backup_stale backup_unreadable cert_failed ChannelFailed deploy_failed deploy_refused deploy_succeeded disk_low drill_failed person_new_network person_outside_list relaunch_refused rollback watchdog_throttled"
+	want := "backup_data_missing backup_drill_failed backup_never_complete backup_never_ran backup_no_result backup_not_running backup_repository_check_failed backup_repository_unchecked backup_repository_unlisted backup_restore_proof_old backup_restore_unproven backup_run_failed backup_snapshot_gone backup_stale backup_unreadable cert_failed ChannelFailed deploy_failed deploy_refused deploy_succeeded disk_low person_new_network person_outside_list relaunch_refused rollback watchdog_throttled"
 	slices.SortFunc(names, func(x, y string) int { return strings.Compare(strings.ToLower(x), strings.ToLower(y)) })
 	if got := strings.Join(names, " "); got != want {
 		t.Fatalf("names:\n got %s\nwant %s", got, want)
@@ -300,19 +300,21 @@ func TestListedSeveritiesAreRaised(t *testing.T) {
 			t.Errorf("%s: raised %s, listed %s", m.name, sev, m.severity)
 		}
 	}
-	// The backup record's three that one record raises, and disk_low.
-	path := filepath.Join(t.TempDir(), "status.json")
+	// The backup record's three that one record raises, backup_unreadable,
+	// and disk_low.
+	dir := t.TempDir()
+	path, env := filepath.Join(dir, "status.json"), setUpBackups(t, dir, listingAt.Add(-time.Hour))
 	writeRecord(t, path, &record.Status{Error: "x", Apps: map[string]*record.App{
 		"blog": {Class: record.OK, LastOK: &record.Snapshot{ID: "a", Time: listingAt.Add(-4 * time.Hour)}},
 	}, LastDrill: &record.Drill{Time: listingAt, Detail: "could not begin"}})
-	var b backupPoller
+	b := backupPoller{envFile: env}
 	evs := b.poll(listingAt, path)
 	d := diskPoller{stat: func(string) (diskNumbers, error) { return diskNumbers{usedPct: 81, dev: 1}, nil }}
 	evs = append(evs, d.poll([]string{"/srv"})...)
 	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	evs = append(evs, (&backupPoller{}).poll(listingAt, path)...)
+	evs = append(evs, (&backupPoller{envFile: env}).poll(listingAt, path)...)
 	evs = append(evs, postDeployEvent(t))
 	n := 0
 	for _, ev := range evs {
@@ -346,6 +348,7 @@ func TestPollersKeepWhatTheyRead(t *testing.T) {
 		"wiki": {Class: record.Pending},
 	}})
 	te.backupPath, te.diskPaths = path, []string{"/srv", "/srv/b"}
+	te.backup.envFile = setUpBackups(t, filepath.Dir(path), te.at.Add(-time.Hour))
 	te.disk.stat = func(p string) (diskNumbers, error) { return diskNumbers{usedPct: 91, dev: 7}, nil }
 	te.poll(t.Context())
 	te.mu.Lock()
@@ -451,38 +454,49 @@ func TestRulesCommandOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `NAME                     SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                            NOW
-ChannelFailed            motel check  event      warning   box        -                                                                    -
-app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                                  blog 0.55 share, shop 0.93104 share (firing for 17m)
-backup_run_failed        motel check  event      warning   box        -                                                                    -
-backup_stale             motel check  threshold  critical  box        > 3h                                                                 blog 58m, shop 3h59m30s
-backup_unreadable        motel check  event      warning   box        -                                                                    -
-blog_quiet               operator     guarded    warning   app blog   < 0.1 requests/s for 1h, 3 guards                                    no value
-busy                     operator     threshold  warning   app shop   > 1.5 cores for 10m                                                  no value
-cert_failed              motel check  event      warning   box        -                                                                    -
-deploy_failed            motel check  event      warning   every app  -                                                                    -
-deploy_refused           motel check  event      warning   every app  -                                                                    -
-deploy_succeeded         motel check  event      info      every app  -                                                                    -
-disk_filling             operator     guarded    critical  box        < 0 bytes for 3h30m, 2 guards                                        /srv/motel -1234570000 bytes
-disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under          /srv/motel 79.9% (warning) (as of 5m20s ago), /var/lib/caddy 41.2% (as of 6m20s ago)
-disk_soon                operator     guarded    warning   box        < 0 bytes for 5m, 2 guards                                           no value
-drill_failed             motel check  event      critical  box        -                                                                    -
-errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       blog 0 share, shop 0.0612346 share (pending for 9m)
-hits_low                 operator     guarded    warning   every app  < 0.5 share for 30m, 2 guards                                        no value
-median                   operator     guarded    warning   every app  > 200ms for 10m, 2 guards                                            no value
-mem                      operator     threshold  warning   every app  > 0.8 share for 5m                                                   blog 0.55 share, shop 0.93104 share
-metrics_rules_down       motel check  threshold  warning   box        >= 3 reads                                                           nothing read
-metrics_store_disk_fill  builtin      guarded    warning   box        < 0 bytes for 30m, 2 guards                                          53687100000 bytes
-metrics_store_down       motel check  threshold  warning   box        >= 5m                                                                nothing read
-metrics_store_killed     motel check  event      warning   box        -                                                                    -
-metrics_store_read_only  motel check  event      critical  box        -                                                                    -
-person_new_network       motel check  event      warning   box        -                                                                    -
-person_outside_list      motel check  event      warning   box        -                                                                    -
-post_deploy_regressed    operator     event      warning   every app  -                                                                    -
-relaunch_refused         motel check  event      critical  every app  -                                                                    -
-rollback                 motel check  event      warning   every app  -                                                                    -
-shop_slow                operator     guarded    critical  app shop   > 1.5s for 15m, 2 guards                                             shop no value (firing for 35m)
-watchdog_throttled       motel check  threshold  critical  every app  a further restart needed while >= its budget in its window is spent  shop 2 of 5 in 10m (as of 5m ago)
+	want := `NAME                            SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                            NOW
+ChannelFailed                   motel check  event      warning   box        -                                                                    -
+app_memory_high                 builtin      threshold  warning   every app  > 0.9 share for 10m                                                  blog 0.55 share, shop 0.93104 share (firing for 17m)
+backup_data_missing             motel check  event      warning   box        -                                                                    -
+backup_drill_failed             motel check  event      critical  box        -                                                                    -
+backup_never_complete           motel check  event      critical  box        -                                                                    -
+backup_never_ran                motel check  event      critical  box        -                                                                    -
+backup_no_result                motel check  event      critical  box        -                                                                    -
+backup_not_running              motel check  event      critical  box        -                                                                    -
+backup_repository_check_failed  motel check  event      critical  box        -                                                                    -
+backup_repository_unchecked     motel check  event      critical  box        -                                                                    -
+backup_repository_unlisted      motel check  event      critical  box        -                                                                    -
+backup_restore_proof_old        motel check  event      critical  box        -                                                                    -
+backup_restore_unproven         motel check  event      critical  box        -                                                                    -
+backup_run_failed               motel check  event      warning   box        -                                                                    -
+backup_snapshot_gone            motel check  event      critical  box        -                                                                    -
+backup_stale                    motel check  threshold  critical  box        > 3h                                                                 blog 58m, shop 3h59m30s
+backup_unreadable               motel check  event      warning   box        -                                                                    -
+blog_quiet                      operator     guarded    warning   app blog   < 0.1 requests/s for 1h, 3 guards                                    no value
+busy                            operator     threshold  warning   app shop   > 1.5 cores for 10m                                                  no value
+cert_failed                     motel check  event      warning   box        -                                                                    -
+deploy_failed                   motel check  event      warning   every app  -                                                                    -
+deploy_refused                  motel check  event      warning   every app  -                                                                    -
+deploy_succeeded                motel check  event      info      every app  -                                                                    -
+disk_filling                    operator     guarded    critical  box        < 0 bytes for 3h30m, 2 guards                                        /srv/motel -1234570000 bytes
+disk_low                        motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under          /srv/motel 79.9% (warning) (as of 5m20s ago), /var/lib/caddy 41.2% (as of 6m20s ago)
+disk_soon                       operator     guarded    warning   box        < 0 bytes for 5m, 2 guards                                           no value
+errors_high                     operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       blog 0 share, shop 0.0612346 share (pending for 9m)
+hits_low                        operator     guarded    warning   every app  < 0.5 share for 30m, 2 guards                                        no value
+median                          operator     guarded    warning   every app  > 200ms for 10m, 2 guards                                            no value
+mem                             operator     threshold  warning   every app  > 0.8 share for 5m                                                   blog 0.55 share, shop 0.93104 share
+metrics_rules_down              motel check  threshold  warning   box        >= 3 reads                                                           nothing read
+metrics_store_disk_fill         builtin      guarded    warning   box        < 0 bytes for 30m, 2 guards                                          53687100000 bytes
+metrics_store_down              motel check  threshold  warning   box        >= 5m                                                                nothing read
+metrics_store_killed            motel check  event      warning   box        -                                                                    -
+metrics_store_read_only         motel check  event      critical  box        -                                                                    -
+person_new_network              motel check  event      warning   box        -                                                                    -
+person_outside_list             motel check  event      warning   box        -                                                                    -
+post_deploy_regressed           operator     event      warning   every app  -                                                                    -
+relaunch_refused                motel check  event      critical  every app  -                                                                    -
+rollback                        motel check  event      warning   every app  -                                                                    -
+shop_slow                       operator     guarded    critical  app shop   > 1.5s for 15m, 2 guards                                             shop no value (firing for 35m)
+watchdog_throttled              motel check  threshold  critical  every app  a further restart needed while >= its budget in its window is spent  shop 2 of 5 in 10m (as of 5m ago)
 
 NOW for the store's rules is each value_query (--json) as moteld ran it on /run/motel-metrics/vm.sock at now - 65s,
 at most every 30s; pending and firing are last_over_time(ALERTS[2m]) (firing over pending;
@@ -496,7 +510,7 @@ a resolved alert shows within the lookback).
 		t.Fatal(err)
 	}
 	var l RulesListing
-	if err := json.Unmarshal([]byte(out), &l); err != nil || len(l.Alerts) != 31 || l.Store == nil || l.Store.Values != wire.StoreOn {
+	if err := json.Unmarshal([]byte(out), &l); err != nil || len(l.Alerts) != 42 || l.Store == nil || l.Store.Values != wire.StoreOn {
 		t.Fatalf("--json: %v %s", err, out)
 	}
 	// A store that does not answer: the store rules say so, the checks
@@ -662,6 +676,7 @@ func TestBackupReadingsFollowTheRecord(t *testing.T) {
 		"blog": {Class: record.OK, LastOK: &record.Snapshot{ID: "a", Time: te.at.Add(-time.Hour)}},
 	}})
 	te.backupPath = first
+	te.backup.envFile = setUpBackups(t, dir, te.at.Add(-time.Hour))
 	te.poll(t.Context())
 	if len(te.seen.backups) != 1 {
 		t.Fatalf("first record: %+v", te.seen.backups)

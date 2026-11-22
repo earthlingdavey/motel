@@ -293,6 +293,13 @@ What every line of `status` means is under
 same as one JSON object, with the same exit status, for a program to
 read ([As JSON](../backups/README.md#as-json)).
 
+On a box with a `monitor` block ([Monitor](monitor.md)), moteld raises
+an alert for each line `status` calls a problem, for as long as it
+does: each kind of problem has its own name and level, per app where
+the line is an app's, with `status`'s line as its text. The names are
+under [Backup
+alerts](../notify/DESIGN-notify.md#backup-alerts-status-is-the-only-judge).
+
 ### Look from your own machine
 
 The box's `status` is only as honest as the box. Right after `setup`,

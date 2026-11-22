@@ -59,7 +59,7 @@ func TestFailedReloadEndsNothing(t *testing.T) {
 	producer.App = "blog"
 	for _, ev := range []Event{
 		watchdog(true), producer,
-		{Name: "drill_failed", Kind: kindState, Severity: SeverityCritical, Source: "backup", Summary: "x", Firing: true},
+		{Name: "backup_drill_failed", Kind: kindState, Severity: SeverityCritical, Source: "backup", Summary: "x", Firing: true},
 		{Name: alertDiskLow, Kind: kindState, Severity: SeverityWarning, Source: "disk", Instance: "/var/lib/motel", Summary: "x", Firing: true},
 	} {
 		te.report(ev)
@@ -111,7 +111,7 @@ func TestFailedReloadEndsNothing(t *testing.T) {
 	te.advance(time.Minute)
 	te.tick()
 	if got := te.drain(); countAlert(got, "watchdog_throttled") != 1 || countAlert(got, alertDiskLow) != 1 ||
-		countAlert(got, "disk_failing") != 1 || countAlert(got, "drill_failed") != 1 || countAlert(got, alertDeployMute) != 1 {
+		countAlert(got, "disk_failing") != 1 || countAlert(got, "backup_drill_failed") != 1 || countAlert(got, alertDeployMute) != 1 {
 		t.Fatalf("not re-posted after the fallback: %+v", got)
 	}
 	same("the next minute")
@@ -122,7 +122,7 @@ func TestFailedReloadEndsNothing(t *testing.T) {
 	same("the second candidate's Start")
 	te.release(old)
 	got := ends(te, te.drain())
-	for _, n := range []string{"watchdog_throttled", "disk_failing", "drill_failed", alertDiskLow, alertDeployMute} {
+	for _, n := range []string{"watchdog_throttled", "disk_failing", "backup_drill_failed", alertDiskLow, alertDeployMute} {
 		if !got[n] {
 			t.Errorf("%s not ended at the old config's Stop: %v", n, got)
 		}
@@ -184,7 +184,7 @@ func TestFailedReloadKeepsTheHeartbeatHold(t *testing.T) {
 // TestPollSettledMidReadTellsNothingDropped: a poll reads the sources
 // outside the lock, and a reload that drops them serves (the old
 // config's Stop settles the new one) while it reads: what it read of
-// them is neither told nor listed. Told, the backup's drill_failed would
+// them is neither told nor listed. Told, the backup's backup_drill_failed would
 // fire again with nothing to clear it (backup_record off reads nothing),
 // and the disk's would fire, then recover a poll later.
 func TestPollSettledMidReadTellsNothingDropped(t *testing.T) {
@@ -192,6 +192,7 @@ func TestPollSettledMidReadTellsNothingDropped(t *testing.T) {
 	rec := filepath.Join(dir, "status.json")
 	disk := filepath.Join(dir, "data") // its own path: the stats in flight are the process's
 	te := newTestEngine(t)
+	te.backup.envFile = setUpBackups(t, dir, te.at.Add(-time.Hour))
 	writeRecord(t, rec, &record.Status{Apps: map[string]*record.App{"blog": {Class: record.OK, LastOK: &record.Snapshot{ID: "a", Time: te.at}}}, LastDrill: &record.Drill{Time: te.at, Detail: "could not begin"}})
 	old := &App{BackupRecord: rec, diskPaths: []string{disk}, cfg: &resolved{}, logger: te.logger}
 	te.setConfig(old, te.p, te.known, te.logger)
@@ -208,7 +209,7 @@ func TestPollSettledMidReadTellsNothingDropped(t *testing.T) {
 		}
 		return diskNumbers{usedPct: 95, dev: 1}, nil
 	}
-	drill := Event{Name: "drill_failed", Source: "backup"}.key()
+	drill := Event{Name: "backup_drill_failed", Source: "backup"}.key()
 	full := Event{Name: alertDiskLow, Source: "disk", Instance: disk}.key()
 	te.poll(context.Background())
 	te.drain()
@@ -226,12 +227,12 @@ func TestPollSettledMidReadTellsNothingDropped(t *testing.T) {
 	midRead.Store(true)
 	te.poll(context.Background())
 	for _, a := range te.drain() {
-		if n := a.Labels["alertname"]; (n == "drill_failed" || n == alertDiskLow) && a.EndsAt.IsZero() {
+		if n := a.Labels["alertname"]; (n == "backup_drill_failed" || n == alertDiskLow) && a.EndsAt.IsZero() {
 			t.Errorf("%s fired again after the reload dropped it", n)
 		}
 	}
 	if st := te.states[drill]; st != nil {
-		t.Fatalf("drill_failed is back in the table: %+v", st)
+		t.Fatalf("backup_drill_failed is back in the table: %+v", st)
 	}
 	if st := te.states[full]; st != nil {
 		t.Fatalf("disk_low is back in the table: %+v", st)
@@ -241,7 +242,7 @@ func TestPollSettledMidReadTellsNothingDropped(t *testing.T) {
 	}
 	te.advance(time.Minute)
 	te.tick()
-	if got := te.drain(); countAlert(got, "drill_failed") != 0 || countAlert(got, alertDiskLow) != 0 {
+	if got := te.drain(); countAlert(got, "backup_drill_failed") != 0 || countAlert(got, alertDiskLow) != 0 {
 		t.Fatalf("posted a minute on: %+v", got)
 	}
 }

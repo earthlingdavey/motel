@@ -2,6 +2,11 @@ package status
 
 import (
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -536,5 +541,198 @@ func TestTheVerdictIsTheTrueAgesNotTheSeconds(t *testing.T) {
 	}
 	if age := r.At.Sub(*r.Apps[0].LastCompleteBackup); age != StaleAfter {
 		t.Errorf("the seconds read %v", age)
+	}
+}
+
+// TestTheUnitsChangeNoVerdict: what the manager holds, or could not be
+// asked, is said and never judged, so a look that does not ask it
+// (notify's backup poller, which raises an alert per problem line)
+// takes the same verdict and the same problem lines as one that does.
+func TestTheUnitsChangeNoVerdict(t *testing.T) {
+	problems := func(r Result) (out []string) {
+		for _, l := range r.Lines {
+			if l.Level == Problem {
+				out = append(out, l.Text)
+			}
+		}
+		return out
+	}
+	for name, st := range map[string]*record.Status{
+		"healthy":  with(func(*record.App) {}),
+		"stale":    with(func(a *record.App) { a.LastOK = snap(idA, 4*time.Hour, at(9*time.Minute)) }),
+		"unlisted": func() *record.Status { st := with(func(*record.App) {}); st.Unlisted = at(4 * time.Hour); return st }(),
+		"check":    checked(record.CheckUnreachable, "no answer", time.Hour),
+	} {
+		bare := Report(Input{Record: st, Now: now})
+		for _, in := range []Input{
+			{Record: st, Now: now, Running: []Running{{Role: "upload", App: "blog", State: "activating", Since: ago(time.Minute)}, {Role: "run", State: "deactivating"}}, Unrecognised: []string{"motel_backup_x.service"}},
+			{Record: st, Now: now, RunningErr: errors.New("no bus")},
+		} {
+			r := Report(in)
+			if r.Healthy != bare.Healthy || strings.Join(problems(r), "\n") != strings.Join(problems(bare), "\n") {
+				t.Errorf("%s: with units: healthy %v, %q; without: healthy %v, %q", name, r.Healthy, problems(r), bare.Healthy, problems(bare))
+			}
+		}
+	}
+}
+
+// TestEveryRuleNamesAListedAlert: each rule that makes the box unhealthy
+// (a call of bad) names its alert as a string that starts backup_, and
+// its level as AlertCritical or AlertWarning, at the rule; and the
+// pairs the rules write are Alerts, both ways, each name at one level.
+// A rule added with a name Alerts lacks, or a problem line made other
+// than by bad, fails here, not on a box.
+func TestEveryRuleNamesAListedAlert(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "status.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	levels := map[string]string{"AlertCritical": AlertCritical, "AlertWarning": AlertWarning}
+	written, calls, problems := map[Alert]bool{}, 0, 0
+	ast.Inspect(f, func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		id, ok := c.Fun.(*ast.Ident)
+		if ok && id.Name == "add" && len(c.Args) > 0 {
+			if lvl, ok := c.Args[0].(*ast.Ident); ok && lvl.Name == "Problem" {
+				problems++
+			}
+		}
+		if !ok || id.Name != "bad" {
+			return true
+		}
+		calls++
+		at := fset.Position(c.Pos())
+		lit, ok := c.Args[0].(*ast.BasicLit)
+		lvl, isIdent := c.Args[1].(*ast.Ident)
+		if !ok || lit.Kind != token.STRING || !isIdent || levels[lvl.Name] == "" {
+			t.Errorf("%s: a rule's alert is a string and its level AlertCritical or AlertWarning, written at the rule", at)
+			return true
+		}
+		name, _ := strconv.Unquote(lit.Value)
+		if !strings.HasPrefix(name, "backup_") {
+			t.Errorf("%s: %s does not start backup_", at, name)
+		}
+		written[Alert{name, levels[lvl.Name]}] = true
+		return true
+	})
+	if calls == 0 {
+		t.Fatal("no rule found: bad's shape changed")
+	}
+	// A problem line is bad's alone: one made otherwise names no alert.
+	if problems != 1 {
+		t.Errorf("add(Problem, …) is called %d times: a problem line is made by bad alone", problems)
+	}
+	listed, names := map[Alert]bool{}, map[string]bool{}
+	for _, a := range Alerts {
+		if names[a.Name] {
+			t.Errorf("%s is listed twice", a.Name)
+		}
+		names[a.Name], listed[a] = true, true
+	}
+	for a := range written {
+		if !listed[a] {
+			t.Errorf("a rule raises %s at %s, which Alerts does not list", a.Name, a.Severity)
+		}
+	}
+	for _, a := range Alerts {
+		if !written[a] {
+			t.Errorf("Alerts lists %s at %s, which no rule raises", a.Name, a.Severity)
+		}
+	}
+}
+
+// TestEachRuleRaisesItsAlert: the alerts each of Report's eighteen rules
+// raises alone, by name and app, at its listed level; a line that is no
+// problem names none. And an app whose runs have failed since its first
+// is critical (backup_never_complete), not a warning alone.
+func TestEachRuleRaisesItsAlert(t *testing.T) {
+	const day = 24 * time.Hour
+	edit := func(change func(*record.Status)) *record.Status {
+		st := with(func(*record.App) {})
+		change(st)
+		return st
+	}
+	weeksOld := of(map[string]*record.App{"blog": {Class: record.Pending, Looked: "/var/lib/liveswap/blog/shared"}})
+	weeksOld.Started, weeksOld.Finished = ago(21*day), ago(21*day-time.Minute)
+	for _, c := range []struct {
+		rule  string
+		st    *record.Status
+		setUp time.Time
+		want  []string
+	}{
+		{"1 no run since setup", &record.Status{Apps: map[string]*record.App{}}, ago(4 * time.Hour), []string{"backup_never_ran"}},
+		{"2 no run finished lately", weeksOld, time.Time{}, []string{"backup_not_running"}},
+		{"3 a drill that could not begin", edit(func(st *record.Status) { st.LastDrill = &record.Drill{Time: ago(time.Hour), Detail: "no plan"} }), time.Time{}, []string{"backup_drill_failed"}},
+		{"4 no check came to a verdict", edit(func(st *record.Status) { st.CheckSince = at(9 * day) }), time.Time{}, []string{"backup_repository_unchecked"}},
+		{"5 never checked since setup", with(func(*record.App) {}), ago(9 * day), []string{"backup_repository_unchecked"}},
+		{"6 a clean check that is old", checked(record.CheckClean, "", 9*day), time.Time{}, []string{"backup_repository_unchecked"}},
+		{"7 a check that is not clean", checked(record.CheckUnreachable, "no answer", time.Hour), time.Time{}, []string{"backup_repository_check_failed"}},
+		{"8 not listed for hours", edit(func(st *record.Status) { st.Unlisted = at(4 * time.Hour) }), time.Time{}, []string{"backup_repository_unlisted"}},
+		{"9 the run ended early", edit(func(st *record.Status) { st.Error = "the repository refused" }), time.Time{}, []string{"backup_run_failed"}},
+		{"10 no result", of(map[string]*record.App{"blog": nil, "shop": sound()}), time.Time{}, []string{"backup_no_result/blog"}},
+		{"11 data missing", with(func(a *record.App) { a.Class, a.Detail, a.Snapshot = record.DataMissing, "gone", nil }), time.Time{}, []string{"backup_data_missing/blog"}},
+		{"12 the app failed", with(func(a *record.App) { a.Class, a.Detail = record.Failed, "exit 1" }), time.Time{}, []string{"backup_run_failed/blog"}},
+		{"13 no complete backup", with(func(a *record.App) { a.LastOK = nil }), time.Time{}, []string{"backup_never_complete/blog"}},
+		{"14 the last complete snapshot gone", with(func(a *record.App) { a.LastOK = snap(idA, 70*time.Minute, at(69*time.Minute)) }), time.Time{}, []string{"backup_snapshot_gone/blog"}},
+		{"15 stale", with(func(a *record.App) { a.LastOK = snap(idA, 4*time.Hour, at(9*time.Minute)) }), time.Time{}, []string{"backup_stale/blog"}},
+		{"16 a proof that is old", with(func(a *record.App) { a.RestoreProven.Time = ago(9 * day) }), time.Time{}, []string{"backup_restore_proof_old/blog"}},
+		{"17 a drill that proved nothing", with(func(a *record.App) {
+			a.RestoreDrill = &record.Drill{Snapshot: *snap(idA, time.Hour, nil), Time: ago(time.Hour), Detail: "out of room"}
+		}), time.Time{}, []string{"backup_drill_failed/blog"}},
+		{"18 never drilled", with(func(a *record.App) { a.RestoreProven = nil }), time.Time{}, []string{"backup_restore_unproven/blog"}},
+		{"failed since its first run", with(func(a *record.App) {
+			a.Class, a.Detail = record.Failed, "exit 1"
+			a.Snapshot, a.LastOK, a.LastSnapshot, a.RestoreProven = nil, nil, nil, nil
+		}), time.Time{}, []string{"backup_run_failed/blog", "backup_never_complete/blog"}},
+		{"healthy", with(func(*record.App) {}), time.Time{}, nil},
+	} {
+		r := Report(Input{Record: c.st, Now: now, SetUp: c.setUp})
+		var got []string
+		for _, l := range r.Lines {
+			if l.Level != Problem {
+				if l.Alert != "" || l.Severity != "" {
+					t.Errorf("%s: %q names %s, and is no problem", c.rule, l.Text, l.Alert)
+				}
+				continue
+			}
+			i := slices.IndexFunc(Alerts, func(a Alert) bool { return a.Name == l.Alert })
+			if i < 0 || Alerts[i].Severity != l.Severity {
+				t.Errorf("%s: %q raises %s at %s, not as listed", c.rule, l.Text, l.Alert, l.Severity)
+			}
+			k := l.Alert
+			if l.App != "" {
+				k += "/" + l.App
+			}
+			got = append(got, k)
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s: raises %v, want %v", c.rule, got, c.want)
+		}
+	}
+}
+
+// TestNoCompleteBackupInTheRepositoryIsCritical: an app with no complete
+// backup in the repository is critical, whether it never had one or its
+// last one is gone from it (the owner's decision, 2026-11-22, #649):
+// status says "snapshot gone" in place of "stale", so no other line ages
+// such an app.
+func TestNoCompleteBackupInTheRepositoryIsCritical(t *testing.T) {
+	for alert, st := range map[string]*record.Status{
+		"backup_never_complete": with(func(a *record.App) { a.LastOK = nil }),
+		"backup_snapshot_gone":  with(func(a *record.App) { a.LastOK = snap(idA, 30*time.Hour, at(29*time.Hour)) }),
+	} {
+		var problems []Line
+		for _, l := range Report(Input{Record: st, Now: now}).Lines {
+			if l.Level == Problem {
+				problems = append(problems, l)
+			}
+		}
+		if len(problems) != 1 || problems[0].Alert != alert || problems[0].App != "blog" || problems[0].Severity != AlertCritical {
+			t.Errorf("%s: problems %+v, want blog's alone, critical", alert, problems)
+		}
 	}
 }

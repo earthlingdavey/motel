@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/caddyserver/caddy/v2"
+
+	"github.com/smallhoursorg/motel/backups/status"
 )
 
 // stringConsts are the package-level string constants of the parsed
@@ -63,8 +65,9 @@ func parseDir(t *testing.T, fset *token.FileSet, dir string) []*ast.File {
 // out, read from its source: an Event literal's Name, the first argument
 // of the helpers that make an event or a rule's labels (ev, storeEvent,
 // state, stateLabels, ruleLabels), a vmRule's Alert, an "alertname"
-// label, and the liveswap events lifecycleSink posts as one-shots under
-// their own names. A name held in a variable (an operator rule's) is not
+// label, the liveswap events lifecycleSink posts as one-shots under
+// their own names, and status's alerts where an Event takes its Name
+// from a status line (the backup poller's l.Alert). A name held in a variable (an operator rule's) is not
 // read here; TestSilenceableAlertsFollowTheConfig has those.
 func emittedAlertNames(t *testing.T) []string {
 	fset := token.NewFileSet()
@@ -114,6 +117,14 @@ func emittedAlertNames(t *testing.T) []string {
 					case *ast.Ident:
 						if (k.Name == "Name" && typeName(x.Type) == "Event") || (k.Name == "Alert" && typeName(x.Type) == "vmRule") {
 							add(kv.Value)
+						}
+						// The backup poller's Event{Name: l.Alert}: a status
+						// line's, so each of status's alerts, which status's
+						// own test holds to its rules.
+						if sel, ok := kv.Value.(*ast.SelectorExpr); ok && k.Name == "Name" && typeName(x.Type) == "Event" && sel.Sel.Name == "Alert" {
+							for _, a := range status.Alerts {
+								names = append(names, a.Name)
+							}
 						}
 					case *ast.BasicLit:
 						if k.Value == `"alertname"` {

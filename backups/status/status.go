@@ -77,6 +77,39 @@ const (
 	Problem = "problem"
 )
 
+// The levels a problem alerts at: notify's severities.
+const (
+	AlertCritical = "critical"
+	AlertWarning  = "warning"
+)
+
+// Alert is what moteld's monitor raises while a problem line of its kind
+// stands, per app where the line is an app's, with the line as its
+// text (notify's backup poller). A name is permanent once released:
+// silences, routes and the rules listing name it.
+type Alert struct{ Name, Severity string }
+
+// Alerts are every rule's alert, each once: the names notify lists,
+// lets a silence take and keeps from an outside producer.
+// TestEveryRuleNamesAListedAlert holds Report's rules to this list,
+// both ways.
+var Alerts = []Alert{
+	{"backup_never_ran", AlertCritical},
+	{"backup_not_running", AlertCritical},
+	{"backup_stale", AlertCritical},
+	{"backup_never_complete", AlertCritical},
+	{"backup_no_result", AlertCritical},
+	{"backup_run_failed", AlertWarning},
+	{"backup_data_missing", AlertWarning},
+	{"backup_snapshot_gone", AlertCritical},
+	{"backup_repository_unchecked", AlertCritical},
+	{"backup_repository_check_failed", AlertCritical},
+	{"backup_repository_unlisted", AlertCritical},
+	{"backup_drill_failed", AlertCritical},
+	{"backup_restore_proof_old", AlertCritical},
+	{"backup_restore_unproven", AlertCritical},
+}
+
 // Text is the lines as status prints them.
 func Text(r Result) []string {
 	out := make([]string, len(r.Lines))
@@ -130,12 +163,16 @@ func Report(in Input) Result {
 		r.Lines = append(r.Lines, Line{App: of, Level: level, Text: fmt.Sprintf(format, a...)})
 	}
 	say := func(format string, a ...any) { add(Info, format, a...) }
-	bad := func(format string, a ...any) {
+	// bad is a rule that makes the box unhealthy: the alert the monitor
+	// raises while it stands, and its level, are written at the rule.
+	bad := func(alert, severity, format string, a ...any) {
 		r.Healthy = false
 		if facts != nil {
 			facts.Healthy = false
 		}
 		add(Problem, format, a...)
+		l := &r.Lines[len(r.Lines)-1]
+		l.Alert, l.Severity = alert, severity
 	}
 	when, short := record.When, record.Short
 
@@ -145,7 +182,7 @@ func Report(in Input) Result {
 	// died weeks ago included.
 	switch {
 	case st.Started.IsZero() && !in.SetUp.IsZero() && now.Sub(in.SetUp) > StaleAfter:
-		bad("no run yet, and backups were set up %s, more than %d hours ago", when(in.SetUp), int(StaleAfter.Hours()))
+		bad("backup_never_ran", AlertCritical, "no run yet, and backups were set up %s, more than %d hours ago", when(in.SetUp), int(StaleAfter.Hours()))
 	case st.Started.IsZero():
 		say("no run yet: pending first run")
 	default:
@@ -154,11 +191,11 @@ func Report(in Input) Result {
 			say("no app declares a backup; nothing is backed up")
 		}
 		if last := st.Finished; now.Sub(last) > StaleAfter {
-			bad("no run has finished since %s, more than %d hours ago: what follows is as of then", when(last), int(StaleAfter.Hours()))
+			bad("backup_not_running", AlertCritical, "no run has finished since %s, more than %d hours ago: what follows is as of then", when(last), int(StaleAfter.Hours()))
 		}
 	}
 	if d := st.LastDrill; d != nil && d.Detail != "" {
-		bad("the last drill, %s, could not begin: %s", when(d.Time), record.Text(d.Detail))
+		bad("backup_drill_failed", AlertCritical, "the last drill, %s, could not begin: %s", when(d.Time), record.Text(d.Detail))
 	} else if d != nil {
 		say("last drill %s", when(d.Time))
 	}
@@ -172,29 +209,29 @@ func Report(in Input) Result {
 	case c == nil && st.CheckSince != nil && now.Sub(*st.CheckSince) > CheckOldAfter:
 		// Drills that check have run, and none came to a verdict — each
 		// stopped, week on week — however recent the last of them.
-		bad("no check of the repository has come to a verdict since %s, more than %d days ago; `motel-backup drill`, as root, checks it", when(*st.CheckSince), old)
+		bad("backup_repository_unchecked", AlertCritical, "no check of the repository has come to a verdict since %s, more than %d days ago; `motel-backup drill`, as root, checks it", when(*st.CheckSince), old)
 	case c == nil && st.CheckSince == nil && !in.SetUp.IsZero() && now.Sub(in.SetUp) > CheckOldAfter && (st.LastDrill == nil || now.Sub(st.LastDrill.Time) > CheckOldAfter):
-		bad("the repository has not been checked since backups were set up, %s, more than %d days ago; `motel-backup drill`, as root, checks it", when(in.SetUp), old)
+		bad("backup_repository_unchecked", AlertCritical, "the repository has not been checked since backups were set up, %s, more than %d days ago; `motel-backup drill`, as root, checks it", when(in.SetUp), old)
 	case c == nil && !st.Started.IsZero():
 		say("the repository has not been checked yet: the weekly drill checks it")
 	case c == nil:
 	case c.Class == record.CheckClean && now.Sub(c.Time) > CheckOldAfter:
-		bad("repository last checked %s: its structure, and data group %s: clean: old, more than %d days ago; `motel-backup drill`, as root, checks it", when(c.Time), record.Text(c.Group), old)
+		bad("backup_repository_unchecked", AlertCritical, "repository last checked %s: its structure, and data group %s: clean: old, more than %d days ago; `motel-backup drill`, as root, checks it", when(c.Time), record.Text(c.Group), old)
 	case c.Class == record.CheckClean:
 		say("repository last checked %s: its structure, and data group %s: clean", when(c.Time), record.Text(c.Group))
 	default:
-		bad("the repository check of %s (data group %s): %s: %s", when(c.Time), record.Text(c.Group), record.Text(string(c.Class)), record.Text(c.Detail))
+		bad("backup_repository_check_failed", AlertCritical, "the repository check of %s (data group %s): %s: %s", when(c.Time), record.Text(c.Group), record.Text(string(c.Class)), record.Text(c.Detail))
 	}
 	// One listing unanswered is the run's warning, below. Unanswered for
 	// longer than a backup may be old, it is what would keep a snapshot
 	// pruned off the box looking like the last good backup.
 	if u := st.Unlisted; u != nil && now.Sub(*u) > StaleAfter {
-		bad("the repository has not been listed since %s, more than %d hours ago: whether it still holds the snapshots below is not known", when(*u), int(StaleAfter.Hours()))
+		bad("backup_repository_unlisted", AlertCritical, "the repository has not been listed since %s, more than %d hours ago: whether it still holds the snapshots below is not known", when(*u), int(StaleAfter.Hours()))
 	} else if u != nil {
 		say("the repository has not been listed since %s", when(*u))
 	}
 	if st.Error != "" {
-		bad("the last run ended early: %s", record.Text(st.Error))
+		bad("backup_run_failed", AlertWarning, "the last run ended early: %s", record.Text(st.Error))
 	}
 	if st.Warning != "" {
 		add(Warning, "warning: %s", record.Clean(st.Warning))
@@ -224,7 +261,7 @@ func Report(in Input) Result {
 		if app == nil {
 			// Never written by a run, but a record that reads: no result
 			// is nothing to be healthy about.
-			bad("%s: no result on record, until the next run writes the record again", n)
+			bad("backup_no_result", AlertCritical, "%s: no result on record, until the next run writes the record again", n)
 			continue
 		}
 		facts.Result = record.Text(string(app.Class))
@@ -254,19 +291,19 @@ func Report(in Input) Result {
 		case app.Class == record.NotRun:
 			say("%s: not run: %s (data at %s)", n, record.Text(app.Detail), at)
 		case app.Class == record.DataMissing:
-			bad("%s: data missing: %s; `motel-backup restore %s`, as root, puts its last snapshot back", n, record.Text(app.Detail), n)
+			bad("backup_data_missing", AlertWarning, "%s: data missing: %s; `motel-backup restore %s`, as root, puts its last snapshot back", n, record.Text(app.Detail), n)
 		default:
 			// The last run did not back this app up, however fresh the
 			// run before it.
-			bad("%s: %s: %s (data at %s)", n, record.Text(string(app.Class)), record.Text(app.Detail), at)
+			bad("backup_run_failed", AlertWarning, "%s: %s: %s (data at %s)", n, record.Text(string(app.Class)), record.Text(app.Detail), at)
 		}
 		switch {
 		case app.LastOK == nil:
-			bad("%s: no complete backup yet", n)
+			bad("backup_never_complete", AlertCritical, "%s: no complete backup yet", n)
 		case gone(app.LastOK):
-			bad("%s: snapshot %s is no longer in the repository (%s): it was the last complete backup, made %s", n, short(app.LastOK.ID), lastSeen(app.LastOK), when(app.LastOK.Time))
+			bad("backup_snapshot_gone", AlertCritical, "%s: snapshot %s is no longer in the repository (%s): it was the last complete backup, made %s", n, short(app.LastOK.ID), lastSeen(app.LastOK), when(app.LastOK.Time))
 		case !facts.Fresh:
-			bad("%s: stale: the last complete backup is from %s, more than %d hours ago, snapshot %s", n, when(app.LastOK.Time), int(StaleAfter.Hours()), short(app.LastOK.ID))
+			bad("backup_stale", AlertCritical, "%s: stale: the last complete backup is from %s, more than %d hours ago, snapshot %s", n, when(app.LastOK.Time), int(StaleAfter.Hours()), short(app.LastOK.ID))
 		case app.Class != record.OK:
 			say("%s: last complete backup %s, snapshot %s", n, when(app.LastOK.Time), short(app.LastOK.ID))
 		}
@@ -276,7 +313,7 @@ func Report(in Input) Result {
 		if p := app.RestoreProven; p != nil {
 			proven := fmt.Sprintf("%s: restore last proven: %s, snapshot %s", n, when(p.Time), short(p.Snapshot.ID))
 			if !provenRecently {
-				bad("%s: old, more than %d days ago; `motel-backup drill`, as root, proves one now", proven, int(ProvenOldAfter.Hours()/24))
+				bad("backup_restore_proof_old", AlertCritical, "%s: old, more than %d days ago; `motel-backup drill`, as root, proves one now", proven, int(ProvenOldAfter.Hours()/24))
 			} else {
 				say("%s", proven)
 			}
@@ -293,9 +330,9 @@ func Report(in Input) Result {
 			if d.Snapshot.ID != "" { // one it could not ask the repository for has none
 				snapOf = "snapshot " + short(d.Snapshot.ID) + ", "
 			}
-			bad("%s: restore not proven: %s (%s%s); `motel-backup drill`, as root, tries again", n, record.Text(d.Detail), snapOf, when(d.Time))
+			bad("backup_drill_failed", AlertCritical, "%s: restore not proven: %s (%s%s); `motel-backup drill`, as root, tries again", n, record.Text(d.Detail), snapOf, when(d.Time))
 		case app.RestoreProven == nil:
-			bad("%s: restore not proven: no drill of it has run; `motel-backup drill`, as root, proves it", n)
+			bad("backup_restore_unproven", AlertCritical, "%s: restore not proven: no drill of it has run; `motel-backup drill`, as root, proves it", n)
 		}
 	}
 	of, facts = "", nil

@@ -265,8 +265,8 @@ monitor {
   `watchdog_throttled`, `relaunch_refused`), the store's rules and
   your `rule` lines about it, `post_deploy_regressed`, and
   `moteld monitor send --subject app:<name>`. The box's own alerts
-  about the app, such as `backup_stale` and `drill_failed` for its
-  backups and `cert_failed` for its domains, carry no `app` label and
+  about the app, such as `backup_stale` and `backup_drill_failed` for
+  its backups and `cert_failed` for its domains, carry no `app` label and
   go to the operator alone, as do the two about a person's key,
   `person_new_network` and `person_outside_list`
   ([Giving a person access](people.md#when-their-key-is-used-from-somewhere-new)).
@@ -438,7 +438,7 @@ The names motel uses itself are refused:
 
 ```
 $ moteld monitor send --source reboot --name watchdog_x --summary x
-Error: name is one of motel's own events, or starts with watchdog_ as theirs do; name yours something else
+Error: name is one of motel's own events, or starts with watchdog_ or backup_ as theirs do; name yours something else
 ```
 
 ### A reboot that waits
@@ -910,7 +910,7 @@ silence from them:
 - `--app <name>`: one of the apps the box runs: every alert with its
   `app` label, your own `moteld monitor send --subject app:<name>`
   events among them, but not the box's alerts about it, such as
-  `backup_stale`, `drill_failed` or `cert_failed`;
+  `backup_stale`, `backup_drill_failed` or `cert_failed`;
 - `--release <version>`: one release of the app, as its directory under
   `/var/lib/liveswap/<app>/releases/` names it or as the app's deploy
   records do (the `deploys` list of `GET /<app>`, a failed deploy's
@@ -932,7 +932,7 @@ shop` (`disk_low` is about the box, not an app):
 
 ```
 $ moteld monitor silence add --comment x --alert disk_lo
-Error: --alert names none of the alerts motel raises on this box; they are ChannelFailed, backup_run_failed, …
+Error: --alert names none of the alerts motel raises on this box; they are ChannelFailed, backup_data_missing, …
 ```
 
 `Watchdog`, the heartbeat, is not in that list: silencing it would stop
@@ -1125,12 +1125,12 @@ holds it pending or firing, and for how long:
 
 ```
 $ moteld monitor rules
-NAME                     SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                            NOW
-app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                                  blog 0.55 share, shop 0.93104 share (firing for 17m)
-backup_stale             motel check  threshold  critical  box        > 3h                                                                 blog 58m, shop 3h59m30s
-disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under          /var/lib/liveswap 79.9% (warning), /var/lib/motel/caddy 41.2%
-errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       blog 0 share, shop 0.0612346 share (pending for 9m)
-watchdog_throttled       motel check  threshold  critical  every app  a further restart needed while >= its budget in its window is spent  shop 2 of 5 in 10m
+NAME                            SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                            NOW
+app_memory_high                 builtin      threshold  warning   every app  > 0.9 share for 10m                                                  blog 0.55 share, shop 0.93104 share (firing for 17m)
+backup_stale                    motel check  threshold  critical  box        > 3h                                                                 blog 58m, shop 3h59m30s
+disk_low                        motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under          /var/lib/liveswap 79.9% (warning), /var/lib/motel/caddy 41.2%
+errors_high                     operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       blog 0 share, shop 0.0612346 share (pending for 9m)
+watchdog_throttled              motel check  threshold  critical  every app  a further restart needed while >= its budget in its window is spent  shop 2 of 5 in 10m
 …
 ```
 

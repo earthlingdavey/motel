@@ -638,7 +638,7 @@ parse, a JSON config's at Provision, both by `moteld validate`):
 
 - **The name** is `[a-z][a-z0-9_]{0,47}`, unique among the rules, and
   none of motel's own alert names: DESIGN-notify.md's reserved list
-  (case ignored), `watchdog_*` and `metrics_store_*`. It is the alert's
+  (case ignored), `watchdog_*`, `backup_*` and `metrics_store_*`. It is the alert's
   name and part of its key, the one thing of the author's that reaches
   a label.
 - **The metric** is one of seven, each motel's expression (below), and

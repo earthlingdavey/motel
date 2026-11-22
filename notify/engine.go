@@ -292,8 +292,13 @@ func newEngine() *engine {
 	}
 }
 
-// theEngine is the process's.
-var theEngine = newEngine()
+// theEngine is the process's: its backup verdict reads the box's
+// credential file, which a test's engine never does.
+var theEngine = func() *engine {
+	e := newEngine()
+	e.backup.envFile = DefaultBackupEnvFile
+	return e
+}()
 
 func (e *engine) bucketFor(key string) *bucket {
 	b := e.buckets[key]

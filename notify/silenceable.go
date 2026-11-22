@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/smallhoursorg/motel/backups/status"
 	"github.com/smallhoursorg/motel/liveswap"
 )
 
@@ -32,13 +33,21 @@ var (
 		{liveswap.EventDeployFailed, SeverityWarning, false}, {liveswap.EventDeployRefused, SeverityWarning, false},
 		{liveswap.EventRollback, SeverityWarning, false}, {liveswap.EventDeploySucceeded, SeverityInfo, false},
 	}
-	boxRaised = []motelAlert{
+	boxRaised = append([]motelAlert{
 		{"cert_failed", SeverityWarning, false}, {alertDiskLow, SeverityWarning, true},
-		{"backup_unreadable", SeverityWarning, false}, {"backup_stale", SeverityCritical, true},
-		{"backup_run_failed", SeverityWarning, false}, {"drill_failed", SeverityCritical, false},
+		{alertBackupUnreadable, SeverityWarning, false},
 		{alertChannelFailed, SeverityWarning, false},
 		{liveswap.EventPersonNewNetwork, SeverityWarning, false}, {liveswap.EventPersonOutsideList, SeverityWarning, false},
-	}
+	}, backupRaised...)
+	// backupRaised are status's alerts, one per kind of problem it
+	// judges (status.Alerts), which the backup poller raises: each app's
+	// backup age is the one number it holds.
+	backupRaised = func() (out []motelAlert) {
+		for _, a := range status.Alerts {
+			out = append(out, motelAlert{a.Name, a.Severity, a.Name == "backup_stale"})
+		}
+		return out
+	}()
 	storeRaised = []motelAlert{
 		{eventStoreDown, SeverityWarning, true}, {eventRulesDown, SeverityWarning, true}, {eventStoreReadOnly, SeverityCritical, false},
 		{eventStoreKilled, SeverityWarning, false},
