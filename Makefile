@@ -33,7 +33,7 @@ VERSION ?= $(shell (git describe --tags --exact-match 2>/dev/null || echo v0.0.0
 # Distro image for the package install smoke test (install-test).
 DISTRO ?= debian:13
 
-.PHONY: test help test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-dist install-test e2e e2e-backup e2e-notify e2e-metrics e2e-warm soak e2e-logs clean
+.PHONY: test help test-integration vet tidy tidy-check mod-download lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-dist install-test e2e e2e-backup e2e-notify e2e-metrics e2e-warm soak e2e-logs clean
 
 # -timeout 20m: a stopgap, client/internal/tui reaches go test's default 10 m on CI's x86 (#642).
 test: ## unit tests, all modules (race + coverage); PKGS= some packages, RUN= a go test -run pattern
@@ -131,6 +131,64 @@ tidy-check: ## fails if go mod tidy would change a module's go.mod/go.sum
 		case $$rc in 0) ;; 1) failed="$$failed $$m" ;; *) exit $$rc ;; esac; \
 	done; \
 	[ -z "$$failed" ] || { echo "════ make $@ failed in:$$failed ════"; exit 1; }
+	$(call narrowed_note,MODULES)
+
+# Every module's dependencies into Go's module cache, before a build
+# needs them: a download from proxy.golang.org that breaks mid-stream
+# is tried again here (three tries, 10 and 20 s apart), where vet,
+# tidy-check or a lane's build failed on it [measured: seven CI jobs
+# in the fortnight to 2026-11-21, and nothing tried a download again].
+# CI runs it in every job that runs Go, right after the module cache
+# is restored (.github/actions/go-cache says what is kept); on a
+# machine whose cache is a volume that stays, nothing needs it.
+#
+# In each module with the workspace off, never once at the root: there
+# `go mod download` takes every module of the whole graph, most of
+# which no build reads, and rewrites go.work.sum [measured on a
+# restored cache, run 44935635314: 8 to 13 s and about 4,500 requests
+# to the proxy at the root; 0.5 to 0.9 s and 36 requests for all
+# seven, a module at a time]. On a copy of go.mod and go.sum
+# (-modfile), because the download writes into go.sum a checksum line
+# it lacks, and tidy-check, which CI runs after this, must find the
+# file as it was committed [measured 2026-11-21, Go 1.27.4: of a
+# module's two lines dropped from penaltybox/go.sum, one was put
+# back].
+#
+# Then the workspace's packages are loaded, once for each architecture
+# CI runs on. With the workspace on, Go opens modules that no go.mod
+# in the tree names, to rule out that a second module provides an
+# imported package; the download above leaves them out, and the first
+# build would fetch them [measured 2026-11-21 on an empty cache, Go
+# 1.27.4: 191 modules, 1,084 MB, from the downloads; 7 more, 58 MB,
+# from this load, the same 7 for amd64, arm64 and darwin and under
+# the integration and e2e tags; after it go vet under both tag sets,
+# the client's build and govulncheck's own build fetched nothing]. Loaded
+# with -e and not tried again: a package of the tree that does not
+# load is vet's to report, and here it would read as a download that
+# failed; so a download that breaks in these few is left to the
+# command that next needs the module, as before. If the load has to
+# add a line to go.work.sum, it does, as the build after it would.
+#
+# Not here: what `go mod tidy` reads beyond all this, the tests of
+# dependencies [55 modules, 67 MB, the same measurement]. tidy-check
+# fetches those, and in CI its job is the one that saves the module
+# cache, after it.
+mod-download: ## each of MODULES' dependencies into Go's module cache; a download that breaks is tried three times
+	$(if $(strip $(MODULES)),,$(error MODULES is empty: name a module, or leave it unset))
+	@$(COMPOSE) run --rm -T dev sh -c '\
+		t0=$$(date +%s); tmp=$$(mktemp -d) || exit 1; pkgs=; \
+		for m in $(MODULES); do \
+			pkgs="$$pkgs ./$$m/..."; \
+			cp "$$m/go.mod" "$$m/go.sum" "$$tmp/" || exit 1; \
+			n=1; \
+			until GOWORK=off go mod download -C "$$m" -modfile="$$tmp/go.mod"; do \
+				if [ $$n -ge 3 ]; then echo "════ make $@: go mod download failed in $$m, $$n times ════" >&2; exit 1; fi; \
+				echo "════ make $@: go mod download failed in $$m (try $$n of 3); again in $$((n * 10)) s ════" >&2; \
+				sleep $$((n * 10)); n=$$((n + 1)); \
+			done; \
+		done; \
+		for arch in amd64 arm64; do GOARCH=$$arch go list -e -deps -test $$pkgs >/dev/null; done; \
+		echo "════ make $@: $(MODULES), in $$(($$(date +%s) - t0)) s ════"'
 	$(call narrowed_note,MODULES)
 
 # Both tag sets, as for vet: a bare run never compiles the
@@ -642,16 +700,17 @@ e2e-backup: ## the backup suites, a box each; BACKUP_SUITES= setup backup units 
 	$(call narrowed_note,BACKUP_SUITES)
 
 # Every e2e lane's Go, built once and the binaries removed: it fills
-# Go's caches and nothing else. For CI, whose four e2e jobs share one cache an
-# architecture (ci.yml's e2e job says why one): a cache is saved by the
-# first job to finish a run whose key missed, with only what that job
-# compiled, so a job whose key missed builds every lane's first, and
-# whichever saves, saves what all four use. The three lanes' binaries
-# are the metrics lane's set (e2e/bin.sh, with notify's test binary);
-# e2e-backup's own are moteld, compiled the same, and motel-backup with
-# -tags e2e, built here with the flags its target above builds it with.
-# On a machine whose caches are volumes that stay, nothing needs this.
-e2e-warm: ## every e2e lane's Go, built to fill Go's caches (CI, when its cache key missed)
+# Go's caches and nothing else. For CI, whose four e2e jobs share one
+# build cache an architecture (ci.yml's e2e job says why one): a job
+# saves what it compiled, and one of the four saves the cache, ci.yml's
+# e2e-backup, on a run on main whose key missed; so there, and only
+# then, it builds every lane's first, and what it saves is what all
+# four use. The three lanes' binaries are the metrics lane's set
+# (e2e/bin.sh, with notify's test binary); e2e-backup's own are moteld,
+# compiled the same, and motel-backup with -tags e2e, built here with
+# the flags its target above builds it with. On a machine whose caches
+# are volumes that stay, nothing needs this.
+e2e-warm: ## every e2e lane's Go, built to fill Go's caches (CI's e2e-backup, before it saves the lanes' cache)
 	$(call e2e_bin,e2e-warm notify-tests)
 	$(COMPOSE) run --rm -e CGO_ENABLED=0 dev sh -c 'cd backups && go build -trimpath -tags e2e -o /dev/null ./cmd/motel-backup'
 	rm -rf build/e2e-warm

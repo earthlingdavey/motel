@@ -34,8 +34,9 @@ permissions:
   contents: read
 
 env:
-  # Adds the CI override that bind-mounts Go caches under ./.cache so
-  # actions/cache can persist them.
+  # Adds the CI override that bind-mounts Go's caches under ./.cache,
+  # where .github/actions/go-cache restores them and the jobs' save
+  # steps save them.
   COMPOSE: docker compose -f docker-compose.yml -f docker-compose.ci.yml
   # The JavaScript actions (cache, artifacts, dependency-review,
   # fetch-metadata) verify TLS against the root list their Node
@@ -105,12 +106,14 @@ jobs:
   # 802 s x86, medians of 8 runs to 2026-11-21], and each cell
   # spent most of its ~55 s starting a runner, pulling images and
   # restoring a cache of its own. One job is shorter in runner time,
-  # and a heavy run starts 13 jobs together, not 19, which matters
+  # and a heavy run starts 15 jobs together, not 21, which matters
   # because waiting for runners is what makes a run slow [measured
   # 2026-11-21, run 44935635314: 145 s (141-146, n=3) for the one job,
   # its restore taken at the measured rate, against 397 job-seconds
   # for the seven cells; one cache archive of 683 MB against 2,908 MB
-  # for the seven, of a 10 GB budget]. A failure is one red check, not
+  # for the seven, of a 10 GB budget, each with the module cache in
+  # it: 446 of the 683, now kept once for every job, which leaves this
+  # job 238 of its own]. A failure is one red check, not
   # a named cell: the log names each module as it starts, and the run
   # goes on after a module fails and ends naming every one that did
   # (the Makefile's tidy-check and lint say how). A new module needs
@@ -147,17 +150,49 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The Go caches: .github/actions/go-cache says what is kept, and
+      # that only a run on main saves. This job's build cache is the
+      # linter's. Its image has a Go of its own, which compiles what
+      # golangci-lint loads, so that Go is the one in the key, not the
+      # dev image's [2026-11-21: go1.27.2 in golangci-lint v2.15.0's
+      # image, go1.27.4 in dev]; and golangci-lint's own cache is kept
+      # with it.
+      - id: cache
+        uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: lint-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: lint-${{ runner.os }}-
+          build: lint
+          go-from: lint
+          path: |
+            .cache/gobuild
+            .cache/golangci
       # Here, not in test: once (test runs per arch; tidy considers
       # every platform anyway), on the module cache this job restores.
       - run: make tidy-check COMPOSE="$COMPOSE"
+      # The module cache is saved here, by this job alone, for every
+      # job and both architectures: after tidy-check, which reads
+      # modules nothing else does (the tests of dependencies), so that
+      # they are in it, and the next tidy-check has no need of the
+      # proxy [measured 2026-11-21 on an empty cache: 55 modules,
+      # 67 MB, beyond the 198 and 1,142 MB that make mod-download
+      # leaves; 1,209 MB then, where this job's cache held 1,208, run
+      # 44935635314]. No command tried after those two fetched a module
+      # (the Makefile's mod-download names them). Not saved when
+      # tidy-check failed: main's next push saves it then.
+      - if: steps.cache.outputs.save-modules == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.modules-path }}
+          key: ${{ steps.cache.outputs.modules-key }}
       # Even after a tidy-check failure, so one run shows both.
       - if: ${{ !cancelled() }}
         run: make lint COMPOSE="$COMPOSE"
+      # The job's last step, as in every job that saves a build cache
+      # (the action says why last).
+      - if: steps.cache.outputs.save == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.build-path }}
+          key: ${{ steps.cache.outputs.build-key }}
 
   # Unit tests on both architectures: arm64 is a first-class deploy
   # target (cheap ARM VPSes), and the race detector is arch-specific
@@ -194,17 +229,23 @@ jobs:
       # root in the system store, and the JavaScript actions on that store
       # rather than their Node's bundled list (.github/actions/ca-trust).
       - uses: ./.github/actions/ca-trust
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The Go caches, and the save at the job's end: the lint job and
+      # .github/actions/go-cache say how.
+      - id: cache
+        uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: test-${{ runner.os }}-${{ runner.arch }}-
+          build: test
       - run: make vet COMPOSE="$COMPOSE"
       - run: make test COMPOSE="$COMPOSE"
       # Deterministic half of fuzzing: every Fuzz target is discovered
       # (so the weekly run cannot skip one) and every committed crasher
       # corpus still has a target to replay it.
       - run: make fuzz-list COMPOSE="$COMPOSE"
+      - if: steps.cache.outputs.save == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.build-path }}
+          key: ${{ steps.cache.outputs.build-key }}
 
   # The integration lane (real units under a real systemd, restic,
   # sqlite3, the box applier) on both architectures, for the test job's
@@ -245,16 +286,29 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
-      # A family of its own: this lane's race build (-tags integration,
-      # no -cover) is not the test job's, so a cache that job saves does
-      # not hold it, and a cache is saved only by a job whose exact key
-      # missed.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # A build cache of its own: this lane's race build (-tags
+      # integration, no -cover) is not the test job's, so the cache that
+      # job saves does not hold it. The modules are every job's (the
+      # lint job and .github/actions/go-cache say how the caches are
+      # kept). The Go in the key is dev's, while dev-systemd's is the
+      # one that compiles here. The two pins (docker-compose.yml's dev,
+      # test/systemd/Dockerfile) are held equal by hand; when
+      # Dependabot moves them in pull requests of their own, the key
+      # can hold the other Go's objects until go.sum next changes.
+      # dev-systemd's own Go is not asked: its image is built, not
+      # pulled, and the build's progress lands in the answer [run
+      # 44958213299: both cells failed at the key step, "Invalid
+      # format '#1 reading from stdin 552B done'"].
+      - id: cache
+        uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: test-integration-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: test-integration-${{ runner.os }}-${{ runner.arch }}-
+          build: test-integration
       - run: make test-integration COMPOSE="$COMPOSE"
+      - if: steps.cache.outputs.save == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.build-path }}
+          key: ${{ steps.cache.outputs.build-key }}
 
   govulncheck:
     needs: [changes]
@@ -276,12 +330,19 @@ jobs:
           echo "ca-certificates $v"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The Go caches, and the save at the job's end: the lint job and
+      # .github/actions/go-cache say how. vulncheck.yml's weekly run
+      # restores this job's build cache.
+      - id: cache
+        uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: vuln-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: vuln-${{ runner.os }}-
+          build: vuln
       - run: make vulncheck COMPOSE="$COMPOSE"
+      - if: steps.cache.outputs.save == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.build-path }}
+          key: ${{ steps.cache.outputs.build-key }}
 
   # No needs but changes: e2e shares no artifacts or caches with test
   # (it builds its own binaries and compose stack from source), so it
@@ -327,7 +388,7 @@ jobs:
       # host rather than running apps with no sandbox.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # The lane's Go is built in the dev container (e2e/bin.sh), whose
-      # Go caches are ./.cache here, kept by actions/cache: built in the
+      # Go caches are ./.cache here, kept between runs: built in the
       # image, on a builder that has no cache, each lane compiled the
       # product from nothing [measured, eight runs of 2026-11-21: 70 to
       # 136 s of go build a lane and architecture, and in e2e-metrics
@@ -341,23 +402,24 @@ jobs:
       # with everything in the cache, the Go build 3 to 10 s; the upper
       # on a cache that held e2e-backup's builds alone].
       #
-      # One cache for the four e2e lanes (this one, e2e-notify,
+      # One build cache for the four e2e lanes (this one, e2e-notify,
       # e2e-metrics, e2e-backup), per arch, since a build cache is.
-      # They compile the same product, and a lane's cache after its
-      # build is 635 to 684 MB [measured, the same run]: a family a
-      # lane, on the two architectures, would be about half of the
-      # repository's 10 GB. Keyed by the Go they are built with and by
-      # go.sum, not by commit: a cache is
-      # saved only when its key missed, and one saved per commit (~540
-      # MB an arch then) filled the repository's 10 GB and pushed every
-      # other job's out. One left by an older commit costs little: Go's
-      # build cache is keyed by content, so only what changed is
-      # compiled again [measured: 0.9 s over all of PR 5's changes,
-      # against 34.5 s from nothing]. For five days: at the end of a
-      # build Go trims the entries nothing has read for five days, the
-      # restore brings back the file times of the save, and a run
-      # whose key hit never saves again. So from the sixth day with no
-      # change to go.sum or the Go, every run compiles again what
+      # They compile the same product, and a lane's build cache after
+      # its build is 223 to 272 MB [measured, the same run: the lanes'
+      # caches of 635 to 684 MB, less the 412 of modules each then
+      # held]: a family a lane, on the two architectures, would be
+      # about 2 GB of the repository's 10. Keyed by the Go they are
+      # built with and by go.sum, not by commit: a cache is saved only
+      # when its key missed, and one saved per commit (~540 MB an arch
+      # then, the modules in it) filled the repository's 10 GB and
+      # pushed every other job's out. One left by an older commit costs
+      # little: Go's build cache is keyed by content, so only what
+      # changed is compiled again [measured: 0.9 s over all of PR 5's
+      # changes, against 34.5 s from nothing]. For five days: at the
+      # end of a build Go trims the entries nothing has read for five
+      # days, the restore brings back the file times of the save, and a
+      # run whose key hit never saves again. So from the sixth day with
+      # no change to go.sum or the Go, every run compiles again what
       # moteld's build did not read: the client, notify's test binary,
       # the test app for the other architecture, the -tags e2e
       # variants [read in the pinned Go's cmd/go/internal/cache and
@@ -365,42 +427,16 @@ jobs:
       # twice in seven weeks, 10-18 to 10-25 and 10-25 to 10-31]. One
       # left by another Go is no build cache at all, and the dev
       # image's Go moves with each bump of its pin: so its Go is in the
-      # key, and no cache of another Go is restored — its build half
-      # (721 MiB of 1.7 GiB unpacked) would be saved again, unused,
-      # under the new Go's key. A new Go starts cold, once an arch.
-      # The Go is asked of plain `docker compose`, the base file alone,
-      # and never of $COMPOSE: the CI file's ./.cache bind sources,
-      # made now, would be root's, and the restore below could not
-      # unpack into them. In an assignment
-      # of its own, and refused when empty: this is the job's first
-      # pull of the image, and inside the echo a compose run that
-      # failed passed the step with no version, the key matched
-      # nothing, and the job built cold and saved a cache no run
-      # would restore.
-      - id: go
-        run: |
-          v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)
-          [ -n "$v" ] || { echo "the dev image gave no Go version" >&2; exit 1; }
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-      - id: cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # key, and no cache of another Go is restored — its objects
+      # (721 MiB unpacked) would be saved again, unused, under the new
+      # Go's key. A new Go starts cold, once an arch.
+      # .github/actions/go-cache makes the key and restores, with the
+      # module cache every job restores, and says which runs save. This
+      # job has no save step: of the four lanes e2e-backup is the one
+      # that saves, and says why there.
+      - uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-
-      # The key missed, so this job's cache may be the one saved: the
-      # first of the four lanes to finish saves, and with only what it
-      # compiled. So every lane's Go is built first (make e2e-warm), and
-      # whichever saves, saves what all four use [measured on a cache
-      # holding e2e-backup's builds alone, run 44935635314: a lane's Go
-      # build 19 to 30 s, e2e-metrics' 28 to 43 s, against 3 to 10 s
-      # with everything in it]. The three that lose then fail to
-      # reserve the key: the action logs one line, "Failed to save:
-      # Unable to reserve cache with key …", no warning, and the job
-      # does not fail.
-      - if: steps.cache.outputs.cache-hit != 'true'
-        run: make e2e-warm COMPOSE="$COMPOSE"
+          build: e2e
       # make e2e dumps motel/upstream/artifact logs itself when
       # scenarios fail.
       - run: make e2e COMPOSE="$COMPOSE"
@@ -434,22 +470,11 @@ jobs:
       - uses: ./.github/actions/runner-sample
       # The e2e job says why (the runner's Ubuntu kernel).
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # The e2e job says why this cache, why one for the four lanes,
-      # and why every lane's Go is built when its key missed.
-      - id: go
-        run: |
-          v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)
-          [ -n "$v" ] || { echo "the dev image gave no Go version" >&2; exit 1; }
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-      - id: cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The e2e job says why this cache, and why one for the four
+      # lanes; e2e-backup saves it.
+      - uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-
-      - if: steps.cache.outputs.cache-hit != 'true'
-        run: make e2e-warm COMPOSE="$COMPOSE"
+          build: e2e
       # Every split, named here: a bare run leaves heartbeat (notify 15,
       # motel's 5-minute hold) out, for local runs.
       - run: make e2e-notify COMPOSE="$COMPOSE" NOTIFY_SPLITS="core reload heartbeat"
@@ -483,22 +508,11 @@ jobs:
       - uses: ./.github/actions/runner-sample
       # The e2e job says why (the runner's Ubuntu kernel).
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # The e2e job says why this cache, why one for the four lanes,
-      # and why every lane's Go is built when its key missed.
-      - id: go
-        run: |
-          v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)
-          [ -n "$v" ] || { echo "the dev image gave no Go version" >&2; exit 1; }
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-      - id: cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The e2e job says why this cache, and why one for the four
+      # lanes; e2e-backup saves it.
+      - uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-
-      - if: steps.cache.outputs.cache-hit != 'true'
-        run: make e2e-warm COMPOSE="$COMPOSE"
+          build: e2e
       - run: make e2e-metrics COMPOSE="$COMPOSE"
 
   # The backup suite: its own stack (a box with Debian's restic and
@@ -535,23 +549,33 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/runner-sample
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # The e2e job says why this cache, why one for the four lanes,
-      # and why every lane's Go is built when its key missed.
-      - id: go
-        run: |
-          v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)
-          [ -n "$v" ] || { echo "the dev image gave no Go version" >&2; exit 1; }
-          echo "version=$v" >> "$GITHUB_OUTPUT"
+      # The e2e job says why this cache, and why one for the four
+      # lanes. This lane is the one that saves it, when the run is on
+      # main and the key missed (.github/actions/go-cache): one job a
+      # key, so no two race for it, and this is the shortest of the
+      # four, so the cache is there soonest [measured on x86, run
+      # 44948454925: 329 s, against 395, 513 and 583]. A job saves
+      # what it compiled, so before it saves, every lane's Go is built
+      # (make e2e-warm) [measured on a cache holding this lane's builds
+      # alone, run 44935635314: a lane's Go build 19 to 30 s,
+      # e2e-metrics' 28 to 43 s, against 3 to 10 s with everything in
+      # it]. That build is in this job alone, and only when it is to
+      # save: when any of the four might save, each built every lane's
+      # on a run whose key missed [measured, runs 44945630584 and
+      # 44948454925: 58 to 120 s in each job, cold]. When this job is
+      # red on main nothing is saved, and main's next push tries again.
       - id: cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-
-      - if: steps.cache.outputs.cache-hit != 'true'
+          build: e2e
+      - if: steps.cache.outputs.save == 'true'
         run: make e2e-warm COMPOSE="$COMPOSE"
       - run: make e2e-backup COMPOSE="$COMPOSE"
+      - if: steps.cache.outputs.save == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.build-path }}
+          key: ${{ steps.cache.outputs.build-key }}
 
   # Builds the same .deb artifacts a release would, on every
   # commit, and hands them to the install-test matrix below.
@@ -578,11 +602,12 @@ jobs:
           # Full history + tags for version-stamp parity with release.
           fetch-depth: 0
       - uses: ./.github/actions/runner-sample
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The Go caches, and the save at the job's end: the lint job and
+      # .github/actions/go-cache say how.
+      - id: cache
+        uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: pkg-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: pkg-${{ runner.os }}-
+          build: pkg
       - run: make build COMPOSE="$COMPOSE"
       - run: make package COMPOSE="$COMPOSE"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -591,6 +616,11 @@ jobs:
           path: dist/
           retention-days: 7
           if-no-files-found: error
+      - if: steps.cache.outputs.save == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.build-path }}
+          key: ${{ steps.cache.outputs.build-key }}
 
   # Installs the .deb under real systemd on each arch and runs the
   # staged smoke test (install → unit boot → liveswap deploy under the

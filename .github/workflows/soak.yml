@@ -86,30 +86,21 @@ jobs:
       # Debian host; the full note is on the e2e job in ci.yml.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # make soak builds the stack's Go in the dev container, as make
-      # e2e does: ci.yml's e2e lanes keep that build's Go caches, and
-      # this restores theirs, by their key (ci.yml's e2e job says how
-      # it is made, and why the Go is asked of plain `docker compose`
-      # first). Restored and never saved: the soak compiles nothing the
-      # lanes do not, and a save from here, racing theirs for the same
-      # key on the same push to main, would be the one that lacks the
-      # other lanes' builds. On the push that changes go.sum, before
-      # the lanes have saved, the restore-key brings the cache of the
-      # go.sum before, and only what changed is compiled. With no cache
-      # of this Go at all (a new Go's first push), this build is cold,
-      # as it was in the image [measured there: 101 to 111 s, two runs
-      # of 2026-11-21]. The Go version is taken as ci.yml's e2e job
-      # takes it, and for its reasons.
-      - id: go
-        run: |
-          v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)
-          [ -n "$v" ] || { echo "the dev image gave no Go version" >&2; exit 1; }
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # e2e does: ci.yml's e2e lanes keep that build's Go cache, and
+      # this restores theirs, with the module cache every job restores
+      # (.github/actions/go-cache makes the keys; ci.yml's e2e job says
+      # why the lanes have one build cache). Restored and never saved,
+      # there being no save step here: the soak compiles nothing the
+      # lanes do not, and ci.yml's e2e-backup is the one job that saves
+      # their cache. On the push that changes go.sum, before it has
+      # saved, the restore-key brings the cache of the go.sum before,
+      # and only what changed is compiled. With no cache of this Go at
+      # all (a new Go's first push), this build is cold, as it was in
+      # the image [measured there: 101 to 111 s, two runs of
+      # 2026-11-21].
+      - uses: ./.github/actions/go-cache
         with:
-          path: .cache
-          key: e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.version }}-
+          build: e2e
       # COMPOSE with the CI file, whose ./.cache binds are what was
       # restored (ci.yml's env says the same).
       - env:

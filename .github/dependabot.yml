@@ -53,7 +53,11 @@ updates:
   - package-ecosystem: github-actions
     # The examples' workflows are SHA-pinned like ours and are
     # copied into other people's repos, so their pins are kept fresh.
-    directories: ["/", "/examples/box", "/examples/deno", "/examples/node"]
+    # .github/actions/go-cache is the one local action that uses
+    # another: its pin of actions/cache must move with the workflows'
+    # (restores in the action, saves in the workflows), and "/" does
+    # not reach its file.
+    directories: ["/", "/.github/actions/go-cache", "/examples/box", "/examples/deno", "/examples/node"]
     schedule:
       interval: weekly
     cooldown:
