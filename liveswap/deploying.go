@@ -73,7 +73,7 @@ func loadDeployMarker(d appDirs) (deployMarker, error) {
 		return m, fmt.Errorf("%w: %w", errNotAMarker, err)
 	}
 	// The version becomes a path: one that is not a version is used
-	// for nothing (redact.go, rule 4, as for state.json's).
+	// for nothing (validVersion, as for state.json's).
 	if !validVersion(m.Version) {
 		return m, fmt.Errorf("%w: it names %q, which is not a version", errNotAMarker, m.Version)
 	}
@@ -157,7 +157,10 @@ func (ma *managedApp) settleInterrupted(c collaborators, keep string) error {
 		FinishedAt: c.clock.Now(),
 	}
 	if rmErr := removeRelease(d, m.Version); rmErr != nil {
-		result.Error = fmt.Sprintf("%s; release %s left on disk: cleanup of failed release %s: %v", interruptedDeployError, m.Version, m.Version, rmErr)
+		// Through the error net (errText): the removal's error names
+		// what is in the release, which the interrupted deploy's units
+		// may have written.
+		result.Error, result.RedactedEnv = ma.errText(fmt.Sprintf("%s; release %s left on disk: cleanup of failed release %s: %v", interruptedDeployError, m.Version, m.Version, rmErr), true, m.Version)
 		logger.Error("the release of a deploy motel did not finish could not be removed; it stays until GC", zap.Error(rmErr))
 	} else {
 		logger.Warn("removed the release of a deploy motel did not finish; the version can be deployed again")
@@ -184,8 +187,15 @@ func removeRelease(d appDirs, version string) error {
 	if p, why := d.linkAt(d.releases); p != "" {
 		return fmt.Errorf("%s is not the directory it names: %w (%s)", p, why, notOwnDirFix)
 	}
-	return os.RemoveAll(d.release(version))
+	return removeAll(d.release(version))
 }
+
+// removeAll is os.RemoveAll for a failed or interrupted deploy's
+// release. A test's seam: as root (the dev and CI containers) a
+// directory the app made read-only is removed, so the failure an
+// account that is not root meets, which names the app's path, is made
+// there by hand.
+var removeAll = os.RemoveAll
 
 // recordedStart is when the deploy version's record holds began, and
 // whether there is one; err is a record there that cannot be read,

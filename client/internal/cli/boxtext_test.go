@@ -30,7 +30,7 @@ func TestHostileQuotations(t *testing.T) {
 		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write(encode(wire.Error{Error: said}))
+			_, _ = w.Write(encode(wire.Error{Error: wire.ErrText(said)}))
 		}))
 		t.Cleanup(srv.Close)
 		fb := &fakeBox{srv: srv, bodies: map[string][]byte{}}

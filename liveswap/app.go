@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 	"go.uber.org/zap"
 )
 
@@ -160,10 +161,9 @@ func (r deployRequest) source() string {
 
 // The outcome vocabulary: what a deploy's status and phase may say.
 // A record's status is one of these and its phase one of these or
-// absent (recordHead, deploys.go); the response filter holds the
-// words out of every layer where they stand as an outcome (redact.go,
-// rule 3), so they carry nothing of the app's and nothing rewrites
-// them.
+// absent (recordHead, deploys.go). They are moteld's own words, which
+// no filter meets: they carry nothing of the app's and nothing
+// rewrites them.
 var (
 	outcomeStatuses = map[string]bool{"succeeded": true, "failed": true}
 	outcomePhases   = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
@@ -180,8 +180,12 @@ type instance struct {
 
 // Sentinel errors the webhook handler maps to status codes.
 var (
-	errDeployInProgress = errors.New("a deploy is already in progress for this app")
+	errDeployInProgress = errors.New(deployInProgress)
 )
+
+// deployInProgress is errDeployInProgress's text: a constant, so the
+// 409's body takes it as a wire.ErrText with no filter.
+const deployInProgress = "a deploy is already in progress for this app"
 
 // validationError is a bad request (422), as opposed to a deploy that
 // failed on its own merits (500). msg is what the 422 and the journal
@@ -320,27 +324,34 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 	ma.secrets = mergeSecrets(ma.secrets, kvs)
 }
 
-// redactorFor is the filter for a response about this app: the
-// remembered secrets, with the versions the status names exempt from
-// the heuristics (a git SHA as a version is high-entropy by design).
+// door is the app's filter for text the app wrote, at the place it
+// enters (redact.go): the values remembered from every launch, and the
+// names that text may hold, which the heuristics leave alone (the
+// app's, the versions given, the releases on disk, the app's dirs).
 //
-// After a moteld restart the app is reattached without a launch, so
-// nothing has rendered its env_file yet; and a reload can name a
-// different env_file than the last launch rendered. Either way the
-// current spec's file is unread, and the filter reads it here. A file
-// that cannot be read now (a rewrite mid-flight, a mode not yet fixed)
-// is not an error here — the next launch reports that — and the read
-// is retried on the next response until it succeeds.
-func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
+// read is whether the env_file may be read now. A deploy's door does
+// not: its launch rendered the file and remembered the values
+// (rememberSecrets), and no other unit of the app's wrote the text.
+// Any other door does: after a moteld restart the app is reattached
+// without a launch, and a reload can name another env_file than the
+// last launch rendered. A file that cannot be read then leaves the
+// values unknown, and the door withholds the app's text (door.unread),
+// that text alone.
+func (ma *managedApp) door(read bool, names ...string) *door {
+	return ma.doorKnowing(nil, read, names...)
+}
+
+// doorKnowing is door, knowing the pairs also: a launch's own, which a
+// failed deploy's detail is filtered with whatever the process
+// remembers (failureDetail).
+func (ma *managedApp) doorKnowing(also []string, read bool, names ...string) *door {
 	// The spec is read under secretsMu so the "which env_file is
 	// loaded" check and the spec it is checked against are one
-	// snapshot: a reload landing between the two could otherwise pair
-	// the new spec with the old latch. secretsMu → specMu is the only
-	// nesting: configure holds specMu and never takes secretsMu.
+	// snapshot. secretsMu → specMu is the only nesting.
 	ma.secretsMu.Lock()
 	spec := ma.snapshot().spec
 	var unread error
-	if spec != nil && (!ma.secretsLoaded || ma.secretsFrom != spec.envFile) {
+	if read && spec != nil && (!ma.secretsLoaded || ma.secretsFrom != spec.envFile) {
 		if spec.envFile == "" {
 			ma.secretsFrom, ma.secretsLoaded = "", true
 		} else if kvs, err := parseEnvFile(spec.envFile); err == nil {
@@ -350,41 +361,43 @@ func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 			unread = err
 		}
 	}
-	kvs := append([]string(nil), ma.secrets...)
+	kvs := mergeSecrets(append([]string(nil), ma.secrets...), also)
 	ma.secretsMu.Unlock()
-	// Safe strings are names: the app's, every version the status
-	// names — the running one, the last deploy's, the one deploying,
-	// the releases on disk, the recorded ones — the digests those
-	// deploys were pinned to, the app's dirs, and any the caller's body
-	// names that the status does not (the digests a refused pin reports,
-	// deployOutcome). Whoever named one, it exempts nothing:
-	// a safe string equal to a known value is dropped by NewRedactor
-	// (redact.go, rule 1).
-	safe := append([]string{ma.name, s.CurrentVersion}, s.AvailableVersions...)
-	safe = append(safe, names...)
-	if s.LastDeploy != nil {
-		safe = append(safe, s.LastDeploy.Version, s.LastDeploy.SHA256)
-	}
-	if s.Deploying != nil {
-		// The request's, validated as one (rule 4): a release still
-		// downloading is on no list above.
-		safe = append(safe, s.Deploying.Version)
-	}
-	for _, d := range s.Deploys {
-		safe = append(safe, d.Version, summaryPin(d))
-	}
+	safe := append([]string{ma.name}, names...)
 	if spec != nil {
 		safe = append(safe, spec.dirs.root, spec.dirs.app, spec.dirs.releases, spec.dirs.shared, spec.dirs.run)
+		onDisk, _ := listReleases(spec.dirs) // names only
+		safe = append(safe, onDisk...)
 	}
-	r := NewRedactor(kvs, safe)
-	r.holdOwnName(ma.name) // rule 5
+	d := &door{r: NewRedactor(kvs, safe), seen: map[string]bool{}}
 	if unread != nil {
-		// The values the running app holds are unknown to the filter,
-		// and the heuristics alone are not the promise: no body until
-		// the file reads. The reason names the file, not its contents.
-		r.withhold = "the app's env_file could not be read, so its values are unknown to the filter (" + unread.Error() + ")"
+		d.unread = "the app's env_file could not be read, so its values are unknown to the filter"
 	}
-	return r
+	return d
+}
+
+// doorError is an error whose text passed the app's door (errText,
+// redact.go): what a field or a log line gets from Error, the chain
+// still there for errors.Is and errors.As. keys are the env keys the
+// door replaced in it.
+type doorError struct {
+	err  error
+	msg  wire.ErrText
+	keys []string
+}
+
+func (e *doorError) Error() string { return string(e.msg) }
+func (e *doorError) Unwrap() error { return e.err }
+
+// outcomeText is an error's text for the answer of the request that
+// met it: the text that passed the door where the pipeline ended (the
+// one last_deploy and the record hold), or, for an error that did not
+// come from there, its text through the net now.
+func (ma *managedApp) outcomeText(err error) (wire.ErrText, []string) {
+	if de, ok := err.(*doorError); ok { //nolint:errorlint // the outermost error alone: text wrapped around a doorError has not passed
+		return de.msg, de.keys
+	}
+	return ma.errText(err.Error(), true)
 }
 
 // mergeSecrets appends the pairs not already present.
@@ -625,25 +638,9 @@ func preflightResult(what string, err error) error {
 // error; the app's as read before motel stopped it, and only when
 // it died on its own), the last probe's answer, and the last lines the
 // launch's units wrote. Nil when a launch left nothing to say.
-func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, err error, appExit string, appPID int, l launch, since time.Time) (*deployDetail, []string) {
-	d := &deployDetail{}
+func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, version string, err error, appExit string, appPID int, l launch, since time.Time) (*deployDetail, []string) {
+	raw := rawDetail{withBody: spec.deployLogLines > 0, maxLines: spec.deployLogLines}
 	var ee *exitError
-	var pe *probeError
-	// The app's own bytes — the probe's body, the journal's lines — are
-	// held to the known values here, before any cap cuts them: a cap
-	// that fell inside a value would leave a fragment the response
-	// filter's first layer cannot match, and no heuristic masks a
-	// fragment under entropyMinLen (redact.go). The values are the
-	// launch's own (l.secrets: what this instance's env_file rendered),
-	// so no file is read and nothing is withheld on a file that went
-	// unreadable since — the record keeps its detail (recordRedactor).
-	// The filter runs whole over the finished body as always; this is
-	// its first layer, early, and the keys it finds are returned for
-	// the result's redacted_env, since the filter will not find the
-	// values again.
-	known := NewRedactor(l.secrets, nil)
-	seen := map[string]bool{}
-	withBody := spec.deployLogLines > 0
 	// With the exit, the pid of the process that failed — the pre_start's
 	// as the manager recorded it, or the app's: the journal finds that
 	// process's lines by it when journald could not tell their unit
@@ -651,19 +648,12 @@ func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, err error, a
 	pid := appPID
 	switch {
 	case errors.As(err, &ee):
-		d.Exit, pid = ee.exit, ee.pid
+		raw.exit, pid = ee.exit, ee.pid
 	case appExit != "":
-		d.Exit = appExit
+		raw.exit = appExit
 	}
-	if errors.As(err, &pe) {
-		d.Probe = &probeDetail{Status: pe.status, Location: pe.location}
-		// The body is the app's output as much as the journal is:
-		// deploy_log_lines 0 keeps both on the box.
-		if withBody {
-			d.Probe.Body = deploytrust.CutRunes(known.replaceKnown(pe.body, seen, false), probeBodyExcerpt)
-		}
-	}
-	if withBody && c.journal != nil {
+	errors.As(err, &raw.probe)
+	if raw.withBody && c.journal != nil {
 		of := tailOf{pid: pid, ident: syslogIdentifier(spec.name)}
 		for _, oneshot := range []bool{true, false} {
 			if u, err := unitName(l.startSpec(spec, spec.command), oneshot); err == nil {
@@ -673,39 +663,67 @@ func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, err error, a
 		// The journal trails the process by a moment; ask again while
 		// the count still grows, within a bound, rather than read once
 		// and miss the last line — the one that says why.
-		var lines []string
 		ctx, cancel := context.WithTimeout(context.Background(), journalTailTimeout)
 		defer cancel()
 		for attempt := 0; attempt < 5 && ctx.Err() == nil; attempt++ {
 			got, err := c.journal.tail(ctx, of, since, spec.deployLogLines)
 			if err != nil {
-				d.LogTailError = err.Error()
+				raw.tailErr = err.Error()
 				break
 			}
-			grew := len(got) > len(lines)
-			lines = got
+			grew := len(got) > len(raw.lines)
+			raw.lines = got
 			// Done past the cap, or once a read adds nothing to what an
 			// earlier one found — not while there is nothing yet: the
 			// journal may still be behind the process.
-			if len(lines) > spec.deployLogLines || (attempt > 0 && !grew && len(lines) > 0) {
+			if len(raw.lines) > spec.deployLogLines || (attempt > 0 && !grew && len(raw.lines) > 0) {
 				break
 			}
 			c.clock.Sleep(200 * time.Millisecond)
 		}
-		if d.LogTailError == "" {
-			for i, line := range lines {
-				lines[i] = known.replaceKnown(line, seen, false)
-			}
-			d.LogTail, d.LogTailTruncated = capTail(lines, spec.deployLogLines, deployLogMaxBytes)
+	}
+	// The values are the launch's own (l.secrets: what this instance's
+	// env_file rendered) and those every launch remembered, so no file
+	// is read and nothing is withheld on a file that went unreadable
+	// since: the record keeps its detail.
+	known := ma.doorKnowing(l.secrets, false, version)
+	return raw.through(known), known.keys()
+}
+
+// rawDetail is the app's side of a failed deploy as it was gathered:
+// the app's own bytes, which reach a detail through the app's door
+// alone (through).
+type rawDetail struct {
+	exit     string
+	probe    *probeError
+	withBody bool
+	lines    []string
+	tailErr  string
+	maxLines int
+}
+
+// through is the detail an answer carries: the probe's Location and
+// body and the journal's lines filtered at the door, whole, before any
+// cap cuts them, since a cap that fell inside a value would leave a
+// fragment no layer matches. Nil when the launch left nothing to say.
+func (r rawDetail) through(known *door) *deployDetail {
+	// journalctl's own words, through the net: an error's text.
+	d := &deployDetail{Exit: r.exit, LogTailError: known.errText(r.tailErr)}
+	if r.probe != nil {
+		d.Probe = &probeDetail{Status: r.probe.status, Location: known.text(r.probe.location)}
+		// The body is the app's output as much as the journal is:
+		// deploy_log_lines 0 keeps both on the box.
+		if r.withBody {
+			d.Probe.Body = known.excerpt(r.probe.body, probeBodyExcerpt)
 		}
 	}
+	if r.tailErr == "" {
+		d.LogTail, d.LogTailTruncated = capTail(known.lines(r.lines), r.maxLines, deployLogMaxBytes)
+	}
 	if d.Exit == "" && d.Probe == nil && d.LogTail == nil && !d.LogTailTruncated && d.LogTailError == "" {
-		return nil, nil
+		return nil
 	}
-	if len(seen) == 0 {
-		return d, nil
-	}
-	return d, reportedKeys(seen)
+	return d
 }
 
 // Deploy runs the full blue/green pipeline. Any failure before the
@@ -833,8 +851,9 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	relaunch := false        // the running version, launched again from its release on disk: not the version's history
 	accepted := false        // the request passed its checks: from here on, what happens is the version's history
 	var detail *deployDetail // filled by the failure-detail defer below, which runs first
-	var redacted []string    // the env keys the detail's early replacement found
+	var redacted []string    // the env keys the detail's door replaced
 	launched := false        // a pre_start or Start was attempted: there are units to ask about
+	rendered := false        // this deploy's launch rendered the env_file: its values are remembered
 	appExit := ""            // the app's exit, read before motel stops a failed instance
 	appPID := 0              // and its main process's pid (runner.Exit)
 	// marked: this deploy wrote the deploy marker (deploying.go).
@@ -867,7 +886,25 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		}
 		if err != nil {
 			result.Status = "failed"
-			result.Error = err.Error()
+			// The error net (errText, redact.go): the error's text passes
+			// the app's filter, whatever failed and whether or not a unit
+			// ran. The chain may quote what the app answered a probe with
+			// (Go's HTTP client quotes an answer that is no HTTP), and it
+			// may hold the operating system's words about a path the app
+			// made (a cleanup that failed, a pre-flight's refusal of a
+			// release the app has written). From here the error's text is
+			// the filtered one: the answer's, last_deploy's, the record's
+			// and the journal's. A deploy whose own launch rendered the
+			// env_file reads no file; one that failed before that knows
+			// what this process remembered, and reads the file when it
+			// remembered nothing. The version, the pin and the two digests
+			// of a refused pin are names the heuristics leave alone.
+			var dm digestMismatch
+			_ = errors.As(err, &dm)
+			text, keys := ma.errText(err.Error(), !rendered, append([]string{req.version, pin}, dm.names()...)...)
+			err = &doorError{err: err, msg: text, keys: keys}
+			redacted = union(redacted, keys)
+			result.Error = text
 			result.Detail, result.RedactedEnv = detail, redacted
 		}
 		// One step from the deploy in flight to its outcome: a status
@@ -1039,7 +1076,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 			// Surface a cleanup failure: otherwise the release lingers and
 			// the next attempt at this version 422s (immutable) with no
 			// explanation of why.
-			if rmErr := os.RemoveAll(releaseDir); rmErr != nil {
+			if rmErr := removeAll(releaseDir); rmErr != nil {
 				err = errors.Join(err, fmt.Errorf("cleanup of failed release %s: %w", req.version, rmErr))
 			}
 		}()
@@ -1050,12 +1087,13 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		return err
 	}
 	ma.rememberSecrets(spec.envFile, l.secrets)
+	rendered = true
 	// Declared after the cleanup defers above, so it runs before them:
 	// the detail is read off the pipeline's own error, before cleanup
 	// joins its own lines onto it.
 	defer func() {
 		if err != nil && launched {
-			detail, redacted = ma.failureDetail(c, spec, err, appExit, appPID, l, started)
+			detail, redacted = ma.failureDetail(c, spec, req.version, err, appExit, appPID, l, started)
 		}
 	}()
 	// A launch that never becomes the instance leaves nothing behind:
@@ -1333,7 +1371,7 @@ func (ma *managedApp) ensureRunning() error {
 	// becomes a path component, an argument, an environment value,
 	// so one that is not a version is used for nothing — not even to
 	// look for its release. Corrupt state, like the rest: never
-	// silently reset (redact.go, rule 4).
+	// silently reset (validVersion).
 	if !validVersion(st.CurrentVersion) {
 		return &permanentRecoveryError{fmt.Errorf("state names version %q, which is not a version", st.CurrentVersion)}
 	}
@@ -1499,7 +1537,11 @@ func (ma *managedApp) recover(ctx context.Context, logger *zap.Logger) {
 			logger.Error("recovery failed", zap.Error(err))
 			// Nothing runs, and nothing will retry: status says why
 			// (watchdog.last_failure) until a launch replaces it.
-			ma.wd.setLastFailure(err.Error())
+			// Through the error net (errText): a unit may have run, and
+			// a refused relaunch names a path of a release the app has
+			// written.
+			text, keys := ma.errText(err.Error(), true)
+			ma.wd.setLastFailure(text, keys...)
 			return
 		}
 		// Loud once, then a heartbeat: a manager that is down for an
@@ -1613,7 +1655,7 @@ type launch struct {
 	version, nonce, socket, releaseDir string
 	sock                               *socketRef
 	env                                []string
-	// secrets is the env_file subset of env: what the response filter
+	// secrets is the env_file subset of env: what the app's filter
 	// must never let out (redact.go).
 	secrets []string
 	// envFileMode is the mode of the env_file inode secrets came from,
@@ -1897,6 +1939,14 @@ func (ma *managedApp) statusFrom(c collaborators, available, byMtime []string, d
 	if c.spec != nil && c.clock != nil {
 		s.Watchdog = ma.wd.statusSnapshot(c.clock.Now(), c.spec.wdWindow)
 	}
+	// The keys the doors replaced in the app's text this status holds.
+	var keys []string
+	if s.LastDeploy != nil {
+		keys = s.LastDeploy.RedactedEnv
+	}
+	if wk := ma.wd.failureKeys(); len(keys)+len(wk) > 0 {
+		s.RedactedEnv = union(keys, wk)
+	}
 	return s
 }
 
@@ -2094,7 +2144,7 @@ func buildEnv(spec *appSpec, version, socket, releaseDir string) ([]string, erro
 }
 
 // buildEnvFull is buildEnv plus the env_file pairs on their own: the
-// values the response filter treats as secrets. Inline `env` is not
+// values the app's filter treats as secrets. Inline `env` is not
 // among them — it lives in the Caddyfile, in a repo, and is not secret
 // by policy — and neither are HOME, SOCKET or the inherited PATH,
 // which a diagnostic has to be able to name.

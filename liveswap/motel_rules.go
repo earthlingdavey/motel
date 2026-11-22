@@ -124,42 +124,14 @@ func (a appHandle) rules(ctx context.Context, src RulesSource, logger *zap.Logge
 	return out, true
 }
 
-// rulesSafe are the names a rules body holds that the entropy layer
-// could mask: each alert's name (motel's, or a rule line's, held to its
-// grammar), and the apps named (as the backups body's).
-func rulesSafe(b wire.Rules) []string {
-	var safe []string
-	for _, al := range b.Alerts {
-		safe = append(safe, al.Name)
-		for _, s := range append([]string{al.App}, al.Apps...) {
-			if appNameRe.MatchString(s) {
-				safe = append(safe, s)
-			}
-		}
-		for _, r := range al.Readings {
-			for _, s := range []string{r.App, r.Instance} {
-				if appNameRe.MatchString(s) {
-					safe = append(safe, s)
-				}
-			}
-		}
-	}
-	return safe
-}
-
 // respondRules writes a rules body. It holds no byte of an app's: the
-// alert names and thresholds are the Caddyfile's (in the box's
-// repository, not a secret by policy), the words motel's, the numbers
-// the store's and the detectors', the times the box's. So it passes a
-// filter that knows no app's values, as the backups body does: its
-// shape and entropy layers run over it, and no env_file value shaped
-// like a date, a number or a word of the body can make a body no client
-// reads.
+// alert names and thresholds are the Caddyfile's, the words motel's,
+// the numbers the store's and the detectors', the times the box's.
 func respondRules(w http.ResponseWriter, body wire.Rules, ok bool) error {
 	if !ok {
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: noRulesListing}, NewRedactor(nil, nil))
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: noRulesListing})
 	}
-	return RespondJSON(w, http.StatusOK, body, NewRedactor(nil, rulesSafe(body)))
+	return RespondJSON(w, http.StatusOK, body)
 }
 
 // rules is GET /_motel/rules, for a viewer of the box: every alert motel
@@ -173,7 +145,7 @@ func (h *Handler) rules(w http.ResponseWriter, r *http.Request, p *Person) error
 	if err != nil {
 		// serveMotel asked Decide about the row's action already: the two
 		// falling apart.
-		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), nil)
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err))
 	}
 	body, ok := box.boxRules(r.Context(), h.logger)
 	return respondRules(w, body, ok)

@@ -267,7 +267,7 @@ type AppConfig struct {
 	// since the deploy began), on top of the exit status and the last
 	// health probe's answer. The response goes to whoever deployed —
 	// a CI log, and with a public repository a public one — so it
-	// passes the response filter first, and 0 keeps the app's output
+	// passes the app's filter first (redact.go), and 0 keeps the app's output
 	// on the box entirely. Bounded at 8 KiB whatever the count.
 	// Default 40, at most 1000.
 	DeployLogLines *int `json:"deploy_log_lines,omitempty"`

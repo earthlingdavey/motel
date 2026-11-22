@@ -97,7 +97,7 @@ var l0 = time.Date(2026, 11, 20, 23, 59, 58, 123456000, time.UTC)
 
 // line is a line of blog's at l0 and s seconds, of release rel.
 func line(s int, rel, text string) wire.LogLine {
-	return wire.LogLine{At: l0.Add(time.Duration(s) * time.Second), Release: rel, Text: text}
+	return wire.LogLine{At: l0.Add(time.Duration(s) * time.Second), Release: rel, Text: wire.AppText(text)}
 }
 
 // hostileLine is a line an app wrote to move the cursor, recolour the
@@ -485,7 +485,7 @@ func TestLogsHelpFits(t *testing.T) {
 // character escaped; --json is the box's record as received.
 func TestDeployTailTabs(t *testing.T) {
 	fb := newFakeBox(t)
-	fb.deploy.Detail.LogTail = []string{"panic: boom", "\t/app/main.go:10 +0x1d", "\x1b[31m\tred"}
+	fb.deploy.Detail.LogTail = []wire.AppText{"panic: boom", "\t/app/main.go:10 +0x1d", "\x1b[31m\tred"}
 	fb.deploy.Detail.Probe.Body = "panic: boom\n\t/app/main.go:10 +0x1d"
 	r := run(t, fb, deployToken, "deploys", appURL(fb, "blog"), "v41")
 	if r.code != 0 || !strings.Contains(r.stdout, "log tail (3 lines):\n  panic: boom\n          /app/main.go:10 +0x1d\n  \\x1b[31m        red\n") || strings.ContainsRune(r.stdout, '\t') ||

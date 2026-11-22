@@ -177,7 +177,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 			v.Fields = append(v.Fields, field("restarted", boxT(wd.LastRestartCause)))
 		}
 		if wd.LastFailure != "" {
-			v.Fields = append(v.Fields, field("last check", boxT(wd.LastFailure)))
+			v.Fields = append(v.Fields, field("last check", boxT(string(wd.LastFailure))))
 		}
 	}
 	v.Fields = append(v.Fields, lastDeploy(st.LastDeploy, now)...)
@@ -239,7 +239,7 @@ func lastDeploy(d *wire.DeployResult, now time.Time) []Line {
 	}
 	out := []Line{field("deployed", l...)}
 	if d.Error != "" {
-		out = append(out, field("error", boxT(d.Error)))
+		out = append(out, field("error", boxT(string(d.Error))))
 	}
 	if d.Note != "" {
 		out = append(out, field("note", boxT(d.Note)))
@@ -260,7 +260,7 @@ func (s *Session) metricLines(st wire.Status, now time.Time) []Line {
 	case m == nil:
 		return []Line{field("metrics", own("this box keeps none"))}
 	case m.Error != "":
-		return []Line{field("metrics", own("the box says: "), quoted(m.Error))}
+		return []Line{field("metrics", own("the box says: "), quoted(string(m.Error)))}
 	}
 	var out []Line
 	cap := memCap(st)
@@ -416,7 +416,7 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 		}
 	}
 	if d.Error != "" {
-		v.Head = append(v.Head, field("error", boxT(d.Error)))
+		v.Head = append(v.Head, field("error", boxT(string(d.Error))))
 	}
 	if d.Note != "" {
 		v.Head = append(v.Head, field("note", boxT(d.Note)))
@@ -445,13 +445,13 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 			if p.Location != "" {
 				// The app's own header, inside the client's sentence: a
 				// quotation, so ", body:" after it is the client's.
-				l = append(l, own(" from "), quoted(p.Location))
+				l = append(l, own(" from "), quoted(string(p.Location)))
 			}
 			if p.Body != "" {
 				l = append(l, own(", body:"))
 			}
 			v.Head = append(v.Head, field("probe", l...))
-			for _, b := range termtext.TabbedLines(p.Body) {
+			for _, b := range termtext.TabbedLines(string(p.Body)) {
 				v.Head = append(v.Head, Line{own("              "), Seg{T: Capped(b.String(), LineMax)}})
 			}
 		}
@@ -466,14 +466,14 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 	switch {
 	case dt == nil:
 	case dt.LogTailError != "":
-		v.TailTitle = Line{own("no log tail: the box says: "), quoted(dt.LogTailError)}
+		v.TailTitle = Line{own("no log tail: the box says: "), quoted(string(dt.LogTailError))}
 	case len(dt.LogTail) == 0 && dt.Probe != nil:
 		// The box sends no field that says so; an empty tail beside a
 		// probe and no error is what deploy_log_lines 0 leaves.
 		v.TailTitle = Line{own("no log tail: this app may keep its output on the box (deploy_log_lines 0)")}
 	case len(dt.LogTail) > 0:
 		for _, l := range dt.LogTail {
-			ts := termtext.TabbedLines(l)
+			ts := termtext.TabbedLines(string(l))
 			if l == "" {
 				// TabbedLines makes no line of nothing; an empty line of the
 				// tail is a line.

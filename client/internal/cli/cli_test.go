@@ -50,8 +50,8 @@ func hostileStatus() wire.Status {
 			{Version: "v42", Status: "succeeded", By: hostile[0] + hostile[9], FinishedAt: json.RawMessage(`"2026-11-14T09:12:30Z"`)},
 			{Version: "v41", Status: "failed", Phase: "soaking", By: hostile[2] + "  v40  succeeded", FinishedAt: json.RawMessage(`"` + "\\u001b[31m" + `"`)},
 		},
-		LastDeploy:        &wire.DeployResult{Version: "v42", Status: "failed", Error: hostile[3], By: hostile[5], Note: strings.Repeat("n", 300), FinishedAt: at},
-		Watchdog:          &wire.Watchdog{State: "watching", LastFailure: hostile[4] + strings.Repeat(" ", 60) + "error        forged"},
+		LastDeploy:        &wire.DeployResult{Version: "v42", Status: "failed", Error: wire.ErrText(hostile[3]), By: hostile[5], Note: strings.Repeat("n", 300), FinishedAt: at},
+		Watchdog:          &wire.Watchdog{State: "watching", LastFailure: wire.ErrText(hostile[4] + strings.Repeat(" ", 60) + "error        forged")},
 		AvailableVersions: []string{"v42", "v41", "v40_rc.1"},
 		Metrics: &wire.Metrics{Window: "1h", Memory: &wire.MemorySummary{Now: pf(182 << 20), Max: pf(210 << 20)},
 			CPU: &wire.CPUSummary{Avg: 0.02}, Requests: &wire.RequestSummary{Total: 1234, PerSecond: 0.34, Share5xx: pf(0.001), P95: pf(120)}},
@@ -61,13 +61,13 @@ func hostileStatus() wire.Status {
 func hostileDeploy() wire.DeployResult {
 	start := time.Date(2026, 11, 13, 17, 39, 2, 0, time.UTC)
 	return wire.DeployResult{
-		Version: "v41", Status: "failed", Phase: "soaking", Error: "the health check answered 500 " + hostile[0],
+		Version: "v41", Status: "failed", Phase: "soaking", Error: wire.ErrText("the health check answered 500 " + hostile[0]),
 		By: "github:example/blog@refs/heads/main", StartedAt: start, FinishedAt: start.Add(69 * time.Second),
 		Phases: []wire.PhaseTiming{{Name: "downloading", Seconds: 2.1}, {Name: "soaking", Seconds: 65.4}},
 		Detail: &wire.DeployDetail{
 			Exit:    "exit status 3 " + hostile[5],
-			Probe:   &wire.ProbeDetail{Status: 500, Location: hostile[2], Body: "{\"db\":\"connection refused\"}\n" + hostile[7]},
-			LogTail: append([]string{"pg: connection refused (127.0.0.1:5432)", "two\nlines " + hostile[6], strings.Repeat("L", 500)}, hostile...),
+			Probe:   &wire.ProbeDetail{Status: 500, Location: wire.AppText(hostile[2]), Body: wire.AppText("{\"db\":\"connection refused\"}\n" + hostile[7])},
+			LogTail: appTexts(append([]string{"pg: connection refused (127.0.0.1:5432)", "two\nlines " + hostile[6], strings.Repeat("L", 500)}, hostile...)),
 		},
 	}
 }
@@ -140,7 +140,7 @@ func newFakeBox(t *testing.T) *fakeBox {
 		case r.URL.Query().Get("deploy") == "v41":
 			body = encode(fb.deploy)
 		case r.URL.Query().Has("deploy"):
-			code, body = http.StatusNotFound, encode(wire.Error{Error: "no deploy recorded for version " + r.URL.Query().Get("deploy")})
+			code, body = http.StatusNotFound, encode(wire.Error{Error: wire.ErrText("no deploy recorded for version " + r.URL.Query().Get("deploy"))})
 		default:
 			body = encode(fb.status)
 		}
@@ -733,4 +733,14 @@ func TestRoots(t *testing.T) {
 	if len(got) != 1 || got[0] != "SSL_CERT_DIR=/etc/x" {
 		t.Fatalf("roots = %q", got)
 	}
+}
+
+// appTexts is lines as the wire type carries them (the spike's option
+// "doors": a tail line is a wire.AppText).
+func appTexts(lines []string) []wire.AppText {
+	out := make([]wire.AppText, len(lines))
+	for i, l := range lines {
+		out[i] = wire.AppText(l)
+	}
+	return out
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/smallhoursorg/motel/liveswap/wire"
 	"go.uber.org/zap"
 )
 
@@ -81,8 +82,9 @@ type watchdogState struct {
 	healthySince     time.Time
 	lastRestartAt    time.Time
 	lastRestartCause string
-	skipGraceFor     handle // superviseInstance re-arms no grace for this handle
-	lastFailure      string
+	skipGraceFor     handle         // superviseInstance re-arms no grace for this handle
+	lastFailure      wire.ErrText   // through the error net alone (errText, redact.go)
+	lastFailureKeys  []string       // the env keys the app's filter replaced in lastFailure
 	jitter           func() float64 // test seam; nil = rand.Float64
 	// What the notify module was told (lifecycle.go): alerted while a
 	// restart loop is reported and not yet over, recovering once its
@@ -364,7 +366,7 @@ func (w *watchdogState) recordHealthy(now time.Time, resetAfter time.Duration) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.failures = 0
-	w.lastFailure = ""
+	w.lastFailure, w.lastFailureKeys = "", nil
 	if w.healthySince.IsZero() {
 		w.healthySince = now
 	}
@@ -373,11 +375,11 @@ func (w *watchdogState) recordHealthy(now time.Time, resetAfter time.Duration) {
 	}
 }
 
-func (w *watchdogState) recordFailure(desc string) int {
+func (w *watchdogState) recordFailure(desc wire.ErrText, keys []string) int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.failures++
-	w.lastFailure = desc
+	w.lastFailure, w.lastFailureKeys = desc, keys
 	w.healthySince = time.Time{}
 	return w.failures
 }
@@ -387,10 +389,28 @@ func (w *watchdogState) recordFailure(desc string) int {
 // up. The next launch clears it — recovery's (with ""), a deploy's
 // (reset), or a healthy probe of a later instance — and so does a
 // recovery that finds nothing recorded.
-func (w *watchdogState) setLastFailure(desc string) {
+func (w *watchdogState) setLastFailure(desc wire.ErrText, keys ...string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.lastFailure = desc
+	w.lastFailure, w.lastFailureKeys = desc, keys
+}
+
+// probeFailed records a failed probe of the running instance. Its
+// error passes the error net (errText, redact.go): Go's HTTP client
+// quotes a probe answer that is no HTTP into it. The error it returns
+// says the filtered text, for the journal's line; the count is the
+// consecutive failures.
+func (ma *managedApp) probeFailed(version string, err error) (int, error) {
+	text, keys := ma.errText(err.Error(), true, version)
+	err = &doorError{err: err, msg: text, keys: keys}
+	return ma.wd.recordFailure(text, keys), err
+}
+
+// failureKeys is the env keys the door replaced in the last failure.
+func (w *watchdogState) failureKeys() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.lastFailureKeys
 }
 
 // noteFlap breaks the continuous-health streak without counting toward
@@ -511,7 +531,7 @@ func (w *watchdogState) reset() {
 	w.restarts = nil
 	w.backoffStep = 0
 	w.healthySince = time.Time{}
-	w.lastFailure = ""
+	w.lastFailure, w.lastFailureKeys = "", nil
 	w.skipGraceFor = nil
 }
 
@@ -662,7 +682,7 @@ func (ma *managedApp) superviseInstance(ctx context.Context, c collaborators, in
 				c.logger.Debug("watchdog: probe failed during grace", zap.Error(err))
 				continue
 			}
-			n := ma.wd.recordFailure(err.Error())
+			n, err := ma.probeFailed(inst.version, err)
 			ma.noteUnhealthy(c, inst.version)
 			c.logger.Warn("watchdog: health probe failed",
 				zap.String("kind", classifyProbeErr(err)),
@@ -885,7 +905,10 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 		// refusal, until a deploy, or a reload's recovery once the
 		// cause is fixed, launches the app again.
 		ma.dropIf(inst)
-		ma.wd.setLastFailure(err.Error())
+		// Through the error net (errText): the refusal names a path of
+		// a release the app has written, a link's target among them.
+		text, keys := ma.errText(err.Error(), true, inst.version)
+		ma.wd.setLastFailure(text, keys...)
 		// The operator's channels are told the refusal's said where it
 		// has one: its message names a path the release chose
 		// (validationError). Never a log tail; the filter runs over it

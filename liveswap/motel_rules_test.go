@@ -381,10 +381,10 @@ func TestAppRulesBody(t *testing.T) {
 	}
 }
 
-// TestRulesPassNoAppValue: a rules body holds no byte of an app's, so it
-// passes a filter that knows no app's values: an env_file value shaped
-// like a date, a number, a word or a name in the body masks nothing in
-// it, and the body reads whole, on both routes.
+// TestRulesPassNoAppValue: a rules body holds no byte of an app's, and
+// no filter runs over it: an env_file value shaped like a date, a
+// number, a word or a name in the body masks nothing in it, and the
+// body reads whole, on both routes.
 func TestRulesPassNoAppValue(t *testing.T) {
 	h, people := alertsRig(t)
 	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte(
@@ -406,12 +406,13 @@ func TestRulesPassNoAppValue(t *testing.T) {
 			}
 		}
 	}
-	// The shape and entropy layers still run: a generated token in a
-	// rule's words is masked.
+	// Nor do the shape and entropy layers, which an older moteld ran
+	// over it: a generated token in a rule's words (the operator's) is
+	// sent as written.
 	l := rulesListing()
 	l.Alerts[3].Guards = []wire.GuardListing{{Op: ">=", Value: num(1), Meaning: "token q8Zr3XvLp2NwTb7KmYc4Hd9Fs6Jg"}} // gitleaks:allow — made up for this test
 	h.app.SetRulesSource(&fakeRules{l: l})
-	if w := sendTo(t, h, "GET", "/_motel/rules", token(people.carol)); strings.Contains(w.Body.String(), "q8Zr3XvLp2NwTb7KmYc4Hd9Fs6Jg") || w.Code != http.StatusOK { // gitleaks:allow — made up for this test
+	if w := sendTo(t, h, "GET", "/_motel/rules", token(people.carol)); !strings.Contains(w.Body.String(), "q8Zr3XvLp2NwTb7KmYc4Hd9Fs6Jg") || w.Code != http.StatusOK { // gitleaks:allow — made up for this test
 		t.Errorf("a token in a rule's words: %d %s", w.Code, w.Body)
 	}
 }

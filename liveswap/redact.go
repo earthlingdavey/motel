@@ -11,219 +11,62 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
-// The webhook's responses land in CI logs — readable by everyone with
-// read access to the repository, retained, public for a public repo —
-// so nothing leaves the box through them without passing this filter.
-// motel is the right place for it: it built the app's environment
-// from env_file, so it knows the secrets by value, and it knows which
-// high-entropy strings of its own (versions, paths) are not secrets.
+// An app that prints one of its env values must not reach a reader with
+// it: a failed deploy's answer lands in a CI log, a status is read by
+// people with a role. motel rendered the app's environment from its
+// env_file, so it knows the values by name; and it knows which strings
+// of an answer are the app's, because the app's bytes enter an answer or
+// a stored record at a few places only, the doors:
 //
-// A failed deploy's response carries the app's own bytes on purpose
-// (deployDetail in app.go: the journal tail, a probe's body, the exit
-// status), so this is what stands between an app that prints its
-// database URL and a public Actions log.
+//   - a failed deploy's journal tail, probe body and probe Location
+//     (failureDetail, app.go);
+//   - a line of the app's journal at the logs read (motel_logs.go);
+//   - an error's text, wherever it becomes a field (errText below): Go's
+//     HTTP client quotes a probe answer that is no HTTP into its error,
+//     and the operating system names paths the app made (a cleanup that
+//     failed, a pre-flight that refused a link in a release);
+//   - a lifecycle event's summary, as it is told (lifecycle.go).
 //
-// Four layers, in order:
+// The text is filtered there, once, as text, before any cap cuts it,
+// and lands in a field whose type says so: wire.AppText for the app's
+// text, wire.ErrText for an error's. Only this file converts a string
+// to either (TestAppTextOnlyFromTheDoor, TestErrTextMakers), so Go
+// refuses an unfiltered string in such a field. An answer is then
+// marshalled from its typed struct and sent: no filter runs over a
+// finished body, so motel's own data (a key, a word of its vocabulary,
+// a version, a time, a number, the app's name) is never replaced, and a
+// body is never withheld. Every other string field of an answer is
+// classed as moteld's own or as text that passes as written (the
+// caller's, the operator's, another program's): the wire package's
+// `text` tags, held by TestEveryStringFieldIsClassed.
+//
+// The layers, over one text:
 //
 //  1. Known values: every env_file value of secretMinLen or more, in
-//     the forms it could appear in — as written, JSON-escaped, base64
-//     (standard and URL alphabets, padded and not), hex, URL-escaped —
-//     and, for a value that is a URL with a password, the password on
-//     its own in the same forms. Replaced with [redacted:KEY], but
-//     inside a body's times and numbers, which no layer sees (rule
-//     7). Inline
-//     `env` values are not secrets by policy (the Caddyfile is in a
-//     repo) and are not redacted; SOCKET, HOME and the inherited PATH
-//     are paths a diagnostic needs.
-//  2. A safe list — the versions the status names, the app's dirs —
-//     exempt from the heuristics below, so a 40-character git SHA used
-//     as a version survives. Each entry is also split the way layer 4
-//     tokenises, so a dotted version's generated segment is safe too.
-//     Never from layer 1: a safe string equal to a known value is not
-//     safe (rule 1 below).
-//  3. Shape rules: credentials with a recognisable form (JWTs, bearer
-//     tokens, URL userinfo and query strings, provider key prefixes,
-//     PEM private keys, password=… assignments).
-//  4. Entropy: a token of entropyMinLen or more characters from the
-//     base64 or hex alphabet, mixed enough to look generated and with
-//     Shannon entropy above the class's threshold — a bar that follows
-//     the token's length, since a short one cannot reach a fixed bar
-//     (looksGenerated) — replaced with [masked, N chars]. Never a
-//     fingerprint: a hash of a secret is a small leak of it. An
-//     assignment is judged by its parts (maskGenerated).
+//     the forms it could appear in (as written, JSON-escaped, base64 in
+//     both alphabets padded and not, hex, URL-escaped) and a URL
+//     value's password on its own. Replaced with [redacted:KEY]; the
+//     keys go to the answer's redacted_env, carried from the door
+//     beside the text.
+//  2. A safe list (the app's name, the versions and digests in play,
+//     the app's dirs), exempt from the heuristics below. Never from
+//     layer 1: a safe string equal to a known value is dropped.
+//  3. Shape rules: credentials with a recognisable form.
+//  4. Entropy: a generated-looking token of entropyMinLen or more.
 //
-// Layer 1 also runs early, as a failed deploy's detail is built
-// (failureDetail, app.go), before the journal tail and the probe body
-// are cut to their caps: a cut inside a known value would leave a
-// fragment this layer cannot match and no heuristic can see.
+// Layers 3 and 4 are best effort. Layer 1 runs again last, since a
+// heuristic's marker text could spell a known value. What passes all
+// four is documented in DESIGN-threat-model.md: an encoding not in the
+// list, a value under secretMinLen, a value split across two lines.
 //
-// Best effort past layer 1, and documented as such in
-// DESIGN-threat-model.md: an encoding not in the list, a value under
-// secretMinLen, a secret split across lines, and a short generated
-// token the length-aware bar still misses (about half at 20 to 22
-// characters), all pass.
-//
-// Seven rules hold across the layers and every writer of a body, and
-// the code is judged against them, not the other way round:
-//
-//  1. No safe string ever equals a known value. A safe string exempts
-//     nothing from layer 1: one equal to an env_file value is dropped
-//     in NewRedactor, whatever named it — a request, the config, a
-//     name read off disk — so provenance is never tracked, and every
-//     caller passes a plain list (redactorFor, recordRedactor).
-//  2. The final known-value pass is the last write to a body. What
-//     redactJSON adds after it cannot carry the app's bytes: the
-//     redacted_env field (a fixed name, key names filtered, and the
-//     strings the filtered body already held). The stream's spliced
-//     event, phase and http_status fields (handler.go) are constants
-//     and a phase word. The body's times and numbers are put back
-//     after it, held out of every layer (rule 7). Nothing
-//     else appends to a body after that pass. A body about several
-//     apps (GET /_motel/apps) is made of rows, and each row's summary
-//     is a body here: filtered by its own app's filter, then given
-//     the app's name, the route's own word, and put in the list,
-//     which adds its punctuation alone; a row the
-//     filter withheld is the name and the filter's sentence. The
-//     box's alerts (GET /_motel/alerts) are rows the same way: an
-//     app's alert is filtered by its app's filter, every other alert
-//     and every silence by one that knows no value, and an alert row is
-//     then given back its times, Alertmanager's and never the app's
-//     bytes (motel_alerts.go, alertRow); a row withheld keeps only
-//     motel's and Alertmanager's words from closed sets (a state, a
-//     severity, inhibited), its times, an id Alertmanager made, the
-//     filter's sentence, and its app's name when its own app's filter
-//     withheld it. So no filter is ever given two apps' values,
-//     and the outcome pairs of rule 3 are counted per row. An app's
-//     series (GET /_motel/apps/<app>/series) and its alerts are one
-//     app's bodies whose words pass its filter and whose numbers and
-//     times are put back after the last pass: the store's points, its
-//     step, the window's end and the box's own words of closed sets
-//     (the store's word, the window) (motel_series.go, filterSeries), and
-//     Alertmanager's times (filterAlerts), never the app's bytes. An
-//     app's logs (GET /_motel/apps/<app>/logs) are a body whose texts
-//     each passed the whole filter on its own, before it was cut, and
-//     whose body then passes the final pass alone (lastPass), its times
-//     held as rule 7 holds them; after it the route adds the cursor,
-//     journald's text of the box's own journal, and redacted_env
-//     (motel_logs.go, filterLogs).
-//  3. The outcome vocabulary is structural, never textual. A pair
-//     "status":"<word>", "phase":"<word>" or "name":"<word>", the
-//     word one of the deploy vocabulary (app.go), is the one place
-//     layer 1 leaves a known form standing: a form that is a bare
-//     word of the vocabulary (a value, or a URL value's password,
-//     spelled as one) is replaced everywhere but in such a pair
-//     (secretForm.outside) — and a word carries nothing of the
-//     app's. Every other form is replaced wherever it is, and a body
-//     with fewer pairs at the end than it had (a value that is part
-//     of a word was replaced inside it) is withheld (filterBody).
-//     The same word in error or detail is text like any other, and
-//     filtered.
-//  4. A version read off disk passes validVersion before it is used
-//     as one — launched, listed, offered, recorded: state.json's
-//     current_version (ensureRunning), a release directory's name
-//     (listReleases), a record's (recordHead). Release GC enumerates
-//     directory entries by name; that is not a use of a version.
-//  5. The app's own name stands where a JSON body names the app by
-//     it. An env_file value that is the name as written (DB_NAME=<app>,
-//     a common setup) is left in the pair "app":"<name>" (holdOwnName),
-//     as rule 3 leaves an outcome word in its pair: the name is in the
-//     request's path and in the config, and a status whose app is a
-//     marker names no app. In a JSON body alone, where a quote inside a
-//     string is escaped and the pair can only be the body's own field;
-//     plain text (Redact) is filtered as if there were no rule. Only
-//     that value: an encoding of a value, or a URL's password, that
-//     happens to equal the name is replaced in the pair too. The value
-//     is replaced everywhere else, as any is: in text, inside a path,
-//     under another key. A value that holds the name inside it is a
-//     longer form, replaced whole before the name is looked at
-//     (longest first). The app list's rows name their app outside the
-//     filter (motel_routes.go).
-//  6. What a request itself sent is never run past the app's values
-//     when the body holds nothing else of the app's. Layer 1 replaces
-//     a value wherever a body holds it and names the key, so a body
-//     that echoes the caller's text through the app's filter answers
-//     a question the caller may not ask: "is this one of the app's
-//     values?", for the value as written, inside a longer string, in
-//     base64 or hex, or a URL value's password alone. A caller who may
-//     only read could try values until a marker came back. So a body
-//     made only of the handler's own words and this request's text is
-//     written through a filter that knows no value (NewRedactor with
-//     none; the shape and entropy layers still run, and a version
-//     asked for is a safe string, as in the status). Today those are
-//     the answers of a read that reads nothing of the app's, each of
-//     which a person with the viewer role can ask for: the 404 of
-//     GET /<app>?deploy=<version> for a version with no record, and
-//     the 422 of a query that does not parse (handler.go). A body
-//     that only might hold something of the app's does not qualify:
-//     the 500 of that read carried the system's error, which named the
-//     version asked for but also the app's directory, and an env_file
-//     value may equal that. With the error in it the 500 was no such
-//     body; it now says one fixed sentence, which is, and the journal
-//     has the error.
-//     The exemption is the body's, never the string's: a string is not
-//     exempt because a request named it (rule 1), and a body that
-//     holds one byte the app wrote, or text an earlier request stored
-//     (a deployed version, in a status or a record), passes the app's
-//     filter whole. A deploy's refusals that echo its version or URL
-//     (a version that exists, a rollback with no release) still pass
-//     the app's filter: only a deploy token reaches them, and it can
-//     read the app's environment by deploying
-//     (DESIGN-threat-model.md).
-//  7. A time or a number is structural, never text. A JSON body's
-//     time under one of heldTimeKeys, shaped as encoding/json writes a
-//     time.Time (heldTimeRe), and every number of a JSON body (a token
-//     outside every string), pass no layer. A time is the box's clock
-//     (a deploy's and its phases', the watchdog's last restart, the
-//     metrics store's step, a record's as written, rule 1 of
-//     deploys.go). A number is a figure encoding/json wrote from a Go
-//     number, never the app's bytes, which are always in a string: the
-//     box's own (a pid, a phase's seconds, the watchdog's counts), the
-//     operator's (the caps), the store's (the metrics summary, which the
-//     app's behaviour drives and its bytes cannot write), the
-//     deployer's (an artifact's size and entries) or the app's answer's
-//     (a probe's status code, three digits). An env_file value that is
-//     a piece of one (a date, API_VERSION=2026-11-19; a clock time;
-//     digits of a time's fraction; the app's own memory limit in bytes,
-//     equal to its memory_max) replaced there left a time no client
-//     reads, or a body that is no JSON, which was withheld whole, the
-//     key named. Held out (holdOut), the rest filtered, then put back
-//     after the final pass (putBack); the value it equals is replaced
-//     everywhere else, digits in a string included, and a body that
-//     holds it only in a time or a number reports no key. The filter so
-//     sees the body with placeholders where the tokens stood, and a
-//     value made of a token's end and the JSON after it (or the JSON
-//     before it and its start) could stand across the token's edge in
-//     the bytes it returns: putBack looks for every known form across
-//     each edge, and a body with one, or whose placeholders the filter
-//     changed, or that holds a placeholder's shape already (a string
-//     that is a NUL, a ; and digits), goes through whole as before,
-//     times, numbers and all (TestHeldTimesFallBack,
-//     TestHeldNumbersFallBack); a value across a number's edge so sends
-//     the body's times through the layers too. After the filter, the
-//     hoist's sort of the top level (withField) and the stream's spliced
-//     fields can set a held token beside other JSON, and a value made of
-//     a token's end and that JSON stands in the bytes written: it is the
-//     body's own text (and for a body whose number held a value, which
-//     was withheld before, takes a second value). A token whole names
-//     no key, where a marker inside a time said the value was a piece
-//     of it and a body withheld for a number said the key's value was
-//     digits of one. Figures are motel's own data, never hidden for the
-//     value they hold (but in the fallbacks above, which send a body
-//     through whole): a time or a number keeps its hold beside a marker
-//     of the same value in the same body (the app printed its memory
-//     limit, replaced by this filter or by an earlier pass, a failed
-//     deploy's detail) or in another answer, and a reader may set the
-//     two side by side (TestHeldNumbersBesideTheirMarker,
-//     TestFailedDeployNumberBesideItsMarker). The owner's decision of
-//     2026-11-21, an accepted row (DESIGN-liveswap.md): nothing ties the
-//     marker to the figure, a body withheld for it named the key and so
-//     said as much, and a status withheld over a figure is the failure
-//     this rule fixed. Rule 7 is the hold of a filter that knows a
-//     value: one that knows none replaces nothing a token could hold,
-//     and its tokens pass its later layers as before.
+// The box webhook (box/validate.go, box/diff.go) and notify
+// (notify/engine.go) build filters of their own with NewRedactor and
+// call Redact on a text where it enters: doors of theirs.
+
 const (
 	secretMinLen  = 8
 	entropyMinLen = 20
@@ -233,10 +76,9 @@ const (
 	entropyHex    = 3.0
 )
 
-// Redactor is the filter: the layers above, over one app's known
-// values and safe strings. Exported, with NewRedactor, Redact and
-// RespondJSON, for the box webhook, which has bodies of its own to
-// send; a nil *Redactor is layers 3 and 4 alone.
+// Redactor is the filter: the layers above, over one set of known
+// values and safe strings. Exported, with NewRedactor and Redact, for
+// the box webhook and notify; a nil *Redactor is layers 3 and 4 alone.
 type Redactor struct {
 	// secrets holds every form of every known value, longest first so
 	// a value that contains another is replaced whole.
@@ -246,52 +88,23 @@ type Redactor struct {
 	// is those strings and every layer-4 token inside them: exempt
 	// from the entropy heuristic.
 	safeExact, safeTokens map[string]bool
-	// withhold, when set, is why no body may be sent: the app's
-	// env_file could not be read, so its values are unknown to the
-	// filter. Fail closed rather than filter with the heuristics alone.
-	withhold string
 }
 
 // secretForm is one text to replace, the keys whose values it belongs
 // to (two keys can hold the same value), and the marker that replaces
-// it — chosen so that no form of those keys' values is a substring of
-// it, or the replacement would put the value back.
+// it, chosen so that no form of any value is a substring of it.
 type secretForm struct {
-	text string
-	// outside, for a text that is a bare word of the outcome
-	// vocabulary, matches the text everywhere but where it stands as
-	// an outcome (rule 3): the word where it is a pair's, or on its
-	// own. Nil for every other form.
-	outside *regexp.Regexp
-	// inBody is outside for a JSON body when the text is the app's own
-	// name as an env_file value holds it (rule 5): it matches the text
-	// everywhere but its "app" pair, and an outcome word's pairs too.
-	// Used in a body alone (redactJSON); text is filtered by outside.
-	inBody *regexp.Regexp
-	// literal: some key's value is this text as written, which rule 5
-	// asks of the name; a form derived from a value (an encoding, a
-	// URL's password) is not.
-	literal bool
-	keys    []string
-	marker  string
+	text   string
+	keys   []string
+	marker string
 }
 
 // NewRedactor takes env_file KEY=VALUE pairs and the strings that must
-// survive the heuristics. A safe string equal to a value is dropped
-// (rule 1): whoever named it, it exempts nothing. A nil *Redactor is
-// usable: layers 3 and 4 only.
-//
-// The box webhook builds its own: the pairs are the caller's choice,
-// as an app's are liveswap's — an app's filter is primed with
-// env_file alone, and SOCKET, HOME and PATH stay readable because a
-// diagnostic needs its paths — so a caller priming with a process
-// environment (the box, whose `caddy validate` quotes expanded values
-// in its errors) will want the same for the variables that are paths.
-// The safe strings are the ids a body names, which the entropy layer
-// would otherwise mask: a 40-hex commit sha, a 32-hex result id, as
-// liveswap lists an app's versions. Build one per set of safe strings
-// and keep it: every form of every value is computed here, and a
-// running process's environment does not change.
+// survive the heuristics. A safe string equal to a value is dropped:
+// it exempts nothing. A nil *Redactor is usable: layers 3 and 4 only.
+// Build one per set of safe strings and keep it where the values do
+// not change (the box webhook's): every form of every value is
+// computed here.
 func NewRedactor(envFile []string, safe []string) *Redactor {
 	known := make(map[string]bool, len(envFile))
 	for _, kv := range envFile {
@@ -330,13 +143,10 @@ func NewRedactor(envFile []string, safe []string) *Redactor {
 			}
 			sf := byText[form]
 			if sf == nil {
-				sf = &secretForm{text: form, outside: outcomeOutside[form], literal: true}
+				sf = &secretForm{text: form}
 				byText[form] = sf
 				r.secrets = append(r.secrets, sf)
 			}
-			// Literal while every key it came from holds it as written:
-			// shared with another value's encoding, it is that too.
-			sf.literal = sf.literal && form == value
 			if !contains(sf.keys, key) {
 				sf.keys = append(sf.keys, key)
 			}
@@ -528,13 +338,8 @@ var basicCredentialRe = regexp.MustCompile(`(?i)\bbasic[ \t]+[A-Za-z0-9+/]{4,}={
 var entropyTokenRe = regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`)
 
 // replaceKnown is layer 1 on its own: every known form replaced by its
-// marker, and the keys found added to seen. A form that is a bare
-// word of the outcome vocabulary is replaced everywhere but where it
-// stands as an outcome (rule 3), and in a JSON body (inBody) the
-// app's own name everywhere but its "app" pair (rule 5). Markers
-// contain no form, so a second pass over its own output changes
-// nothing.
-func (r *Redactor) replaceKnown(s string, seen map[string]bool, inBody bool) string {
+// marker, longest first, and the keys found added to seen.
+func (r *Redactor) replaceKnown(s string, seen map[string]bool) string {
 	if r == nil {
 		return s
 	}
@@ -542,58 +347,12 @@ func (r *Redactor) replaceKnown(s string, seen map[string]bool, inBody bool) str
 		if !strings.Contains(s, sec.text) {
 			continue
 		}
-		found := true
-		pattern := sec.outside
-		if inBody && sec.inBody != nil {
-			pattern = sec.inBody
-		}
-		if pattern == nil {
-			s = strings.ReplaceAll(s, sec.text, sec.marker)
-		} else {
-			found = false
-			s = pattern.ReplaceAllStringFunc(s, func(m string) string {
-				if m[0] == '"' { // the pair, left as it is
-					return m
-				}
-				found = true
-				return sec.marker
-			})
-		}
-		if !found {
-			continue
-		}
+		s = strings.ReplaceAll(s, sec.text, sec.marker)
 		for _, k := range sec.keys {
 			seen[k] = true
 		}
 	}
 	return s
-}
-
-// nestedStrings is every string in an array under name, anywhere in
-// the decoded JSON v, appended to out: the strings, and only those,
-// since the field is key names.
-func nestedStrings(v any, name string, out []string) []string {
-	switch t := v.(type) {
-	case map[string]any:
-		for k, child := range t {
-			if k != name {
-				out = nestedStrings(child, name, out)
-				continue
-			}
-			if items, ok := child.([]any); ok {
-				for _, it := range items {
-					if s, ok := it.(string); ok {
-						out = append(out, s)
-					}
-				}
-			}
-		}
-	case []any:
-		for _, child := range t {
-			out = nestedStrings(child, name, out)
-		}
-	}
-	return out
 }
 
 // union is both lists' names, each once, sorted.
@@ -617,30 +376,200 @@ func reportedKeys(seen map[string]bool) []string {
 	return keys
 }
 
-// redact filters s and reports which env keys' values it found. Layer
-// 1 runs first and again last: the heuristic layers' own marker text
-// ("[redacted:private-key]") can contain a known value, and only a
-// pass over the finished text guarantees none remains. Rule 3 holds
-// here as in a body: a value that is a word of the outcome vocabulary
-// stands where the text spells it as an outcome pair. Every body goes
-// through redactJSON; this is the text form, for tests and for what
-// the box webhook writes somewhere other than a response body.
+// Redact filters a text and reports which env keys' values it found.
+// Layer 1 runs first and again last: the heuristic layers' own marker
+// text ("[redacted:private-key]") can contain a known value, and only
+// a pass over the finished text guarantees none remains.
 func (r *Redactor) Redact(s string) (string, []string) {
 	seen := map[string]bool{}
-	s = r.filter(s, seen, false)
-	s = r.replaceKnown(s, seen, false)
+	s = r.filter(s, seen)
+	s = r.replaceKnown(s, seen)
 	return s, reportedKeys(seen)
 }
 
 // filter is layers 1 to 4 in order, with the safe strings held out of
 // the heuristic layers: a version shaped like a provider token, or a
 // path with a generated-looking segment, comes back as it went in.
-// inBody is whether s is a JSON body (replaceKnown).
-func (r *Redactor) filter(s string, seen map[string]bool, inBody bool) string {
-	s = r.replaceKnown(s, seen, inBody)
+func (r *Redactor) filter(s string, seen map[string]bool) string {
+	s = r.replaceKnown(s, seen)
 	s, restore := r.protectSafe(s)
 	s = r.heuristics(s)
 	return restore(s)
+}
+
+// errText is the error net, and with wire.OwnText the only way a
+// string that is not a constant becomes a wire.ErrText: s is an
+// error's text, or a sentence of motel's with the operating system's or
+// a library's words in it, on its way to a field of an answer, a
+// deploy's record or the watchdog's last_failure. It passes the app's
+// door as text, always: an error can quote what the app answered a
+// probe with, and can name a path the app made, whichever step failed.
+// The keys the door replaced come back for redacted_env.
+//
+// read is door's: whether the env_file may be read now (not for a
+// deploy whose own launch rendered it). names are names the heuristics
+// leave alone (the version, the digests the error names).
+func (ma *managedApp) errText(s string, read bool, names ...string) (wire.ErrText, []string) {
+	if s == "" {
+		return "", nil
+	}
+	d := ma.door(read, names...)
+	return d.errText(s), d.keys()
+}
+
+// errText is the net for a place that holds the app's door already.
+func (d *door) errText(s string) wire.ErrText { return wire.ErrText(d.quoted(s)) }
+
+// door is an app's filter at a place the app's bytes enter: the app's
+// known values, the names its text may hold, and the keys found so far,
+// for the answer's redacted_env.
+type door struct {
+	r    *Redactor
+	seen map[string]bool
+	// unread, when set, is why the app's values are unknown to the
+	// filter (its env_file could not be read after a restart or a
+	// reload): the app's text is withheld, each text alone, and the
+	// rest of the answer is sent.
+	unread string
+}
+
+// text is s, which the app wrote, as an answer may carry it.
+func (d *door) text(s string) wire.AppText { return wire.AppText(d.mixed(s)) }
+
+// excerpt is text cut to max runes, filtered whole before the cut: a
+// cut that fell inside a value would leave a fragment no layer matches.
+func (d *door) excerpt(s string, max int) wire.AppText {
+	return wire.AppText(deploytrust.CutRunes(d.mixed(s), max))
+}
+
+// logLine is one journal line's text through the door, at most
+// logsLineMax bytes of it sent, with what is read of a long line and
+// what is sent of it as the logs read has always had them (#635). The
+// filter sees the text cut to logsLineMax and a margin, the longest
+// form it knows or logsCutMargin if more, so every value or credential
+// that begins inside what is sent is whole when it is looked for (A);
+// a line is at most 48 KiB as journald stores it, so the filter reads
+// at most 12 KiB of one. Where that cut fell, a value or token it split
+// is a piece no layer can know; it begins in the margin, past
+// logsLineMax, unless it is a token longer than the margin. So the
+// filter also sees the text cut at logsLineMax (B), and what is kept is
+// the start A and B have in common, less a run of layer 4's alphabet at
+// its end. A piece the first cut split is past B's input, so not in it;
+// one the second cut split is whole in A and replaced there, so A and B
+// part at it; a token longer than the margin, raw in both, is the run
+// that goes. Then what is left is made valid UTF-8 and cut to
+// logsLineMax with "…" (a marker or plain text may be cut there,
+// nothing a layer would have replaced). The keys A replaced are the
+// door's. A door whose env_file could not be read sends its withheld
+// sentence for the line, and an empty line empty.
+func (d *door) logLine(text string) wire.AppText {
+	if d.unread != "" {
+		return wire.AppText(d.mixed(text))
+	}
+	longest := logsCutMargin
+	if len(d.r.secrets) > 0 {
+		longest = max(longest, len(d.r.secrets[0].text)) // longest first
+	}
+	pre := logsLineMax + longest
+	cut := len(text) > pre
+	if cut {
+		text = cutText(text, pre)
+	}
+	// journald ends a stdout line at a NUL, so none is in one; a NUL is
+	// what the safe list's placeholders are made of (protectSafe).
+	text = strings.ReplaceAll(text, "\x00", "\uFFFD")
+	out := d.mixed(text)
+	if cut {
+		b, _ := d.r.Redact(cutText(text, logsLineMax))
+		out = strings.TrimRight(commonStart(out, b), tokenAlphabet)
+	}
+	// The app's bytes that are not UTF-8, each run one U+FFFD, only now:
+	// the filter saw them as written. Before the last cut, so the text
+	// sent stays within logsLineMax.
+	out = strings.ToValidUTF8(out, "\uFFFD")
+	if cut || len(out) > logsLineMax {
+		out = cutText(out, logsLineMax-len("…")) + "…"
+	}
+	return wire.AppText(out)
+}
+
+// lines is text over a journal tail: filtered as one text, so that a
+// rule that spans lines (a PEM block) sees them together, and a line
+// is the unit a reader sees again after.
+func (d *door) lines(lines []string) []wire.AppText {
+	if len(lines) == 0 {
+		return nil
+	}
+	parts := strings.Split(d.mixed(strings.Join(lines, "\n")), "\n")
+	out := make([]wire.AppText, len(parts))
+	for i, p := range parts {
+		out[i] = wire.AppText(p)
+	}
+	return out
+}
+
+// again is det, a failed deploy's detail an older moteld stored, with
+// its app text and its error text through the door now (servedRecord,
+// deploys.go). Its exit is moteld's own words and passes as it is.
+func (d *door) again(det deployDetail) deployDetail {
+	tail := make([]string, len(det.LogTail))
+	for i, l := range det.LogTail {
+		tail[i] = string(l)
+	}
+	det.LogTail = d.lines(tail)
+	det.LogTailError = d.errText(string(det.LogTailError))
+	if det.Probe != nil {
+		p := *det.Probe
+		p.Location, p.Body = d.text(string(p.Location)), d.text(string(p.Body))
+		det.Probe = &p
+	}
+	return det
+}
+
+// mixed is s through the whole filter: layers 1 to 4, then layer 1
+// again. s is the app's text, or a string of motel's that may quote the
+// app's bytes or name a path the app made (an error); motel's own words
+// in such a string meet the app's values too.
+func (d *door) mixed(s string) string {
+	if s == "" {
+		return ""
+	}
+	if d.unread != "" {
+		return "[withheld: " + d.unread + "]"
+	}
+	return d.r.replaceKnown(d.r.filter(s, d.seen), d.seen)
+}
+
+// goQuotedRe is a run Go's %q wrote: a quote, escapes, a quote.
+var goQuotedRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+
+// quoted is mixed for a text in which Go may have quoted the app's
+// bytes (the HTTP client's "malformed HTTP response %q"): each quoted
+// run that holds an escape is also filtered as the bytes it quotes, the
+// app's text as the app sent it, and written quoted again when the
+// filter changed them. Without it a value the app sent JSON-escaped
+// arrives escaped twice, a form layer 1 does not list.
+func (d *door) quoted(s string) string {
+	s = goQuotedRe.ReplaceAllStringFunc(s, func(q string) string {
+		raw, err := strconv.Unquote(q)
+		if err != nil || raw == q[1:len(q)-1] {
+			return q // nothing escaped: the pass below sees the same bytes
+		}
+		if out := d.mixed(raw); out != raw {
+			return strconv.Quote(out)
+		}
+		return q
+	})
+	return d.mixed(s)
+}
+
+// keys is the env keys whose values the door replaced, sorted; nil
+// when none.
+func (d *door) keys() []string {
+	if len(d.seen) == 0 {
+		return nil
+	}
+	return reportedKeys(d.seen)
 }
 
 // safeSpanMinLen is the shortest safe string protectSafe holds out of
@@ -722,406 +651,6 @@ func (r *Redactor) maskGenerated(tok string) string {
 		return "[masked, " + strconv.Itoa(len(tok)) + " chars]"
 	}
 	return tok
-}
-
-// holdOwnName is rule 5: when an env_file value is the app's name as
-// written, a JSON body's pair "app":"<name>" is left standing, and the
-// value is replaced everywhere else. In a JSON body only: there a
-// quote inside a string is escaped, so the pair can only be the body's
-// own field, never text an app wrote; plain text (Redact) has no such
-// guarantee and is filtered as if there were no rule. Only the value
-// itself: an encoding of a value, or a URL's password, equal to the
-// name is replaced as before. Called by the app's filter (redactorFor)
-// with its name.
-func (r *Redactor) holdOwnName(name string) {
-	if r == nil || name == "" {
-		return
-	}
-	q := regexp.QuoteMeta(name)
-	pairs := `"app":"` + q + `"`
-	if outcomeOutside[name] != nil {
-		pairs += `|"(?:status|phase|name)":"` + q + `"`
-	}
-	for _, sf := range r.secrets {
-		if sf.text == name && sf.literal {
-			sf.inBody = regexp.MustCompile(pairs + `|` + q)
-		}
-	}
-}
-
-// redactJSON filters a marshalled JSON body and, when a known value
-// was found, adds a `redacted_env` field naming the keys. Whatever is
-// finally sent — the filtered body or a fallback — gets a last
-// layer-1 pass, so no known form is in the bytes written, and the
-// result is valid JSON.
-//
-// The report field is added after that pass, its name verbatim and
-// each key name filtered on its own: the name is fixed public text in
-// every such response, and a value equal to it is not learned from
-// the response, whereas a field renamed by the filter would break the
-// one thing the field is for. That fixed name, and a body's times and
-// numbers (rule 7), are the texts the strict property (FuzzRedactor) does not
-// cover.
-//
-// Layer 1 is a plain substring replacement, so a value made of JSON's
-// own punctuation could match across a string's delimiters and leave
-// the body unparsable; that body is withheld rather than sent, with
-// the keys still reported. A filter whose env_file could not be read
-// withholds every body: the heuristics alone are not the promise. A
-// body that is still not JSON at the end — a value equal to the
-// response's own punctuation, twice over — becomes the one body that
-// can contain nothing: a marker under 8 characters.
-func (r *Redactor) redactJSON(raw []byte) string {
-	seen := map[string]bool{}
-	var body string
-	if r != nil && r.withhold != "" {
-		// Marshalled, not concatenated: the reason carries a path. And
-		// filtered like any body: the path, or the parse error quoting
-		// a line of the file, can carry a token-shaped string.
-		b, err := json.Marshal(wire.Error{Error: "response withheld: " + r.withhold})
-		if err != nil {
-			return `{"error":"[#0]"}`
-		}
-		body = r.filter(string(b), seen, true)
-		if !json.Valid([]byte(body)) {
-			body = `{"error":"response withheld: the app's env_file could not be read"}`
-		}
-		body = r.replaceKnown(body, seen, true)
-	} else {
-		body = r.filterBody(string(raw), seen)
-	}
-	// The hoist runs when the filter found a value, and when the body
-	// carries a redacted_env of its own below the top level — a
-	// deployResult's, whose values the detail replaced before any
-	// filter ran, so that the filter finds nothing here (app.go,
-	// failureDetail).
-	if len(seen) > 0 || strings.Contains(body, `"redacted_env"`) {
-		names := reportedKeys(seen)
-		for i, n := range names {
-			names[i] = r.replaceKnown(n, seen, false) // a key name, not a body
-		}
-		body = withField(body, "redacted_env", names)
-	}
-	if !json.Valid([]byte(body)) {
-		return `{"error":"[#0]"}`
-	}
-	return body
-}
-
-// filterBody is the layers over a body as marshalled, then the final
-// pass; what it returns is the bytes written, or a withheld body when
-// a known value overlapped the body's structure or one of its
-// outcomes. The body's times and numbers pass none of it (rule 7):
-// they are held out and put back after the final pass, unless a value
-// of the app's stands across one's edge in the bytes that would be
-// sent, or the filter changed what held them; then the body goes
-// through whole, times, numbers and all.
-func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
-	if r != nil && len(r.secrets) > 0 {
-		if body, held := holdOut(raw); len(held) > 0 {
-			found := map[string]bool{}
-			out := r.filterWhole(body, found)
-			if out, ok := r.putBack(out, held); ok {
-				for k := range found {
-					seen[k] = true
-				}
-				return out
-			}
-		}
-	}
-	return r.filterWhole(raw, seen)
-}
-
-// lastPass is the final known-value pass alone, for a body whose every
-// string of the app's bytes has passed the whole filter already, one by
-// one (Redact): an app's logs, whose lines are filtered each before it
-// is cut (motel_logs.go). Every form of every known value is replaced
-// once more, so none the body's own escaping made (a value with a quote
-// in it, which a line the app wrote JSON-escaped already holds as the
-// form layer 1 replaced) is in the bytes written; its times are held
-// out and put back as rule 7 holds them, and the keys it found are
-// added to seen. false, for the caller to send the body whole through
-// redactJSON, when the filter withholds every body, when a time's hold
-// does not put back (a value across a time's edge), or when the body is
-// no JSON after the pass (a value of JSON's own punctuation). A body
-// that is JSON of another shape after it (two strings made one) is its
-// caller's to find. It runs no heuristic: what it is given has been
-// through them, and so is never a body of words no layer saw.
-func (r *Redactor) lastPass(raw []byte, seen map[string]bool) (string, bool) {
-	if r != nil && r.withhold != "" {
-		return "", false
-	}
-	if r == nil || len(r.secrets) == 0 {
-		return string(raw), json.Valid(raw)
-	}
-	body, held := holdOut(string(raw))
-	found := map[string]bool{}
-	out := r.replaceKnown(body, found, true)
-	if len(held) > 0 {
-		var ok bool
-		if out, ok = r.putBack(out, held); !ok {
-			return "", false
-		}
-	}
-	if !json.Valid([]byte(out)) {
-		return "", false
-	}
-	for k := range found {
-		seen[k] = true
-	}
-	return out, true
-}
-
-// filterWhole is filterBody over every byte of the body.
-func (r *Redactor) filterWhole(raw string, seen map[string]bool) string {
-	outcomes := len(outcomePairRe.FindAllStringIndex(raw, -1))
-	body := r.filter(raw, seen, true)
-	if !json.Valid([]byte(body)) {
-		return r.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, seen, true)
-	}
-	body = r.replaceKnown(body, seen, true)
-	// Every outcome the body had is still a word (rule 3), or the body
-	// is withheld: a value that is part of a word ("ucceeded") was
-	// replaced inside it, and a body whose status is not a word of the
-	// vocabulary is not served. No layer writes a quote it did not
-	// find, and none moves one next to an outcome key, so nothing can
-	// make a pair; the count can only fall.
-	if len(outcomePairRe.FindAllStringIndex(body, -1)) < outcomes {
-		return r.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own outcome"}`, seen, true)
-	}
-	return body
-}
-
-// heldTimeKeys are the keys a body passing an app's filter holds a
-// time under (wire's Status, Failure, DeployResult, PhaseEvent and the
-// apps list's rows; TestHeldTimeKeysAreTheWireTimes), each as it stands
-// quoted in the body. The alerts bodies keep their times out themselves
-// (filterAlerts, alertRow).
-var heldTimeKeys = map[string]bool{`"at"`: true, `"started_at"`: true, `"finished_at"`: true, `"last_restart_at"`: true}
-
-// heldTimeRe is a time as encoding/json writes a time.Time, quoted:
-// RFC 3339 with up to nine digits of the second.
-var heldTimeRe = regexp.MustCompile(`^"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})"$`)
-
-// heldMark opens the placeholder a held time or number stands as while
-// the body is filtered: a string that is a NUL, escaped, a ; and then
-// the held token's number ("\u0000;3"), which placeholderRe matches.
-// The ; parts the NUL's zeros from the number, so that no value of
-// digits alone is a piece of a placeholder below ten million tokens,
-// and ends the value a credential assignment's rule (layer 3) would
-// take after a key such as "secret_…", which a placeholder then never
-// fills. No layer makes such a string (a marker is key names in
-// brackets or angles), and a body that holds one already, an app's line
-// that is a NUL, a ; and digits, has nothing held. Placeholders are
-// found as whole strings of the JSON, so an app's text that only holds
-// the bytes (a binary probe body's quote before a NUL, a literal
-// \u0000) is no placeholder.
-const heldMark = `"\u0000;`
-
-var placeholderRe = regexp.MustCompile(`^"\\u0000;[0-9]+"$`)
-
-// eachToken calls str with the bounds of each string of the JSON text s,
-// in order, and whether it is a key, and num with the bounds of each
-// number; false when a string does not end. Outside a string, a digit
-// or a minus sign can only begin a number (true, false and null hold
-// none), which runs over the characters a number is written in.
-func eachToken(s string, str func(i, j int, key bool), num func(i, j int)) bool {
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c == '"':
-			j := i + 1
-			for j < len(s) && s[j] != '"' {
-				if s[j] == '\\' {
-					j++
-				}
-				j++
-			}
-			if j >= len(s) {
-				return false
-			}
-			str(i, j+1, strings.HasPrefix(strings.TrimLeft(s[j+1:], " \t\n\r"), ":"))
-			i = j
-		case c == '-' || c >= '0' && c <= '9':
-			j := i + 1
-			for j < len(s) && strings.IndexByte("0123456789+-.eE", s[j]) >= 0 {
-				j++
-			}
-			num(i, j)
-			i = j - 1
-		}
-	}
-	return true
-}
-
-// heldToken is a time or a number held out of the layers: its text as
-// the body had it, and the part of it no form of a known value may
-// cross the edge of (a time's text inside its quotes, a number whole).
-type heldToken struct {
-	text   string
-	lo, hi int
-}
-
-// holdOut is raw with each number, and each time under one of
-// heldTimeKeys as that key's value, swapped for its placeholder, and the
-// tokens, in the order they stood. raw is a JSON text (a marshalled
-// body, or a record as written); one that does not end its strings, or
-// that holds a string shaped as a placeholder, has nothing held.
-func holdOut(raw string) (string, []heldToken) {
-	var b strings.Builder
-	var held []heldToken
-	var key string
-	at, clash := 0, false
-	hold := func(i, j, lo, hi int) {
-		b.WriteString(raw[at:i])
-		b.WriteString(heldMark + strconv.Itoa(len(held)) + `"`)
-		held = append(held, heldToken{raw[i:j], lo, hi})
-		at = j
-	}
-	ended := eachToken(raw, func(i, j int, isKey bool) {
-		s := raw[i:j]
-		switch {
-		case placeholderRe.MatchString(s):
-			clash = true
-		case isKey:
-			key = s
-		case heldTimeKeys[key] && heldTimeRe.MatchString(s) && strings.HasSuffix(strings.TrimRight(raw[:i], " \t\n\r"), ":"):
-			hold(i, j, 1, j-i-1)
-		}
-	}, func(i, j int) { hold(i, j, 0, j-i) })
-	if !ended || clash || len(held) == 0 {
-		return raw, nil
-	}
-	b.WriteString(raw[at:])
-	return b.String(), held
-}
-
-// putBack is out, the filter's bytes of a body holdOut held tokens out
-// of, with each placeholder replaced by its token; false when the
-// placeholders are not each where the filter found it, in order (one
-// gone, or the body withheld), or when a form of a known value stands
-// in the bytes it makes across a held token's edge: one made of a
-// token's last characters and the JSON after them, or the JSON before
-// it and its first, which the filter never saw side by side, or one
-// that holds a time's quote. A form wholly inside a time's text or a
-// number is the token's own, and stays (rule 7), the same value's
-// marker elsewhere in the body or not. These are the bytes the filter
-// returns: what redactJSON's hoist and the stream's splices do after
-// is rule 2's.
-func (r *Redactor) putBack(out string, held []heldToken) (string, bool) {
-	var b strings.Builder
-	type span struct{ lo, hi int }
-	spans := make([]span, 0, len(held))
-	n, at, misplaced := 0, 0, false
-	ended := eachToken(out, func(i, j int, _ bool) {
-		if !placeholderRe.MatchString(out[i:j]) {
-			return
-		}
-		if misplaced || n == len(held) || out[i:j] != heldMark+strconv.Itoa(n)+`"` {
-			misplaced = true
-			return
-		}
-		b.WriteString(out[at:i])
-		spans = append(spans, span{b.Len() + held[n].lo, b.Len() + held[n].hi})
-		b.WriteString(held[n].text)
-		at, n = j, n+1
-	}, func(int, int) {})
-	if !ended || misplaced || n != len(held) {
-		return "", false
-	}
-	b.WriteString(out[at:])
-	s := b.String()
-	for _, sec := range r.secrets {
-		// The spans are in order, as the occurrences are found: the
-		// first span that ends past an occurrence's start is the only
-		// one it can begin in or before, and the spans it can reach
-		// follow it.
-		first := 0
-		for from := 0; ; {
-			i := strings.Index(s[from:], sec.text)
-			if i < 0 {
-				break
-			}
-			start, end := from+i, from+i+len(sec.text)
-			for first < len(spans) && spans[first].hi <= start {
-				first++
-			}
-			for _, sp := range spans[first:] {
-				if sp.lo >= end {
-					break
-				}
-				if start < sp.lo || end > sp.hi {
-					return "", false
-				}
-			}
-			from = start + 1
-		}
-	}
-	return s, true
-}
-
-// outcomePairRe is a status, phase or phase name standing as one: a
-// quoted key, a colon, a quoted word of the vocabulary.
-var outcomePairRe = regexp.MustCompile(`"(?:status|phase|name)":"(?:` + outcomeAlternation() + `)"`)
-
-// outcomeOutside is, per word of the vocabulary, the pattern that
-// matches it everywhere but where it stands as an outcome
-// (secretForm.outside): compiled once here, from the vocabulary's own
-// constants, never from a value.
-var outcomeOutside = func() map[string]*regexp.Regexp {
-	m := make(map[string]*regexp.Regexp, len(outcomeStatuses)+len(outcomePhases))
-	for _, w := range strings.Split(outcomeAlternation(), "|") {
-		m[w] = regexp.MustCompile(`"(?:status|phase|name)":"` + w + `"|` + w)
-	}
-	return m
-}()
-
-// outcomeAlternation is the vocabulary as a pattern.
-func outcomeAlternation() string {
-	words := make([]string, 0, len(outcomeStatuses)+len(outcomePhases))
-	for w := range outcomeStatuses {
-		words = append(words, regexp.QuoteMeta(w))
-	}
-	for w := range outcomePhases {
-		words = append(words, regexp.QuoteMeta(w))
-	}
-	sort.Strings(words)
-	return strings.Join(words, "|")
-}
-
-// withField sets a string-array field on a JSON object body, merged
-// with every array the body already holds under that name, at its top
-// level or below it. The body is the filter's output: an array there —
-// a stored record's own redacted_env, read back, or a deployResult's
-// (RedactedEnv, the keys its detail's early replacement found) nested
-// in a status — has been through every layer as body text, so its
-// entries are kept, never replaced, and nothing that did not pass the
-// filter is added; hoisting them keeps the body's own field the one
-// place a reader looks. The final pass runs before this (rule 2). The
-// object is re-marshalled, so its top-level keys come out sorted; its
-// values are carried as raw JSON, so a nested object keeps its keys'
-// order. Anything but an object is returned as it is.
-func withField(body, name string, values []string) string {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(body), &obj); err != nil || obj == nil {
-		return body
-	}
-	var tree any
-	_ = json.Unmarshal([]byte(body), &tree) // obj parsed, so this does too
-	had := nestedStrings(tree, name, nil)
-	all := union(values, had)
-	if len(all) == 0 {
-		return body // the name was a string's text, not a field: no empty field is added
-	}
-	v, err := json.Marshal(all)
-	if err != nil {
-		return body
-	}
-	obj[name] = v
-	out, err := json.Marshal(obj)
-	if err != nil {
-		return body
-	}
-	return string(out)
 }
 
 // looksGenerated is layer 4's test. Hex needs a digit and clears

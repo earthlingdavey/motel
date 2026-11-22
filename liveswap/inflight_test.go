@@ -315,20 +315,20 @@ func TestDeployingUnderConcurrentReads(t *testing.T) {
 	}
 }
 
-// TestDeployingFiltered: deploying passes the app's filter like every
-// field of the status: a version or deployer holding an env_file value
-// comes out as its marker, and a version that looks generated (a git
-// SHA) is a name the filter lets through, as it does the versions the
-// status already names.
-func TestDeployingFiltered(t *testing.T) {
+// TestDeployingAsTheDeployerNamedIt: deploying is moteld's own data and
+// the deployer's text, which no filter changes: a version or a deployer
+// equal to an env_file value, or a version that looks generated (a git
+// SHA), is sent as named. An older moteld replaced the first with its
+// marker.
+func TestDeployingAsTheDeployerNamedIt(t *testing.T) {
 	h, rig := newTestHandler(t)
-	const secret = "s3cretvalue-41d07a"
+	const value = "s3cretvalue-41d07a"
 	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
-	must(t, os.WriteFile(rig.spec.envFile, []byte("SECRET="+secret+"\n"), 0o600))
+	must(t, os.WriteFile(rig.spec.envFile, []byte("SECRET="+value+"\n"), 0o600))
 	sha := "a41c09e2b7d1f3e5c7a9b1d3f5e7c9a1b3d5f7e9"
 	held, release := rig.holdFetch(t)
 	for _, tc := range []struct{ version, by, want string }{
-		{secret, "local:" + secret, `"deploying":{"version":"[redacted:SECRET]","deployed_by":"local:[redacted:SECRET]",`},
+		{value, "local:" + value, `"deploying":{"version":"` + value + `","deployed_by":"local:` + value + `",`},
 		{sha, "local:/k.pub", `"deploying":{"version":"` + sha + `",`},
 	} {
 		done := make(chan error, 1)
@@ -337,7 +337,7 @@ func TestDeployingFiltered(t *testing.T) {
 		}()
 		held()
 		w := do(t, h, http.MethodGet, "/demo", appToken(t), "")
-		if body := w.Body.String(); !strings.Contains(body, tc.want) || strings.Contains(body, secret) {
+		if body := w.Body.String(); !strings.Contains(body, tc.want) || strings.Contains(body, "redacted") {
 			t.Errorf("GET while %s deploys: %s", tc.version, body)
 		}
 		release(nil)
@@ -364,46 +364,6 @@ func deployShReads(t *testing.T, body, sent string) (phase, why string) {
 	must(t, err)
 	phase, why, _ = strings.Cut(string(out), "\n")
 	return phase, why
-}
-
-// TestFailureBodyPhaseWithADeployInFlight: deploy.sh names the phase a
-// deploy failed in from last_deploy on. deploying is gone from the
-// status by the time a failed deploy's own body is written, and a body
-// that holds one (the status read once another deploy began) still
-// reads last_deploy's phase, deploying being before last_deploy.
-func TestFailureBodyPhaseWithADeployInFlight(t *testing.T) {
-	h, rig := newTestHandler(t)
-	rig.runner.startErr = errors.New("boom")
-	w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/1.tgz","version":"v1"}`)
-	if phase, why := deployShReads(t, w.Body.String(), "v1"); w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), `"deploying"`) || phase != "starting" || why != "start failed: boom" {
-		t.Fatalf("the failure body: %d %s", w.Code, w.Body)
-	}
-	rig.runner.startErr = nil
-
-	held, release := rig.holdFetch(t)
-	done := make(chan error, 1)
-	go func() {
-		done <- rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2.tgz", version: "v2"})
-	}()
-	held()
-	// The failure body of v1 as it would read with v2 begun: the
-	// status, through the filter, as deployOutcome writes it.
-	code, body, rd := deployOutcome(rig.ma, errors.New("start failed: boom"))
-	raw, err := json.Marshal(body)
-	must(t, err)
-	got := rd.redactJSON(raw)
-	release(nil)
-	must(t, <-done)
-	if code != http.StatusInternalServerError {
-		t.Fatalf("code %d", code)
-	}
-	d, last := strings.Index(got, `"deploying":`), strings.Index(got, `"last_deploy":`)
-	if d < 0 || last < d || !strings.Contains(got[d:last], `"name":"extracting"`) {
-		t.Fatalf("deploying is not before last_deploy, with v2's phases: %s", got)
-	}
-	if phase, _ := deployShReads(t, got, "v1"); phase != "starting" {
-		t.Fatalf("deploy.sh reads the failing phase as %q: %s", phase, got)
-	}
 }
 
 // TestAppsSummaryNamesTheDeployInFlight: the app list's summary names
@@ -797,4 +757,44 @@ func TestDeployingBeginIsUnderTheLock(t *testing.T) {
 		t.Errorf("a torn record: %+v", d)
 	}
 	rig.ma.endInFlight()
+}
+
+// TestFailureBodyPhaseWithADeployInFlight: deploy.sh names the phase a
+// deploy failed in from last_deploy on. deploying is gone from the
+// status by the time a failed deploy's own body is written, and a body
+// that holds one (the status read once another deploy began) still
+// reads last_deploy's phase, deploying being before last_deploy.
+func TestFailureBodyPhaseWithADeployInFlight(t *testing.T) {
+	h, rig := newTestHandler(t)
+	rig.runner.startErr = errors.New("boom")
+	w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/1.tgz","version":"v1"}`)
+	if phase, why := deployShReads(t, w.Body.String(), "v1"); w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), `"deploying"`) || phase != "starting" || why != "start failed: boom" {
+		t.Fatalf("the failure body: %d %s", w.Code, w.Body)
+	}
+	rig.runner.startErr = nil
+
+	held, release := rig.holdFetch(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2.tgz", version: "v2"})
+	}()
+	held()
+	// The failure body of v1 as it would read with v2 begun: the
+	// status, as deployOutcome writes it.
+	code, body := deployOutcome(rig.ma, errors.New("start failed: boom"))
+	raw, err := json.Marshal(body)
+	must(t, err)
+	got := string(raw)
+	release(nil)
+	must(t, <-done)
+	if code != http.StatusInternalServerError {
+		t.Fatalf("code %d", code)
+	}
+	d, last := strings.Index(got, `"deploying":`), strings.Index(got, `"last_deploy":`)
+	if d < 0 || last < d || !strings.Contains(got[d:last], `"name":"extracting"`) {
+		t.Fatalf("deploying is not before last_deploy, with v2's phases: %s", got)
+	}
+	if phase, _ := deployShReads(t, got, "v1"); phase != "starting" {
+		t.Fatalf("deploy.sh reads the failing phase as %q: %s", phase, got)
+	}
 }

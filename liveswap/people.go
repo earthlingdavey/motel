@@ -115,7 +115,7 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 					zap.Int("per_second", access.RatePerSecond), zap.Int("burst", access.RateBurst))
 			}
 			w.Header().Set("Retry-After", strconv.Itoa(secs))
-			return Person{}, false, write(http.StatusTooManyRequests, wire.Error{Error: fmt.Sprintf("too many requests; retry after %d s", secs)})
+			return Person{}, false, write(http.StatusTooManyRequests, wire.Error{Error: wire.OwnText(fmt.Sprintf("too many requests; retry after %d s", secs))})
 		}
 	}
 	return Person{

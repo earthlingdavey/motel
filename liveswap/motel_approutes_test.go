@@ -195,11 +195,14 @@ func TestAlertsRoutePaths(t *testing.T) {
 }
 
 // TestAlertsRouteBody: what the source holds of the handle's app
-// alone, newest first, through that app's filter, with Alertmanager's
-// state, when the last silence ends, and the deploy mute; another app's
-// alerts and the box's (one naming the app in its instance and summary
-// among them) are left out; no source is "off", and a source that did
-// not answer "unanswered", both with an empty list.
+// alone, newest first, as Alertmanager holds it (a summary motel told
+// passed the app's filter when it was told, lifecycle.go; the rest is
+// the operator's and Alertmanager's text, which an older moteld filtered
+// here), with Alertmanager's state, when the last silence ends, and the
+// deploy mute; another app's alerts and the box's (one naming the app
+// in its instance and summary among them) are left out; no source is
+// "off", and a source that did not answer "unanswered", both with an
+// empty list.
 func TestAlertsRouteBody(t *testing.T) {
 	h, people := alertsRig(t)
 	alice := token(people.alice)
@@ -215,8 +218,6 @@ func TestAlertsRouteBody(t *testing.T) {
 		t.Errorf("unanswered: %d %s", code, body)
 	}
 
-	// A version demo's status names is a safe string to the filter: a
-	// summary may name it.
 	sha := strings.Repeat("4c2d9e7b1a05", 3) + "0f9e"
 	if w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/1.tgz","version":"`+sha+`"}`); w.Code != http.StatusOK {
 		t.Fatalf("deploying %s: %d %s", sha, w.Code, w.Body)
@@ -231,11 +232,10 @@ func TestAlertsRouteBody(t *testing.T) {
 		{App: "demo", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "demo: errors over 5 %", StartsAt: t0, State: "active"}},
 	}})
 	code, body := read()
-	const want = `{"alerts":[` +
-		`{"name":"deploy_failed","severity":"warning","summary":"deploy of 4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e failed at starting; the env said [redacted:DB_PASSWORD]","starts_at":"2026-11-19T14:02:00Z","state":"suppressed","silenced_until":"2026-11-19T16:00:00Z"},` +
+	const want = `{"monitor":"on","alerts":[` +
+		`{"name":"deploy_failed","severity":"warning","summary":"deploy of 4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e failed at starting; the env said hunter2-of-demo","starts_at":"2026-11-19T14:02:00Z","state":"suppressed","silenced_until":"2026-11-19T16:00:00Z"},` +
 		`{"name":"errors_high","severity":"warning","summary":"demo: errors over 5 %","starts_at":"2026-11-19T14:00:00Z","state":"active"},` +
-		`{"name":"watchdog_throttled","severity":"critical","summary":"demo: the watchdog spent its restart budget","starts_at":"2026-11-19T14:00:00Z","state":"suppressed","inhibited":true}],` +
-		`"monitor":"on","redacted_env":["DB_PASSWORD"]}` + "\n"
+		`{"name":"watchdog_throttled","severity":"critical","summary":"demo: the watchdog spent its restart budget","starts_at":"2026-11-19T14:00:00Z","state":"suppressed","inhibited":true}]}` + "\n"
 	if code != http.StatusOK || body != want {
 		t.Errorf("the alerts of demo:\n got %d %s\nwant %s", code, body, want)
 	}
@@ -271,8 +271,9 @@ func TestAlertsChosenByTheHandle(t *testing.T) {
 }
 
 // TestAlertsTimesPassNoFilter: an env_file value that is a piece of an
-// alert's time (a date) is masked in the summary and leaves the times
-// whole, so the answer still reads.
+// alert's time (a date) changes nothing of the rows, their summaries
+// included, and with the app's env_file unreadable the answer is sent as
+// it is: no filter runs over it.
 func TestAlertsTimesPassNoFilter(t *testing.T) {
 	h, people := alertsRig(t)
 	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("API_VERSION=2026-11-19\n"), 0o600))
@@ -282,45 +283,23 @@ func TestAlertsTimesPassNoFilter(t *testing.T) {
 		{App: "demo", Alert: wire.Alert{Name: "deploy_failed", Severity: "warning", Summary: "on 2026-11-19", StartsAt: t0, State: "suppressed", SilencedUntil: &until}},
 		{App: "demo", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "demo: errors", StartsAt: t0.Add(-time.Hour), State: "active"}},
 	}})
-	w := sendTo(t, h, "GET", "/_motel/apps/demo/alerts", token(people.alice))
-	var got wire.Alerts
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || len(got.Alerts) != 2 || got.Monitor != wire.MonitorOn {
-		t.Fatalf("%v: %d %s", err, w.Code, w.Body)
+	read := func() (*httptest.ResponseRecorder, wire.Alerts) {
+		w := sendTo(t, h, "GET", "/_motel/apps/demo/alerts", token(people.alice))
+		var got wire.Alerts
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || len(got.Alerts) != 2 || got.Monitor != wire.MonitorOn {
+			t.Fatalf("%v: %d %s", err, w.Code, w.Body)
+		}
+		return w, got
 	}
+	w, got := read()
 	a := got.Alerts[0]
-	if a.Summary != "on [redacted:API_VERSION]" || !a.StartsAt.Equal(t0) || a.SilencedUntil == nil || !a.SilencedUntil.Equal(until) || !got.Alerts[1].StartsAt.Equal(t0.Add(-time.Hour)) {
+	if a.Summary != "on 2026-11-19" || !a.StartsAt.Equal(t0) || a.SilencedUntil == nil || !a.SilencedUntil.Equal(until) || !got.Alerts[1].StartsAt.Equal(t0.Add(-time.Hour)) || strings.Contains(w.Body.String(), "redacted") {
 		t.Errorf("the rows: %s", w.Body)
 	}
-	if !strings.HasSuffix(w.Body.String(), `"monitor":"on","redacted_env":["API_VERSION"]}`+"\n") {
-		t.Errorf("the body does not name the key it masked: %s", w.Body)
-	}
-	// A withheld body (the env_file unreadable) is the filter's sentence.
 	must(t, os.Remove(h.app.managed["demo"].spec.envFile))
 	h.app.managed["demo"].secretsLoaded = false
-	w = sendTo(t, h, "GET", "/_motel/apps/demo/alerts", token(people.alice))
-	if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), `{"error":"response withheld`) {
-		t.Errorf("withheld: %d %s", w.Code, w.Body)
-	}
-}
-
-// TestAlertsFilterFallsBack: a value of the app's that spans two
-// alerts changes the body's structure: the body then goes whole through
-// the filter, as before the times were kept out of it, and the value is
-// not in the bytes sent.
-func TestAlertsFilterFallsBack(t *testing.T) {
-	t0 := time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC)
-	held := []AppAlert{
-		{App: "demo", Alert: wire.Alert{Name: "deploy_failed", Severity: "warning", Summary: "deploy of v2 failed at starting", StartsAt: t0.Add(time.Minute), State: "suppressed"}},
-		{App: "demo", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "demo: 5xx over 5 %", StartsAt: t0, State: "active"}},
-	}
-	for _, value := range []string{`"},{"name":"errors_high`, `"},{"name":"errors_high","severity":"warning","summary":"demo`} {
-		h, people := alertsRig(t)
-		must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K="+value+"\n"), 0o600))
-		h.app.SetAlertsSource(&fakeAlerts{ok: true, held: held})
-		w := sendTo(t, h, "GET", "/_motel/apps/demo/alerts", token(people.alice))
-		if strings.Contains(w.Body.String(), value) || !strings.Contains(w.Body.String(), "redacted:K") || !strings.Contains(w.Body.String(), `"starts_at":"2026-11-19T13:01:00Z"`) {
-			t.Errorf("K=%s: %d %s", value, w.Code, w.Body)
-		}
+	if w2, _ := read(); w2.Body.String() != w.Body.String() {
+		t.Errorf("with the env_file unreadable: %s, want %s", w2.Body, w.Body)
 	}
 }
 

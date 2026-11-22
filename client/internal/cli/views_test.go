@@ -44,7 +44,7 @@ func TestViewsAndRender(t *testing.T) {
 	section("a deploy with no finish: no duration; a cut log tail")
 	if err := render.WriteDeploy(&out, color, termtext.From("blog"), deployView(wire.DeployResult{
 		Version: "v3", Status: "failed", Phase: "starting", StartedAt: start,
-		Detail: &wire.DeployDetail{LogTail: []string{"last line"}, LogTailTruncated: true},
+		Detail: &wire.DeployDetail{LogTail: []wire.AppText{"last line"}, LogTailTruncated: true},
 	})); err != nil {
 		t.Fatal(err)
 	}

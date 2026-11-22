@@ -10,7 +10,7 @@ import (
 )
 
 // Refusal is what the preamble answers a refused request with, for the
-// caller to write (Write) through its own response filter: the flat
+// caller to write (Write): the flat
 // 401 and its fixed body, the same whatever the reason and however
 // often the address has failed, so a caller learns neither which apps
 // exist, nor what a source pins, nor what the throttle's budgets say.
@@ -18,12 +18,10 @@ import (
 // went to the journal, if the budgets let it.
 type Refusal struct {
 	Status  int
-	Message string
+	Message wire.ErrText
 }
 
-// Write answers the refused request with the fixed body through write
-// — the caller's filtered writer, so every body a webhook sends passes
-// its filter.
+// Write answers the refused request with the fixed body through write.
 func (ref *Refusal) Write(write func(code int, body any) error) error {
 	return write(ref.Status, wire.Error{Error: ref.Message})
 }
@@ -67,9 +65,8 @@ func scopeField(fields []zap.Field, key, value string) []zap.Field {
 // refusal costs this limiter and the journal. An accepted token is who
 // it is (Identity), and the address's failures are forgotten. A
 // refused one is answered by the caller with the Refusal returned —
-// the flat 401, whatever the reason and whatever the budgets say —
-// through the caller's own response filter, so every body a webhook
-// sends passes one. logger is the caller's; scopeKey and
+// the flat 401, whatever the reason and whatever the budgets say.
+// logger is the caller's; scopeKey and
 // scopeValue are the one field its lines carry besides the address
 // and the reason — liveswap names the app — bounded where a line is
 // written (scopeField); an empty key is no field. liveswap's webhook

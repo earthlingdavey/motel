@@ -513,7 +513,7 @@ func TestReadSaysWhatTheFilterWithheld(t *testing.T) {
 		"[#0]",
 	} {
 		for _, v := range []any{&wire.Status{}, &wire.DeployResult{}} {
-			b, err := json.Marshal(wire.Error{Error: said})
+			b, err := json.Marshal(wire.Error{Error: wire.ErrText(said)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -539,7 +539,7 @@ func TestReadSaysWhatTheFilterWithheld(t *testing.T) {
 		"resp[redacted:J]",
 		"response withheld",
 	} {
-		b, err := json.Marshal(wire.Error{Error: said})
+		b, err := json.Marshal(wire.Error{Error: wire.ErrText(said)})
 		if err != nil {
 			t.Fatal(err)
 		}

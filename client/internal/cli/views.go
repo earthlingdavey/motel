@@ -54,10 +54,10 @@ func statusView(st wire.Status, asked string) render.Status {
 		v.Deploying = f
 	}
 	if wd := st.Watchdog; wd != nil {
-		v.Watchdog = &render.Watchdog{State: tx(wd.State), Failures: wd.Failures, Restarts: wd.RestartsInWindow, LastFailure: tx(wd.LastFailure)}
+		v.Watchdog = &render.Watchdog{State: tx(wd.State), Failures: wd.Failures, Restarts: wd.RestartsInWindow, LastFailure: tx(string(wd.LastFailure))}
 	}
 	if m := st.Metrics; m != nil {
-		mv := &render.Metrics{Window: tx(m.Window), Error: tx(m.Error), MemMax: m.MemoryMax}
+		mv := &render.Metrics{Window: tx(m.Window), Error: tx(string(m.Error)), MemMax: m.MemoryMax}
 		if m.Memory != nil {
 			mv.MemNow = m.Memory.Now
 			if m.Memory.Max != nil {
@@ -89,7 +89,7 @@ func deployView(d wire.DeployResult) render.Deploy {
 		Version:  tx(d.Version),
 		Status:   tx(d.Status),
 		Phase:    tx(d.Phase),
-		Error:    tx(d.Error),
+		Error:    tx(string(d.Error)),
 		By:       tx(d.By),
 		Note:     tx(d.Note),
 		Started:  d.StartedAt,
@@ -101,15 +101,15 @@ func deployView(d wire.DeployResult) render.Deploy {
 	if dt := d.Detail; dt != nil {
 		v.Exit = tx(dt.Exit)
 		if pr := dt.Probe; pr != nil {
-			v.Probe = &render.Probe{Status: pr.Status, Location: tx(pr.Location), Body: termtext.TabbedLines(pr.Body)}
+			v.Probe = &render.Probe{Status: pr.Status, Location: tx(string(pr.Location)), Body: termtext.TabbedLines(string(pr.Body))}
 		}
 		for _, l := range dt.LogTail {
 			// A tail line is one journal line, but the app wrote it
 			// and may have put a line break in it.
-			v.LogTail = append(v.LogTail, termtext.TabbedLines(l)...)
+			v.LogTail = append(v.LogTail, termtext.TabbedLines(string(l))...)
 		}
 		v.LogTailCut = dt.LogTailTruncated
-		v.LogTailError = tx(dt.LogTailError)
+		v.LogTailError = tx(string(dt.LogTailError))
 	}
 	return v
 }

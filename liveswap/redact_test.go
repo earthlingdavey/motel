@@ -4,8 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -98,72 +96,6 @@ func TestNoSafeStringEqualsAKnownValue(t *testing.T) {
 	}
 }
 
-// Rule 3: the outcome vocabulary stands outside the filter wherever
-// it is a status, a phase or a phase's name — the status GET's
-// last_deploy and deploys, a record, a phase timing — and nowhere
-// else: the same word in error text is a known value like any other.
-func TestOutcomeWordsSurviveEverywhere(t *testing.T) {
-	r := NewRedactor([]string{"WORD=succeeded", "STEP=preparing", "END=stopping_old"}, nil)
-	body := `{"deploys":[{"version":"v2","status":"failed","phase":"preparing"},{"version":"v1","status":"succeeded"}],` +
-		`"last_deploy":{"version":"v2","status":"failed","error":"migrate: preparing succeeded then stopping_old","phase":"preparing",` +
-		`"phases":[{"name":"preparing","seconds":1.5},{"name":"stopping_old","seconds":0.1}],"detail":{"log_tail":["status: succeeded"]}}}`
-	out := r.redactJSON([]byte(body))
-	for _, want := range []string{`"status":"failed"`, `"status":"succeeded"`, `"phase":"preparing"`, `"name":"preparing"`, `"name":"stopping_old"`,
-		`"error":"migrate: [redacted:STEP] [redacted:WORD] then [redacted:END]"`, `"log_tail":["status: [redacted:WORD]"]`, `"redacted_env":["END","STEP","WORD"]`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %s in %s", want, out)
-		}
-	}
-	// In place: the body's order is as marshalled, which deploy.sh
-	// reads a failure body by (last_deploy's phase after its version).
-	if i := strings.LastIndex(out, `"phase":"`); !strings.HasPrefix(out[i:], `"phase":"preparing","phases"`) {
-		t.Errorf("field order changed: %s", out)
-	}
-	// A value that overlaps a pair — its quotes, its key, more than the
-	// word — is not a word: layer 1 sees it before the pair is held,
-	// and the body it breaks is withheld, the key reported.
-	for _, v := range []string{`"status":"failed","error"`, `succeeded"`, `:"preparing"`, `"name":"stopping_old"`} {
-		out := NewRedactor([]string{"WEIRD=" + v}, nil).redactJSON([]byte(body))
-		if !strings.HasPrefix(out, `{"error":"response withheld: a redacted value overlapped the response's own structure"`) || !strings.Contains(out, `"redacted_env":["WEIRD"]`) || strings.Contains(out, v) {
-			t.Errorf("value %q overlapping a pair: %s", v, out)
-		}
-	}
-	// A value that is part of a word is replaced inside it, which
-	// leaves an outcome that is not a word: withheld too, rather than
-	// served with a status nothing can read.
-	for _, v := range []string{"ucceeded", "stopping", "reparing"} {
-		out := NewRedactor([]string{"WEIRD=" + v}, nil).redactJSON([]byte(body))
-		if !strings.HasPrefix(out, `{"error":"response withheld: a redacted value overlapped the response's own outcome"`) || !strings.Contains(out, `"redacted_env":["WEIRD"]`) || strings.Contains(out, v) {
-			t.Errorf("value %q inside a word: %s", v, out)
-		}
-	}
-	// A pair a record planted where motel writes none is a pair in
-	// the count before and after alike, so it cannot mask a damaged
-	// one; and with no value to redact in it, it is left as it is.
-	planted := `{"version":"v1","status":"succeeded","x":{"name":"succeeded"}}`
-	if out := NewRedactor([]string{"WEIRD=ucceeded"}, nil).redactJSON([]byte(planted)); !strings.HasPrefix(out, `{"error":"response withheld: a redacted value overlapped the response's own outcome"`) {
-		t.Errorf("a planted pair masked a damaged outcome: %s", out)
-	}
-	if out := NewRedactor([]string{"WORD=succeeded"}, nil).redactJSON([]byte(planted)); out != planted {
-		t.Errorf("a planted pair is a pair: %s", out)
-	}
-	// A URL value's password spelled as a word is a bare word form,
-	// and rides through at an outcome key like the value would.
-	if out := NewRedactor([]string{"DATABASE_URL=postgres://u:succeeded@h/db"}, nil).redactJSON([]byte(body)); !strings.Contains(out, `"status":"succeeded"`) || strings.Contains(out, "preparing succeeded then") {
-		t.Errorf("a password spelled as a word: %s", out)
-	}
-	// A withheld body carries no outcome, and the words are
-	// not smuggled onto it.
-	r.withhold = "the app's env_file could not be read"
-	if out := r.redactJSON([]byte(body)); strings.Contains(out, "succeeded") || strings.Contains(out, "preparing") {
-		t.Errorf("outcome words on a withheld body: %s", out)
-	}
-	// Without a vocabulary secret the body is untouched.
-	if out := NewRedactor(nil, nil).redactJSON([]byte(body)); out != body {
-		t.Errorf("the filter changed a body with nothing to redact:\n%s\n%s", body, out)
-	}
-}
-
 func TestRedactorSharedValuesAndMarkers(t *testing.T) {
 	// Two keys with one value: both are reported, and the marker names
 	// both.
@@ -250,40 +182,6 @@ func TestRedactorURLPasswordNetURLDoesNotRead(t *testing.T) {
 	}
 }
 
-func TestRedactJSONWithholdsAnUnparsableBody(t *testing.T) {
-	// A value made of JSON's own punctuation can match the body's
-	// structure rather than a string inside it. The body is withheld,
-	// the keys still reported, and the result is always valid JSON.
-	r := NewRedactor([]string{`ALLOWED=["a","b"]`}, nil)
-	out := r.redactJSON([]byte(`{"app":"x","available_versions":["a","b"]}`))
-	if !json.Valid([]byte(out)) {
-		t.Fatalf("not JSON: %s", out)
-	}
-	if !strings.Contains(out, "withheld") || !strings.Contains(out, `"redacted_env":["ALLOWED"]`) {
-		t.Errorf("withheld body = %s", out)
-	}
-	// An array body has nowhere to put redacted_env and stays an array.
-	if out := r.redactJSON([]byte(`["x"]`)); out != `["x"]` {
-		t.Errorf("array body = %s", out)
-	}
-	// The fallback's own text and the redacted_env field's key names go
-	// through the last pass too: a second value equal to a word in the
-	// fallback, or a key named for its value, cannot come back.
-	r = NewRedactor([]string{`ALLOWED=["a","b"]`, "SECRET=redacted", "withheld=withheld"}, nil)
-	out = r.redactJSON([]byte(`{"app":"x","available_versions":["a","b"],"e":"withheld"}`))
-	rest := strings.Replace(out, `"redacted_env":`, "", 1)
-	if !json.Valid([]byte(out)) || strings.Contains(rest, "redacted") || strings.Contains(rest, "withheld") || !strings.Contains(out, `"redacted_env":[`) {
-		t.Errorf("fallback or field leaked a value, or the report is missing: %s", out)
-	}
-	// A value equal to the report field's own name: the field keeps its
-	// name (fixed public text) and still names the key.
-	r = NewRedactor([]string{"WEIRD=redacted_env"}, nil)
-	out = r.redactJSON([]byte(`{"error":"saw redacted_env here"}`))
-	if !json.Valid([]byte(out)) || !strings.Contains(out, `"redacted_env":["WEIRD"]`) || strings.Contains(out, "saw redacted_env") {
-		t.Errorf("value equal to the field name: %s", out)
-	}
-}
-
 func TestRedactorSafeSpansSurviveShapes(t *testing.T) {
 	// A version shaped like a provider token is on the safe list and
 	// comes through the shape rules untouched, everywhere it appears.
@@ -295,28 +193,6 @@ func TestRedactorSafeSpansSurviveShapes(t *testing.T) {
 	}
 	if out, _ := (*Redactor)(nil).Redact(in); !strings.Contains(out, "[redacted:github-token]") {
 		t.Errorf("without the safe list the same shape must be caught: %s", out)
-	}
-}
-
-func TestRedactJSONWithholdsWhenTheEnvFileIsUnread(t *testing.T) {
-	r := NewRedactor(nil, nil)
-	r.withhold = `the app's env_file could not be read (open /etc/motel/we"ird\path.env: no such file)`
-	out := r.redactJSON([]byte(`{"app":"x","error":"anything at all"}`))
-	if !json.Valid([]byte(out)) || strings.Contains(out, "anything at all") || !strings.Contains(out, "withheld") {
-		t.Errorf("body not withheld: %s", out)
-	}
-	// The reason carries a path; a quote or backslash in it must not
-	// turn the diagnostic into the opaque fallback.
-	var obj map[string]string
-	if err := json.Unmarshal([]byte(out), &obj); err != nil || !strings.Contains(obj["error"], `we"ird\path.env`) {
-		t.Errorf("reason lost: %s", out)
-	}
-	// And the diagnostic is filtered like any body: a token-shaped
-	// segment in the path, or a line the parse error quotes, is masked.
-	r.withhold = `/etc/motel/app.env:3: "TOKEN ghp_` + strings.Repeat("a1B2", 9) + `" is not KEY=VALUE`
-	out = r.redactJSON([]byte(`{}`))
-	if !json.Valid([]byte(out)) || strings.Contains(out, "ghp_") || !strings.Contains(out, "[redacted:") {
-		t.Errorf("withhold diagnostic not filtered: %s", out)
 	}
 }
 
@@ -398,49 +274,6 @@ func TestRedactorEntropy(t *testing.T) {
 	}
 }
 
-// A redacted_env the body already carries below its top level — a
-// deployResult's, nested in a status — is hoisted into the body's own,
-// with the keys the filter found, each once.
-func TestRedactJSONHoistsANestedRedactedEnv(t *testing.T) {
-	r := NewRedactor([]string{"TOP=hunter2hunter2hunter2"}, nil) // gitleaks:allow
-	body := `{"error":"failed","status":{"last_deploy":{"redacted_env":["API_TOKEN"],"detail":{"log_tail":["[redacted:API_TOKEN]"]}},"deploys":[{"redacted_env":["DB_URL","API_TOKEN"]}]},"note":"hunter2hunter2hunter2"}`
-	out := r.redactJSON([]byte(body))
-	var got struct {
-		RedactedEnv []string `json:"redacted_env"`
-	}
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(got.RedactedEnv, ",") != "API_TOKEN,DB_URL,TOP" {
-		t.Fatalf("redacted_env = %v in %s", got.RedactedEnv, out)
-	}
-}
-
-// The hoist also runs when the filter itself found nothing — the
-// detail's early replacement left only markers — and adds no field
-// when the name is a string's text rather than a field.
-func TestRedactJSONHoistsWithNothingOfItsOwnToReport(t *testing.T) {
-	r := NewRedactor(nil, nil)
-	for _, tc := range []struct{ name, body, want string }{
-		{"a nested field alone", `{"error":"failed","status":{"last_deploy":{"redacted_env":["API_TOKEN"],"detail":{"probe":{"body":"[redacted:API_TOKEN]"}}}}}`, `"redacted_env":["API_TOKEN"]`},
-		{"the name as text", `{"error":"the field is called \"redacted_env\""}`, ""},
-	} {
-		out := r.redactJSON([]byte(tc.body))
-		var got struct {
-			RedactedEnv *[]string `json:"redacted_env"`
-		}
-		if err := json.Unmarshal([]byte(out), &got); err != nil {
-			t.Fatal(err)
-		}
-		if tc.want == "" && got.RedactedEnv != nil {
-			t.Errorf("%s: gained a field: %s", tc.name, out)
-		}
-		if tc.want != "" && (got.RedactedEnv == nil || !strings.HasPrefix(out, `{"error":"failed","redacted_env":["API_TOKEN"]`)) {
-			t.Errorf("%s: no top-level field in %s", tc.name, out)
-		}
-	}
-}
-
 // An assignment is judged by its parts: the key stays readable and the
 // value is masked on its own, and a short value is not carried over the
 // bar by its key's letters.
@@ -508,40 +341,6 @@ func lines(t *testing.T, path string) []string {
 	return out
 }
 
-func TestRespondJSONRedacts(t *testing.T) {
-	r := NewRedactor([]string{"SECRET=hunter2hunter2"}, nil)
-	rec := httptest.NewRecorder()
-	body := map[string]any{"error": "start failed: hunter2hunter2 rejected", "status": map[string]any{"app": "x"}}
-	if err := RespondJSON(rec, http.StatusInternalServerError, body, r); err != nil {
-		t.Fatal(err)
-	}
-	var got map[string]json.RawMessage
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("not JSON: %v: %s", err, rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), "hunter2hunter2") {
-		t.Errorf("value in body: %s", rec.Body.String())
-	}
-	if string(got["redacted_env"]) != `["SECRET"]` {
-		t.Errorf("redacted_env = %s", got["redacted_env"])
-	}
-	if string(got["error"]) != `"start failed: [redacted:SECRET] rejected"` {
-		t.Errorf("error = %s", got["error"])
-	}
-	if rec.Code != http.StatusInternalServerError || rec.Header().Get("Content-Type") != "application/json" {
-		t.Errorf("code %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
-	}
-	// Nothing to redact: the body is the encoder's, byte for byte, with
-	// no redacted_env field.
-	rec = httptest.NewRecorder()
-	if err := RespondJSON(rec, http.StatusOK, map[string]string{"error": "plain"}, r); err != nil {
-		t.Fatal(err)
-	}
-	if rec.Body.String() != "{\"error\":\"plain\"}\n" {
-		t.Errorf("untouched body = %q", rec.Body.String())
-	}
-}
-
 func mustJSON(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := json.Marshal(s)
@@ -549,28 +348,4 @@ func mustJSON(t *testing.T, s string) []byte {
 		t.Fatal(err)
 	}
 	return b[1 : len(b)-1]
-}
-
-// A body that already reports redacted keys — a stored record read
-// back — keeps them through a later pass, whether or not that pass
-// redacts more: withField merges with what the filtered body holds.
-// An entry equal to a known value is body text like any other, and
-// comes out as its marker with the key it belongs to reported.
-func TestReportedKeysMergeWithTheBodys(t *testing.T) {
-	r := NewRedactor([]string{"NEW=newvaluenewvalue1234"}, nil)
-	if got := r.redactJSON([]byte(`{"error":"got newvaluenewvalue1234","redacted_env":["OLD"]}`)); !strings.Contains(got, `"redacted_env":["NEW","OLD"]`) || strings.Contains(got, "newvaluenewvalue1234") {
-		t.Fatalf("got %s", got)
-	}
-	if got := r.redactJSON([]byte(`{"error":"nothing here","redacted_env":["OLD"]}`)); !strings.Contains(got, `"redacted_env":["OLD"]`) {
-		t.Fatalf("a pass that redacts nothing must keep the keys: %s", got)
-	}
-	if got := r.redactJSON([]byte(`{"version":"v1","redacted_env":["newvaluenewvalue1234"]}`)); strings.Contains(got, "newvaluenewvalue1234") || !strings.Contains(got, `"redacted_env":["NEW","[redacted:NEW]"]`) {
-		t.Fatalf("a planted reported entry leaked or was not accounted for: %s", got)
-	}
-	if got := r.redactJSON([]byte(`{"error":"got newvaluenewvalue1234","redacted_env":"not-an-array"}`)); !strings.Contains(got, `"redacted_env":["NEW"]`) {
-		t.Fatalf("a field that is not an array is replaced: %s", got)
-	}
-	if got := r.redactJSON([]byte(`{"error":"got newvaluenewvalue1234","redacted_env":["OLD",5,null]}`)); !strings.Contains(got, `"redacted_env":["NEW","OLD"]`) {
-		t.Fatalf("only the strings of a mixed array are kept: %s", got)
-	}
 }

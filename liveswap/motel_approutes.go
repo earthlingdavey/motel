@@ -3,7 +3,6 @@ package liveswap
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -179,28 +178,28 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 	app, err := h.allowApp(who, rt.action, name)
 	switch {
 	case errors.Is(err, errUnknownApp):
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: wire.OwnText(fmt.Sprintf("unknown app %q", name))})
 	case err != nil:
 		if rt.action == access.AppLogs && p != nil {
 			h.logsRefused(r, p.Name, name, err)
 		}
-		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), nil)
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err))
 	}
 	if p == nil {
 		// Decide allowed a row to a caller who is no person: the table
 		// and the routes falling apart.
-		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, nil)
+		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"})
 	}
 	q, ok := rt.parseQuery(r)
 	if !ok {
 		// The route's own words, naming the keys it takes, and nothing
-		// of the request's or the app's (rule 6).
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: rt.takes()}, NewRedactor(nil, nil))
+		// of the request's or the app's (wire.OwnText).
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: wire.OwnText(rt.takes())})
 	}
 	// After Decide: what the read is about is the app a Start
-	// installed, whose filter knows the app's values.
+	// installed.
 	if late := h.awaitRead(r, p.Name, app.ma); late != nil {
-		return h.installing(w, late)
+		return h.installing(w)
 	}
 	return rt.serve(h, w, r, app, q)
 }
@@ -210,80 +209,12 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 // silence or the deploy mute holds it. Chosen here, after the fetch, by
 // the label alone: no matcher is built or sent. Nothing of the box's
 // own alerts is in it, not even one that names the app in its
-// instance (backup_stale/<app>), and no silence. The body is about one
-// app, so it passes that app's filter, as GET /<app> does, with the
-// versions its status names as safe strings: a summary names the
-// release a deploy failed at.
+// instance (backup_stale/<app>), and no silence. Nothing of it is the
+// app's text: an alert motel raised is its own words (a lifecycle
+// event's summary passed the app's door when it was told, lifecycle.go),
+// and a store rule's is the operator's annotation.
 func (h *Handler) appAlerts(w http.ResponseWriter, r *http.Request, app appHandle, _ appQuery) error {
-	body := app.alerts(r.Context(), h.app.alertsSource)
-	f := app.ma.redactorFor(app.ma.status())
-	if out, ok := filterAlerts(body, f); ok {
-		return respondFiltered(w, http.StatusOK, out)
-	}
-	// The filter withheld the body, or changed its structure: the body
-	// whole through the filter, as it always was, times and all.
-	return RespondJSON(w, http.StatusOK, body, f)
-}
-
-// filterAlerts is the alerts body through the app's filter, its times
-// passing none: they are taken out of each alert and put back after the
-// filter's last pass, so that an env_file value that is a piece of one
-// (a date) cannot leave a time no client reads, and with it the answer
-// unread. It reports false, for the caller to send the body whole
-// through the filter as before, when the filter withheld the body (its
-// env_file unreadable) or changed its structure (a value spanning two
-// alerts). The filter runs over the words without the times between
-// them, so a value made of JSON's own punctuation and a time's last
-// characters can stand in the bytes sent (an accepted row in
-// DESIGN-access.md).
-func filterAlerts(body wire.Alerts, f *Redactor) (string, bool) {
-	// Each alert's words in the wire type's order, its times left out.
-	type words struct {
-		Name      string `json:"name"`
-		Severity  string `json:"severity"`
-		Summary   string `json:"summary"`
-		State     string `json:"state"`
-		Inhibited bool   `json:"inhibited,omitempty"`
-	}
-	rows := make([]words, len(body.Alerts))
-	for i, a := range body.Alerts {
-		rows[i] = words{a.Name, a.Severity, a.Summary, a.State, a.Inhibited}
-	}
-	raw, _ := json.Marshal(struct {
-		Monitor string  `json:"monitor"`
-		Alerts  []words `json:"alerts"`
-	}{body.Monitor, rows}) // strings and bools: nothing to fail
-	var got map[string]json.RawMessage
-	var alerts []wire.Alert
-	if json.Unmarshal([]byte(f.redactJSON(raw)), &got) != nil || json.Unmarshal(got["alerts"], &alerts) != nil || len(alerts) != len(body.Alerts) {
-		return "", false
-	}
-	// Each alert as its wire type writes it, its times put back: what the
-	// filter left of its words, Alertmanager's times.
-	for i := range alerts {
-		alerts[i].StartsAt, alerts[i].SilencedUntil = body.Alerts[i].StartsAt, body.Alerts[i].SilencedUntil
-	}
-	var b []byte
-	var err error
-	if len(got) == 2 {
-		// The filter changed nothing at the top: the monitor first, as the
-		// wire type writes it.
-		b, err = json.Marshal(struct {
-			Monitor json.RawMessage `json:"monitor"`
-			Alerts  []wire.Alert    `json:"alerts"`
-		}{got["monitor"], alerts})
-	} else {
-		// A changed body's keys sorted, its redacted_env with them, as
-		// redactJSON writes one.
-		got["alerts"], err = json.Marshal(alerts)
-		if err == nil {
-			b, err = json.Marshal(got)
-		}
-	}
-	if err != nil {
-		return "", false
-	}
-	return string(b), true
+	return RespondJSON(w, http.StatusOK, app.alerts(r.Context(), h.app.alertsSource))
 }
 
 // alerts is what src holds of the handle's app, newest first.

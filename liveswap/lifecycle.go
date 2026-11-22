@@ -35,8 +35,8 @@ const (
 )
 
 // LifecycleEvent is one thing that happened to an app. Summary is one
-// line in liveswap's own words, through the app's response filter: no
-// secret and no log tail.
+// line in liveswap's own words, through the app's filter as it is told
+// (tell): no secret and no log tail.
 type LifecycleEvent struct {
 	Name       string
 	App        string
@@ -106,9 +106,11 @@ func (ma *managedApp) tell(n Notifier, ev LifecycleEvent) {
 	ev.App = ma.name
 	if ev.Summary != "" {
 		// The release is a name, which the entropy layer would mask when
-		// it is a git sha (redact.go: a version is high-entropy by
-		// design); it is a label beside the summary anyway.
-		ev.Summary, _ = ma.redactorFor(statusSnapshot{}, ev.Release).Redact(ev.Summary)
+		// it is a git sha (a version is high-entropy by design); it is a
+		// label beside the summary anyway. The app's filter as text, as
+		// it always ran here: a summary is sent whatever the env_file's
+		// state, and a refusal's reason in it is an error's text.
+		ev.Summary, _ = ma.door(true, ev.Release).r.Redact(ev.Summary)
 	}
 	n.Lifecycle(ev)
 }

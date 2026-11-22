@@ -21,9 +21,7 @@ package box
 //     journal is held to a grammar (the id) or passes proof.Bound.
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -32,7 +30,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -248,11 +245,9 @@ type pushing struct {
 	claim string
 }
 
-// respond answers with the push's own fields held out of the filter's
-// heuristics: the id, the commit and a mismatched claim, each checked
-// against its grammar.
+// respond answers the push.
 func (p *pushing) respond(code int, body any) error {
-	return respond(p.w, code, body, p.id, p.commit, p.claim)
+	return respond(p.w, code, body)
 }
 
 // refuse answers a verdict on the push: 422 with a `refused` result the
@@ -269,7 +264,7 @@ func (p *pushing) refuse(b *proof.Bundle, err error) error {
 	}
 	p.h.logger.Warn("box push refused", zap.String("id", p.id), zap.String("commit", p.commit),
 		zap.String("refused", msg), zap.String("via", p.via), zap.String("remote", p.r.RemoteAddr))
-	return respond(p.w, http.StatusUnprocessableEntity, res, append([]string{p.id, p.commit, p.claim}, ids...)...)
+	return respond(p.w, http.StatusUnprocessableEntity, res)
 }
 
 // fail answers a push the box could not check: 500, nothing changed.
@@ -400,76 +395,25 @@ func (h *Handler) result(w http.ResponseWriter, r *http.Request, _ deploytrust.I
 		return respondResult(w, res)
 	case !errors.Is(err, fs.ErrNotExist):
 		h.logStateError("the result for "+id, err)
-		return respond(w, http.StatusInternalServerError, errorBody("could not read the result for "+id+": "+proof.Bound(err.Error())), id)
+		return respond(w, http.StatusInternalServerError, errorBody("could not read the result for "+id+": "+proof.Bound(err.Error())))
 	}
 	// No result yet: a marker, of whatever age, or a bundle still in in/
 	// (its marker never written), is a push admitted.
 	for _, path := range h.admittedPaths(id) {
 		if found, err := present(path); err != nil {
 			h.logStateError("the push "+id, err)
-			return respond(w, http.StatusInternalServerError, errorBody("could not read the push "+id+": "+proof.Bound(err.Error())), id)
+			return respond(w, http.StatusInternalServerError, errorBody("could not read the push "+id+": "+proof.Bound(err.Error())))
 		} else if found {
 			return respond(w, http.StatusAccepted, map[string]string{"phase": "admitted"})
 		}
 	}
-	return respond(w, http.StatusNotFound, errorBody(msgNoResult(id)), id)
+	return respond(w, http.StatusNotFound, errorBody(msgNoResult(id)))
 }
 
 // respondResult answers with a result and step 8's status for its phase.
-// The secrets' names are held out of the filter, as the ids are: in the
-// added, changed and removed lists each is `<app>/<VAR>`, out of band an
-// app name, each in its grammar (readResultFile) and never a value — and
-// a variable's name can look as random as a key. Not by the safe list,
-// which costs a pass over the body per string (16384 names over a
-// result of megabytes would cost a poll tens of gigabytes): the filter
-// reads the result without them, and they are added to what it wrote,
-// as the result's last fields, in its own bytes.
 func respondResult(w http.ResponseWriter, res *result) error {
-	safe := append([]string{res.ID, res.Commit, res.BoxWebhook}, res.Named...)
-	bare := *res
-	bare.SecretsAdded, bare.SecretsChanged, bare.SecretsRemoved, bare.SecretsOutOfBand = nil, nil, nil, nil
-	whole, err := json.Marshal(res)
-	if err != nil {
-		return err
-	}
-	without, err := json.Marshal(&bare)
-	if err != nil {
-		return err
-	}
-	// The names' members, `,"secrets_added":[…],…}`, or `}` for none.
-	names, last := bytes.CutPrefix(whole, without[:len(without)-1])
-	if !last {
-		return errors.New("a result's secrets are not its last fields")
-	}
-	held := &heldResponse{header: w.Header()}
-	if err := respond(held, phaseStatus(res.Phase), &bare, safe...); err != nil {
-		return err
-	}
-	body := bytes.TrimSuffix(held.body.Bytes(), []byte("\n"))
-	// Only onto the result the filter passed: a body it withheld in its
-	// place (`{"error":…}`) gets no names.
-	if bytes.HasPrefix(body, []byte(`{"id":`)) && bytes.HasSuffix(body, []byte("}")) {
-		joined := slices.Concat(body[:len(body)-1], names)
-		if json.Valid(joined) {
-			body = joined
-		}
-	}
-	w.WriteHeader(held.code)
-	_, err = w.Write(append(body, '\n'))
-	return err
+	return respond(w, phaseStatus(res.Phase), res)
 }
-
-// heldResponse holds what the filter writes for respondResult to finish:
-// its headers are the real response's.
-type heldResponse struct {
-	header http.Header
-	code   int
-	body   bytes.Buffer
-}
-
-func (h *heldResponse) Header() http.Header         { return h.header }
-func (h *heldResponse) WriteHeader(code int)        { h.code = code }
-func (h *heldResponse) Write(b []byte) (int, error) { return h.body.Write(b) }
 
 // phaseStatus is step 8's status for a phase readResultFile accepted:
 // 202 for `verified`, 200 for the green ends, 422 for the red ones — a

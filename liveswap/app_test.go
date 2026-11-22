@@ -858,7 +858,7 @@ func TestDeployPreStartOutlivesTheRequest(t *testing.T) {
 	if rig.ma.activeSocket.Load() != sockV1 {
 		t.Fatal("the old instance must keep serving")
 	}
-	if got := rig.ma.status().LastDeploy; got.Status != "failed" || got.Phase != "soaking" || strings.Contains(got.Error, "pre_start") {
+	if got := rig.ma.status().LastDeploy; got.Status != "failed" || got.Phase != "soaking" || strings.Contains(string(got.Error), "pre_start") {
 		t.Fatalf("the record must name the gate, not the migration: %+v", got)
 	}
 }
@@ -2254,7 +2254,7 @@ func TestRecoveryWithNothingRecordedClearsAGivenUpReason(t *testing.T) {
 	rig.ma.recover(context.Background(), zap.NewNop())
 	waitUntil(t, "status to name why recovery gave up", func() bool {
 		wd := rig.ma.status().Watchdog
-		return wd != nil && strings.Contains(wd.LastFailure, "release dir is missing")
+		return wd != nil && strings.Contains(string(wd.LastFailure), "release dir is missing")
 	})
 	rig.store.mu.Lock()
 	rig.store.state, rig.store.ok = appState{}, false

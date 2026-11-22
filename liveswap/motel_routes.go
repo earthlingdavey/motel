@@ -1,7 +1,6 @@
 package liveswap
 
 import (
-	"encoding/json"
 	"net/http"
 	"slices"
 
@@ -61,23 +60,21 @@ func (h *Handler) serveMotel(w http.ResponseWriter, r *http.Request, who access.
 	}
 	rt := findMotelRoute(r)
 	if rt == nil {
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: "not found"}, nil)
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: "not found"})
 	}
 	if err := decide(who, rt.action, ""); err != nil {
-		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), nil)
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err))
 	}
 	if p == nil {
 		// Decide allowed a row to a caller who is no person: the table
 		// and the routes falling apart.
-		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, nil)
+		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"})
 	}
 	return rt.serve(h, w, r, p)
 }
 
 // whoami is GET /_motel/whoami: who the token's key belongs to, what
-// they may view from here, and the box's own facts. Every value in it
-// is a word the box checked against its grammar when it read the
-// lines, so the filter's entropy layer is told they are safe.
+// they may view from here, and the box's own facts.
 func (h *Handler) whoami(w http.ResponseWriter, _ *http.Request, p *Person) error {
 	body := wire.WhoAmI{
 		Name:           p.Name,
@@ -88,7 +85,6 @@ func (h *Handler) whoami(w http.ResponseWriter, _ *http.Request, p *Person) erro
 		Protocol:       Protocol,
 		TokenExpiresAt: p.Token.ExpiresAt,
 	}
-	safe := []string{body.Name, body.Key, body.Box, body.Version}
 	if v := p.Principal.Views; v != nil {
 		// The box's first, then each app by name; on one scope viewer
 		// before logs. Each is a grant that applies from here, by role.
@@ -107,22 +103,16 @@ func (h *Handler) whoami(w http.ResponseWriter, _ *http.Request, p *Person) erro
 			if slices.Contains(v.Logs.Apps, app) {
 				body.Roles = append(body.Roles, wire.RoleHeld{Role: string(access.Logs), Scope: "app:" + app})
 			}
-			safe = append(safe, app, "app:"+app)
 		}
 	}
-	return RespondJSON(w, http.StatusOK, body, NewRedactor(nil, safe))
+	return RespondJSON(w, http.StatusOK, body)
 }
 
 // apps is GET /_motel/apps: the apps the person may view, of those this
 // config runs, each with its summary; every one for a viewer of the
 // box. A name a grant holds that this config does not run is left out.
 //
-// Each row is a body of its own to the filter (redact.go, rule 2): it
-// is read through an app handle, as GET /<app> is, and filtered by that
-// app's filter alone, so no filter ever sees two apps' values and no
-// row can carry another app's. After every row's last pass the list
-// adds only the key around them: the rows are carried as raw JSON, so
-// the encoder writes the text each filter left, as withField does.
+// Each row is read through an app handle, as GET /<app> is.
 func (h *Handler) apps(w http.ResponseWriter, r *http.Request, p *Person) error {
 	names := []string{}
 	for name := range h.app.managed {
@@ -140,80 +130,28 @@ func (h *Handler) apps(w http.ResponseWriter, r *http.Request, p *Person) error 
 		listed[i] = h.app.managed[name]
 	}
 	if late := h.awaitRead(r, p.Name, listed...); late != nil {
-		return h.installing(w, late)
+		return h.installing(w)
 	}
-	body := struct {
-		Apps []json.RawMessage `json:"apps"`
-	}{make([]json.RawMessage, 0, len(names))}
+	body := wire.Apps{Apps: make([]wire.AppEntry, 0, len(names))}
 	for _, name := range names {
-		body.Apps = append(body.Apps, json.RawMessage(h.appRow(p, name)))
+		body.Apps = append(body.Apps, h.appRow(p, name))
 	}
-	b, err := json.Marshal(body)
-	if err != nil {
-		return err // a row that is not JSON: redactJSON returns JSON whatever it is given
-	}
-	return respondFiltered(w, http.StatusOK, string(b))
+	return RespondJSON(w, http.StatusOK, body)
 }
 
-// appRow is one app's entry in GET /_motel/apps, as the bytes sent. The
-// summary is the one GET /<app> would give: Decide is asked about the
-// same action, and the values come from the same state (summaryStatus
-// reads of the disk only the newest record, the one the summary
-// carries), through the same filter. A row is withheld only when that
-// filter withholds it.
-func (h *Handler) appRow(p *Person, name string) string {
+// appRow is one app's entry in GET /_motel/apps. The summary is the one
+// GET /<app> would give: Decide is asked about the same action, and the
+// values come from the same state (summaryStatus reads of the disk only
+// the newest record, the one the summary carries).
+func (h *Handler) appRow(p *Person, name string) wire.AppEntry {
 	app, err := h.allowApp(p.Principal, access.AppStatus, name)
 	if err != nil {
 		// Views covered the name and Decide refused its status: the table
 		// and the list falling apart. The name is the list's, which says no
 		// more than that.
-		return nameOnlyRow(name, "forbidden")
+		return wire.AppEntry{Name: name, Error: "forbidden"}
 	}
-	ma := app.ma
-	s := ma.summaryStatus()
-	// The summary alone goes through the filter, and the name is put
-	// beside it after: the name is the route's word, the one the person
-	// was granted the app by and the config runs it under, so the
-	// filter can neither redact it nor be taken to have withheld the
-	// row for it (an env_file value equal to the name, DB_NAME=<app>).
-	raw, err := json.Marshal(struct {
-		Summary *wire.AppSummary `json:"summary"`
-	}{summaryOf(s)})
-	if err != nil {
-		// A record's raw times that are not JSON, which GET /<app> could
-		// not send either.
-		return nameOnlyRow(name, "the app's status could not be written")
-	}
-	var row map[string]json.RawMessage
-	if json.Unmarshal([]byte(ma.redactorFor(s).redactJSON(raw)), &row) != nil {
-		return nameOnlyRow(name, "response withheld") // redactJSON returns an object whatever it is given
-	}
-	if _, ok := row["summary"]; !ok {
-		// The filter withheld the row, and its body is why, past the
-		// app's last pass. Nothing else drops the key: the filter
-		// replaces text inside strings, and a replacement that breaks the
-		// body's structure is a withhold of its own.
-		var why wire.Error
-		_ = json.Unmarshal(row["error"], &why.Error)
-		if why.Error == "" {
-			why.Error = "response withheld"
-		}
-		return nameOnlyRow(name, why.Error)
-	}
-	row["name"], _ = json.Marshal(name) // a string: nothing to fail
-	// Raw values, so each is the text the filter left; the keys come out
-	// sorted, name first, as a row the filter changed always has.
-	b, err := json.Marshal(row)
-	if err != nil {
-		return nameOnlyRow(name, "response withheld")
-	}
-	return string(b)
-}
-
-// nameOnlyRow is an entry with no summary, and why.
-func nameOnlyRow(name, why string) string {
-	b, _ := json.Marshal(wire.AppEntry{Name: name, Error: why}) // two strings: nothing to fail
-	return string(b)
+	return wire.AppEntry{Name: name, Summary: summaryOf(app.ma.summaryStatus())}
 }
 
 // summaryOf is the part of s the list carries: taken from the status

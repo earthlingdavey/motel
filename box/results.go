@@ -138,8 +138,9 @@ type result struct {
 	Apps       []string `json:"apps,omitempty"`
 	Diff       string   `json:"diff,omitempty"`
 	Error      string   `json:"error,omitempty"`
-	// Named is the object ids Error names, which an answer holds out of
-	// the response filter as it does Commit.
+	// Named is the object ids Error names, each in the id grammar. An
+	// older moteld held them out of the heuristics it ran over every
+	// answer; none runs now.
 	Named []string `json:"named,omitempty"`
 	// Reloaded, on an applied result, says that the push reloaded moteld:
 	// the Caddyfile changed, or the box's own env file did (txn.reloads),

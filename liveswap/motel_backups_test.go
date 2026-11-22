@@ -52,9 +52,11 @@ func (f *fakeBackups) count() int {
 // TestBackupsRoute: GET /_motel/backups is a viewer of the box's alone.
 // A viewer of one app, a person with no grant and a deploy token are
 // refused before anything is looked at, a key no line lists gets the
-// flat 401; the box's viewer gets the source's answer through the
-// filter, 200 whatever it says, from one look every 10 s however many
-// ask; and a server with no source says it does not read them.
+// flat 401; the box's viewer gets the source's answer as it gave it
+// (motel-backup's words, another program's, which an older moteld
+// passed through the heuristic layers), 200 whatever it says, from one
+// look every 10 s however many ask; and a server with no source says it
+// does not read them.
 func TestBackupsRoute(t *testing.T) {
 	people := newTestPeople(t)
 	h, _ := newTestHandler(t)
@@ -101,9 +103,9 @@ func TestBackupsRoute(t *testing.T) {
 	if got.Healthy || len(got.Apps) != 2 || got.Apps[0].Name != "blog" || got.Apps[1].Name != "demo" || len(got.Lines) != 2 {
 		t.Errorf("the box's viewer: %s", w.Body)
 	}
-	// The filter ran: the generated token is masked, the app names are not.
-	if strings.Contains(w.Body.String(), generated) || !regexp.MustCompile(`\[masked, [0-9]+ chars\]`).MatchString(got.Lines[1].Text) {
-		t.Errorf("the filter did not mask the generated token: %s", w.Body)
+	// No filter ran: the line is the source's.
+	if !strings.Contains(got.Lines[1].Text, generated) || strings.Contains(w.Body.String(), "masked") {
+		t.Errorf("the line is not the source's: %s", w.Body)
 	}
 	if !src.deadline {
 		t.Error("the look was given no deadline")

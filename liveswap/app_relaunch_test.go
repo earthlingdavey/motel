@@ -139,7 +139,7 @@ func TestRelaunchRefusedOnADifferentPin(t *testing.T) {
 	if after, _ := readDeployRecord(rig.spec.dirs, "v1"); string(after) != string(record) {
 		t.Fatalf("the refusal rewrote v1's record:\n%s\n%s", record, after)
 	}
-	if last := rig.ma.status().LastDeploy; last.Status != "failed" || last.Note != "" || last.Error != err.Error() {
+	if last := rig.ma.status().LastDeploy; last.Status != "failed" || last.Note != "" || string(last.Error) != err.Error() {
 		t.Fatalf("last_deploy must be the refusal, with no relaunch note: %+v", last)
 	}
 }

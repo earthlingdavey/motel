@@ -345,7 +345,7 @@ func TestLifecycleRelaunchRefusedSaysNoDeployersText(t *testing.T) {
 	}
 	waitUntil(t, "status to name the refusal", func() bool {
 		wd := rig.ma.status().Watchdog
-		return wd != nil && wd.LastFailure == msg
+		return wd != nil && string(wd.LastFailure) == msg
 	})
 }
 

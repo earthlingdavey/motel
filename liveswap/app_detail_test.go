@@ -60,7 +60,7 @@ func TestFailureDetailPreStartExit(t *testing.T) {
 	if ld.Detail == nil || ld.Detail.Exit != "exit status 3" || ld.Detail.Probe != nil {
 		t.Fatalf("detail = %+v", ld.Detail)
 	}
-	if strings.Join(ld.Detail.LogTail, "|") != "migrate: schema v1 -> v2|migrate: cannot open app.db" || ld.Detail.LogTailTruncated {
+	if strings.Join(strs(ld.Detail.LogTail), "|") != "migrate: schema v1 -> v2|migrate: cannot open app.db" || ld.Detail.LogTailTruncated {
 		t.Fatalf("log tail = %v (truncated %v)", ld.Detail.LogTail, ld.Detail.LogTailTruncated)
 	}
 	// Asked twice: once, and once more to see the count stop growing.
@@ -143,7 +143,7 @@ func TestFailureDetailWaitsForAJournalBehind(t *testing.T) {
 	if err := deployOnceV1(t, rig); err == nil {
 		t.Fatal("deploy should have failed in pre_start")
 	}
-	if d := rig.ma.status().LastDeploy.Detail; d == nil || strings.Join(d.LogTail, "|") != "migrate: cannot open app.db" {
+	if d := rig.ma.status().LastDeploy.Detail; d == nil || strings.Join(strs(d.LogTail), "|") != "migrate: cannot open app.db" {
 		t.Fatalf("a journal two reads behind: detail %+v after %d reads", d, j.calls)
 	}
 }
@@ -160,7 +160,7 @@ func TestFailureDetailCaps(t *testing.T) {
 		t.Fatal("deploy should have failed")
 	}
 	d := rig.ma.status().LastDeploy.Detail
-	if strings.Join(d.LogTail, ",") != "two,three" || !d.LogTailTruncated {
+	if strings.Join(strs(d.LogTail), ",") != "two,three" || !d.LogTailTruncated {
 		t.Fatalf("capped tail = %v (truncated %v)", d.LogTail, d.LogTailTruncated)
 	}
 }
@@ -184,7 +184,7 @@ func TestFailureDetailProbe(t *testing.T) {
 	if j.of.pid != 4242 {
 		t.Fatalf("journal asked by pid %d, want the instance's 4242", j.of.pid)
 	}
-	if ld.Detail == nil || ld.Detail.Probe == nil || ld.Detail.Probe.Status != 400 || !strings.Contains(ld.Detail.Probe.Body, "HTTP_HOST") {
+	if ld.Detail == nil || ld.Detail.Probe == nil || ld.Detail.Probe.Status != 400 || !strings.Contains(string(ld.Detail.Probe.Body), "HTTP_HOST") {
 		t.Fatalf("detail = %+v", ld.Detail)
 	}
 	if ld.Detail.Exit != "" {
@@ -217,14 +217,14 @@ func TestFailureDetailCutsAfterTheKnownValues(t *testing.T) {
 		t.Fatal("deploy should have failed the health gate")
 	}
 	d := rig.ma.status().LastDeploy.Detail
-	if d == nil || d.Probe == nil || len(d.Probe.Body) > probeBodyExcerpt || !strings.Contains(d.Probe.Body, "[redacted:API_TOKEN]") {
+	if d == nil || d.Probe == nil || len(d.Probe.Body) > probeBodyExcerpt || !strings.Contains(string(d.Probe.Body), "[redacted:API_TOKEN]") {
 		t.Fatalf("probe body = %q, want the marker within %d bytes", d.Probe.Body, probeBodyExcerpt)
 	}
-	if len(d.LogTail) != 1 || !d.LogTailTruncated || !strings.HasPrefix(d.LogTail[0], "…") {
+	if len(d.LogTail) != 1 || !d.LogTailTruncated || !strings.HasPrefix(string(d.LogTail[0]), "…") {
 		t.Fatalf("tail = %v (truncated %v), want the one clipped line", d.LogTail, d.LogTailTruncated)
 	}
 	for i := 0; i+8 <= len(secret); i++ {
-		if frag := secret[i : i+8]; strings.Contains(d.Probe.Body, frag) || strings.Contains(d.LogTail[0], frag) {
+		if frag := secret[i : i+8]; strings.Contains(string(d.Probe.Body), frag) || strings.Contains(string(d.LogTail[0]), frag) {
 			t.Fatalf("a fragment of the secret, %q, survived the cut: body %q, tail %q", frag, d.Probe.Body, d.LogTail[0])
 		}
 	}
@@ -240,7 +240,7 @@ func TestFailureDetailHoldsTheLaunchsOwnValues(t *testing.T) {
 	rig.ma.journal = &fakeJournal{lines: []string{"token hunter2hunter2hunter2 refused"}}
 	err := fmt.Errorf("not healthy within deadline 5m: %w", &probeError{status: 500, body: "bad token hunter2hunter2hunter2"})
 	l := launch{secrets: []string{"API_TOKEN=hunter2hunter2hunter2"}} // gitleaks:allow
-	d, keys := rig.ma.failureDetail(rig.ma.snapshot(), rig.spec, err, "exit status 3", 0, l, time.Now())
+	d, keys := rig.ma.failureDetail(rig.ma.snapshot(), rig.spec, "v1", err, "exit status 3", 0, l, time.Now())
 	if d == nil || d.Probe == nil || d.Probe.Body != "bad token [redacted:API_TOKEN]" || d.Exit != "exit status 3" || d.LogTailError != "" {
 		t.Fatalf("detail = %+v, want the launch's value replaced and nothing withheld", d)
 	}
@@ -409,7 +409,7 @@ func TestCapTail(t *testing.T) {
 	if got, tr := capTail(lines, 10, 1000); len(got) != 4 || tr {
 		t.Errorf("no cap: %v %v", got, tr)
 	}
-	if got, tr := capTail(nil, 10, 1000); got != nil || tr {
+	if got, tr := capTail[string](nil, 10, 1000); got != nil || tr {
 		t.Errorf("empty: %v %v", got, tr)
 	}
 	if got, tr := capTail([]string{strings.Repeat("x", 100)}, 10, 50); len(got) != 1 || !strings.HasPrefix(got[0], "…") || len(got[0]) > 50 || !tr {
