@@ -192,9 +192,15 @@ func (ma *managedApp) servedRecord(rec []byte, version string) []byte {
 			top["detail"], _ = json.Marshal(d.again(det)) // strings, bools, an int: nothing to fail
 		}
 	}
-	if keys := d.keys(); len(keys) > 0 {
-		var had []string
-		_ = json.Unmarshal(top["redacted_env"], &had) // a key that is not a list is replaced
+	// The keys the older moteld listed pass layer 1 too, as the door's
+	// own do (door.keys): a name that is the value of a key learnt
+	// since is that value's marker.
+	var had []string
+	_ = json.Unmarshal(top["redacted_env"], &had) // a key that is not a list is replaced
+	for i, k := range had {
+		had[i] = d.r.replaceKnown(k, map[string]bool{})
+	}
+	if keys := d.keys(); len(keys) > 0 || len(had) > 0 {
 		top["redacted_env"], _ = json.Marshal(union(had, keys))
 	}
 	out, err := json.Marshal(top)

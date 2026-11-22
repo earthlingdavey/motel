@@ -907,8 +907,9 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 			// may hold the operating system's words about a path the app
 			// made (a cleanup that failed, a pre-flight's refusal of a
 			// release the app has written). From here the error's text is
-			// the filtered one: the answer's, last_deploy's, the record's
-			// and the journal's. A deploy whose own launch rendered the
+			// the filtered one: the answer's, last_deploy's and the
+			// record's; the journal says it as it came (logFields). A
+			// deploy whose own launch rendered the
 			// env_file reads no file; one that failed before that knows
 			// what this process remembered, and reads the file when it
 			// remembered nothing. The version, the pin and the two digests

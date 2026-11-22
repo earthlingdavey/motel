@@ -590,6 +590,10 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 		// reported as one: the pipeline's own report never runs.
 		ma.lifecycle(c, LifecycleEvent{Name: EventDeployFailed, Release: version, DeployedBy: by,
 			Summary: "deploy of " + version + " failed before it began: the upload could not be staged on the box"})
+		// The error as it came, in the journal: the answer's text passes
+		// the net, and may be withheld.
+		c.logger.Error("deploy failed", zap.String("version", version), zap.String("via", by),
+			zap.String("source", "push"), zap.String("remote", r.RemoteAddr), zap.Error(err))
 		text, keys := ma.errText("staging upload: "+err.Error(), true)
 		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: text, RedactedEnv: keys})
 	case err != nil:

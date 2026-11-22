@@ -8,6 +8,7 @@ import (
 	"go/ast"
 	"go/parser"
 	gotoken "go/token"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -953,5 +954,168 @@ func TestRedactedEnvSpellsNoValue(t *testing.T) {
 	keys := d.keys()
 	if len(keys) != 1 || keys[0] == "STRIPE_LIVE_KEY" || !strings.HasPrefix(keys[0], "[") {
 		t.Errorf("redacted_env: %q", keys)
+	}
+}
+
+// unreadEnvFile leaves b's app with its env_file gone and nothing of it
+// learnt, as after a moteld restart with the file removed: every door
+// that may read it is unread.
+func (b *doorBox) unreadEnvFile(t *testing.T) {
+	t.Helper()
+	must(t, os.Remove(b.rig.spec.envFile))
+	b.rig.ma.secretsMu.Lock()
+	b.rig.ma.secrets, b.rig.ma.secretsLoaded = nil, false
+	b.rig.ma.secretsMu.Unlock()
+}
+
+// Each of the three summaries that quote a refusal's reason is the
+// filter's sentence while the env_file is unread: a deploy refused, the
+// watchdog's relaunch refused, and that refusal told again standing.
+// The reason names a path, which the app may have written.
+func TestEveryRefusalSummaryIsWithheldWhileTheEnvFileIsUnread(t *testing.T) {
+	const path = "/x/written-by-the-app-03/bin"
+	withheld := func(t *testing.T, n *recNotifier, name string, standing bool) {
+		t.Helper()
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		for _, ev := range n.evs {
+			if ev.Name == name && ev.Standing == standing {
+				if strings.Contains(ev.Summary, path) || !strings.HasPrefix(ev.Summary, "[withheld: the app's env_file could not be read") {
+					t.Errorf("%s: %q", name, ev.Summary)
+				}
+				return
+			}
+		}
+		t.Errorf("no %s told (standing %v): %+v", name, standing, n.evs)
+	}
+	t.Run("a deploy refused", func(t *testing.T) {
+		b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+		n := &recNotifier{}
+		b.rig.ma.setNotifier(n)
+		b.unreadEnvFile(t)
+		b.rig.ma.reportDeploy(b.rig.ma.snapshot(), deployRequest{version: "v2"}, deployResult{}, validationError{msg: "pre-flight: " + path})
+		withheld(t, n, EventDeployRefused, false)
+	})
+	t.Run("the watchdog's relaunch refused", func(t *testing.T) {
+		b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+		n := &recNotifier{}
+		b.rig.ma.setNotifier(n)
+		b.rig.startWatchdogT(t)
+		waitUntil(t, "watchdog to arm", func() bool {
+			s := b.rig.ma.wd.currentState()
+			return s == wdStateGrace || s == wdStateWatching
+		})
+		// The file goes between the relaunch's render and its refusal.
+		b.rig.runner.mu.Lock()
+		b.rig.runner.preflightHook = func() { b.unreadEnvFile(t) }
+		b.rig.runner.mu.Unlock()
+		b.rig.runner.setPreflightErr(&preflightError{msg: "pre-flight: " + path})
+		b.rig.runner.handleAt(0).kill()
+		advanceUntil(t, b.rig, time.Second, "the relaunch refused", func() bool {
+			_, ok := n.find(EventRelaunchRefused)
+			return ok
+		})
+		withheld(t, n, EventRelaunchRefused, false)
+	})
+	t.Run("the refusal told standing", func(t *testing.T) {
+		b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+		n := &recNotifier{}
+		b.rig.ma.wd.setRefused("v1", "pre-flight: "+path)
+		b.unreadEnvFile(t)
+		b.rig.ma.reportStanding(n, b.rig.spec)
+		withheld(t, n, EventRelaunchRefused, true)
+	})
+}
+
+// The watchdog's journal line for a failed probe says the error as it
+// came, as an older moteld's did; the status's last_failure is the
+// error through the net.
+func TestProbeFailedJournalSaysTheErrorAsItCame(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	core, logs := observer.New(zap.WarnLevel)
+	b.rig.ma.logger = zap.New(core)
+	b.rig.ma.wd.skipNextGrace(b.rig.runner.handleAt(0))
+	b.rig.prober.setProbeErr(errors.New("health check returned 500: token some-value-of-the-app-01 expired"))
+	b.rig.startWatchdogT(t)
+	advanceUntil(t, b.rig, b.rig.spec.healthInterval, "a failed probe in the journal", func() bool {
+		return logs.FilterMessage("watchdog: health probe failed").Len() > 0
+	})
+	line := logs.FilterMessage("watchdog: health probe failed").All()[0]
+	if got := fmt.Sprint(line.ContextMap()["error"]); got != "health check returned 500: token some-value-of-the-app-01 expired" {
+		t.Errorf("the journal's error: %q", got)
+	}
+	if wd := b.rig.ma.status().Watchdog; wd == nil || wd.LastFailure != "health check returned 500: token [redacted:TOKEN] expired" {
+		t.Errorf("last_failure: %+v", wd)
+	}
+}
+
+// A recovery that gives up (its relaunch refused at the pre-flight)
+// while the env_file, read before, no longer parses: last_failure is the
+// filter's sentence, saying moteld's journal has the error, which it
+// does. (An env_file that does not parse at the relaunch's render is a
+// failure recovery retries: only a file changed after the render, as
+// here at the pre-flight, reaches this.)
+func TestRecoveryWhileTheEnvFileNoLongerParses(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	core, logs := observer.New(zap.ErrorLevel)
+	// As after a moteld restart: the instance gone, nothing current in
+	// this process, the file read before.
+	b.rig.ma.dropIf(b.rig.ma.currentInstance())
+	b.rig.runner.handleAt(0).kill()
+	b.rig.startWatchdogT(t) // nothing to supervise: it parks, and status reads it
+	b.rig.runner.mu.Lock()
+	b.rig.runner.preflightHook = func() {
+		must(t, os.WriteFile(b.rig.spec.envFile, []byte("TOKEN=some-value-of-the-app-01\n3q2x8wZk7Lm9Pa==\n"), 0o600))
+	}
+	b.rig.runner.mu.Unlock()
+	b.rig.runner.setPreflightErr(&preflightError{msg: "pre-flight: /x/written-by-the-app-03/bin"})
+	done := make(chan struct{})
+	go func() { b.rig.ma.recover(context.Background(), zap.New(core)); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery did not give up on a refused relaunch")
+	}
+	wd := b.rig.ma.status().Watchdog
+	if wd == nil || string(wd.LastFailure) != "[withheld: the app's env_file could not be read, so its values are unknown to the filter; moteld's journal has this error]" {
+		t.Fatalf("last_failure: %+v", wd)
+	}
+	if l := logs.FilterMessage("recovery failed").All(); len(l) != 1 || !strings.Contains(fmt.Sprint(l[0].ContextMap()["error"]), "written-by-the-app-03") {
+		t.Errorf("the journal: %v", logs.All())
+	}
+}
+
+// An older record's redacted_env, as an older moteld wrote it, passes
+// layer 1 when served: a key's name that is the value of a key learnt
+// since is that value's marker, as in the door's own list.
+func TestOldRecordsKeysSpellNoValue(t *testing.T) {
+	b := newDoorBox(t, "PRIMARY_KEY_NAME=STRIPE_LIVE_KEY\nSTRIPE_LIVE_KEY=sk-value-0123456789\n")
+	old := `{"error":"start failed","redacted_env":["STRIPE_LIVE_KEY"],"started_at":"2026-11-01T10:00:00Z","status":"failed","version":"v8"}`
+	must(t, writeDeployRecord(b.rig.spec.dirs, "v8", []byte(old)))
+	var rec wire.DeployResult
+	must(t, json.Unmarshal(b.rig.ma.servedRecord([]byte(old), "v8"), &rec))
+	if len(rec.RedactedEnv) != 1 || rec.RedactedEnv[0] == "STRIPE_LIVE_KEY" || !strings.HasPrefix(rec.RedactedEnv[0], "[") {
+		t.Errorf("redacted_env: %q", rec.RedactedEnv)
+	}
+}
+
+// A push whose upload cannot be staged, with the env_file gone since
+// the last launch (its values remembered): the answer is the filter's
+// sentence, saying moteld's journal has the error, and the journal has
+// it as it came.
+func TestStagingFailureWithTheEnvFileGone(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	core, logs := observer.New(zap.ErrorLevel)
+	b.rig.ma.logger = zap.New(core)
+	must(t, os.Remove(b.rig.spec.envFile))
+	b.h.stage = func(io.Reader, string, int64) (string, string, error) {
+		return "", "", &stagingError{errors.New("writing /x/written-by-the-app-03/tmp: no space left on device")}
+	}
+	code, body := pushVersion(t, b.h, "v2", false)
+	if code != http.StatusInternalServerError || !strings.Contains(body, `"error":"[withheld: the app's env_file could not be read, so its values are unknown to the filter; moteld's journal has this error]"`) {
+		t.Fatalf("%d %s", code, body)
+	}
+	if l := logs.FilterMessage("deploy failed").All(); len(l) != 1 || !strings.Contains(fmt.Sprint(l[0].ContextMap()["error"]), "written-by-the-app-03") {
+		t.Errorf("the journal: %v", logs.All())
 	}
 }

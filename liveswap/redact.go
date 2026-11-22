@@ -423,20 +423,36 @@ func (r *Redactor) filter(s string, seen map[string]bool) string {
 // read is door's: whether the env_file may be read now (not for a
 // deploy whose own launch rendered it). names are names the heuristics
 // leave alone (the version, the digests the error names).
+//
+// When the file as it is now does not read or parse, the text is the
+// filter's sentence, saying the error is in moteld's journal: each
+// caller writes it there as it came (a recovery that gave up, a refused
+// relaunch, a push that could not be staged, an interrupted deploy's
+// cleanup).
 func (ma *managedApp) errText(s string, read bool, names ...string) (wire.ErrText, []string) {
 	if s == "" {
 		return "", nil
 	}
 	d := ma.doorKnowing(nil, read, read, names...)
+	if d.unread != "" {
+		return withheldErr(d.unread), nil
+	}
 	return d.errText(s), d.keys()
 }
 
+// withheldErr is an error's text while the app's env_file cannot be
+// read: the filter's sentence, and where the error is.
+func withheldErr(unread string) wire.ErrText {
+	return "[withheld: " + wire.ErrText(unread) + "; moteld's journal has this error]"
+}
+
 // netError is err through the error net (errText), for the error a
-// deploy or a probe ends with, whose text the answer, last_deploy, the
-// record and moteld's journal line all then carry. When the door could
-// not read the env_file, the text is the filter's sentence, saying that
-// the error is in moteld's journal, and the journal line names the
-// error and the env_file's own read error beside it (logFields).
+// deploy or a probe ends with, whose text the answer, last_deploy and
+// the record then carry. moteld's journal line says the error as it
+// came (logFields). When the door could not read the env_file, the text
+// is the filter's sentence, saying that the error is in moteld's
+// journal, and the journal line has the env_file's own read error
+// beside the error.
 //
 // beforeLaunch is a deploy's error from before its launch rendered the
 // env_file (a download, an extraction, the file's own parse): then an
@@ -454,7 +470,7 @@ func (ma *managedApp) netError(err error, read, beforeLaunch bool, names ...stri
 	}
 	de := &doorError{err: err, msg: d.errText(err.Error()), keys: d.keys(), unread: d.unreadErr}
 	if de.unread != nil {
-		de.msg = "[withheld: " + wire.ErrText(d.unread) + "; moteld's journal has this error]"
+		de.msg = withheldErr(d.unread)
 	}
 	return de
 }
@@ -531,7 +547,7 @@ const errTextMax = logsLineMax
 
 // bounded is filter over s, of which at most limit bytes are sent, with
 // what is read of a longer s and what is sent of it as the logs read
-// has always had them (#635). The filter sees s cut to max and a margin,
+// has always had them (#635). The filter sees s cut to limit and a margin,
 // the longest form it knows or logsCutMargin if more, so every value or
 // credential that begins inside what is sent is whole when it is looked
 // for (A): of a longer s, limit plus the margin is read, and no more. Where

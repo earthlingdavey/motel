@@ -163,6 +163,7 @@ type fakeRunner struct {
 	stopLeavesAlive bool   // Stop does not actually kill the handle
 	startDies       string // when set, Start's handle is already dead with this exit
 	preflightErr    error  // Preflight returns this
+	preflightHook   func() // Preflight calls this first, unlocked, when set
 	preflights      []startSpec
 	sweepErr        error   // Sweep returns this
 	sweepErrs       []error // consumed one per Sweep call before sweepErr applies
@@ -199,6 +200,12 @@ func (r *fakeRunner) Start(spec startSpec) (handle, error) {
 }
 
 func (r *fakeRunner) Preflight(spec startSpec) error {
+	r.mu.Lock()
+	hook := r.preflightHook
+	r.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.preflights = append(r.preflights, spec)
