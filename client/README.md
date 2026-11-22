@@ -625,7 +625,8 @@ newest value with its time and age and, on a row of its own, its
 highest and lowest with their times, those two again at the top and
 the bottom of its axis, written alike to more places until they differ
 (cores too small for the label's seven cells in millicores, `0.04m`,
-and rates in thousandths a second, `0.3m/s`);
+and rates in thousandths a second, `0.3m/s`; a pair no writing fits
+alike each in its own, so no label is cut);
 every point of one value is said once (`every point 0%`) and labelled
 once, on its line's row, the bottom one at zero (values no label tells
 apart, a page of memory, are drawn so too); and under it the time axis with a `^` in each column that holds a
@@ -636,12 +637,15 @@ break), and under it the window's two ends and how many of its steps
 have a point. Points a step apart are joined; a step
 with no point is a gap, never a zero or a line across it, and where a
 column holds several steps the axis's break says it. A point joined to
-neither is drawn across its step, so it shows. The 5xx share and the
-p95 have no point at a step with no request: in those two, a step the
-requests panel has a rate of 0 at is no break, the count says how many
-steps had requests (a rate above 0), and two points with only such steps between them
-are bridged by a dotted line, a dot every second cell (with no
-requests panel, every step with no point is a gap). A panel absent says why (no point in the window; the request
+neither is drawn across its step, two dots wide at the least, so it
+shows and is never one dot of a bridge. The 5xx share and the
+p95 have no point at a step with no request (nor the p95 at one of
+cache hits alone): in those two, a step the requests panel has a point
+at is no break, the count says how many steps had requests (a rate
+above 0) and, when that differs, how many have a point, and two points
+with only such steps between them are bridged by a dotted line, a dot
+every second cell (with no requests panel, every step with no point is
+a gap). A panel absent says why (no point in the window; the request
 panels only for an app behind `observe`), and one the client does not
 know is named as the box's. The box with no metrics line, a store that
 did not answer, a word for the store the client does not know, and a

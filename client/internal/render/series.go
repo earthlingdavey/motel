@@ -88,7 +88,8 @@ func WriteSeries(w io.Writer, s Series) error {
 			count = fmt.Sprintf("%d of %d steps had requests", pn.Requested, pn.Steps)
 			if pn.Points != pn.Requested {
 				// A step with requests and no point here (every one aborted,
-				// or a gap in the store) is said, as the screen's axis breaks.
+				// or, for the p95, cache hits alone) is said, as the screen
+				// says it.
 				count += fmt.Sprintf(", %d with a point", pn.Points)
 			}
 		}

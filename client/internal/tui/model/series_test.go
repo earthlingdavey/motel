@@ -875,6 +875,63 @@ func TestPlotQuiet(t *testing.T) {
 	}
 }
 
+// dotCols is the dot columns of a plot's rows that hold a dot.
+func dotCols(rows []string) map[int]bool {
+	out := map[int]bool{}
+	for _, r := range rows {
+		for c, ch := range []rune(r) {
+			if ch == ' ' {
+				continue
+			}
+			bits := ch - 0x2800
+			if bits&(0x01|0x02|0x04|0x40) != 0 {
+				out[2*c] = true
+			}
+			if bits&(0x08|0x10|0x20|0x80) != 0 {
+				out[2*c+1] = true
+			}
+		}
+	}
+	return out
+}
+
+// TestPlotLonePoints: in a window of many steps a column (a day's 289
+// on 91 cells), a point joined to neither is two dots wide, so never
+// one dot as a bridge's are, which stay one dot every fourth column;
+// and a point alone on the window's first step is two dots wide too.
+func TestPlotLonePoints(t *testing.T) {
+	end := t0
+	start := end.Add(-24 * time.Hour)
+	step := 5 * time.Minute
+	at := func(k int) float64 { return float64(start.Add(time.Duration(k) * step).Unix()) }
+	stored := map[int64]bool{}
+	for k := 0; k <= 288; k++ {
+		stored[int64(at(k))] = true
+	}
+	pts := [][2]float64{{at(10), 0}, {at(50), 0}, {at(51), 0}, {at(120), 0}}
+	got := dotCols(model.Plot(pts, stored, start, end, step, 0, 0, 91, 4))
+	dot := func(k int) int { return int(math.Round(float64(k) / 288 * 181)) }
+	for _, k := range []int{10, 120} {
+		if !got[dot(k)] || !got[dot(k)-1] {
+			t.Errorf("the lone point at step %d is not two dots wide: dots %v", k, got)
+		}
+	}
+	// The bridges' dots: none beside another.
+	for c := dot(10) + 1; c < dot(120)-1; c++ {
+		if c >= dot(50)-1 && c <= dot(51)+1 {
+			continue
+		}
+		if got[c] && got[c+1] {
+			t.Errorf("two dots side by side in a bridge at dot column %d: %v", c, got)
+		}
+	}
+	// Alone on the first step of the hour: two dots wide.
+	hour := model.Plot([][2]float64{{float64(t0.Add(-time.Hour).Unix()), 1}}, nil, t0.Add(-time.Hour), t0, time.Minute, 1, 1, 91, 4)
+	if got := dotCols(hour); !got[0] || !got[1] {
+		t.Errorf("a point alone on the first step: dots %v", got)
+	}
+}
+
 // TestSeriesExtremes: a panel's highest and lowest are written alike
 // until they differ, to as many places in one unit, never coarser than
 // their plain writing, within a plot label's seven cells when compact,
@@ -915,8 +972,15 @@ func TestSeriesExtremes(t *testing.T) {
 		{wire.PanelMemory, 150.51 * (1 << 20), 150.49 * (1 << 20), false, "150.51 MiB", "150.49 MiB"},
 		{wire.PanelRequests, 1.0 / 3600, 0, false, "0.00028/s", "0.00000/s"},
 		{"disk_bytes", 2, 1, true, "2", "1"},
+		// No pair fits alike: each in its own writing that fits.
+		{wire.PanelCPU, 0.2, 0.000012, true, "0.200", "0.012m"},
+		{wire.PanelRequests, 0.5, 0.003333, true, "0.50/s", "3.3m/s"},
 	} {
-		if h, l := model.SeriesExtremes(c.name, c.hi, c.lo, c.compact); h != c.wantHi || l != c.want {
+		h, l := model.SeriesExtremes(c.name, c.hi, c.lo, c.compact)
+		if c.compact && c.name != "disk_bytes" && (utf8.RuneCountInString(h) > 7 || utf8.RuneCountInString(l) > 7) {
+			t.Errorf("%s %v %v: a label wider than its room: %q %q", c.name, c.hi, c.lo, h, l)
+		}
+		if h != c.wantHi || l != c.want {
 			t.Errorf("%s %v %v %v: %q %q, want %q %q", c.name, c.hi, c.lo, c.compact, h, l, c.wantHi, c.want)
 		}
 	}
@@ -998,10 +1062,11 @@ func plotOf(ls []model.Line, label string) (rows []string, axis, times string) {
 }
 
 // TestMetricsQuiet: a quiet app's hour: the 5xx share's and the p95's
-// steps with no point but a requests point of 0 are no gap, their axes
-// broken only where the requests' is (the store's gap) and at the step
-// that had requests but no point of theirs (every one aborted), and
-// their counts say how many steps had requests; every point 0% is said once
+// steps with no point but a requests point are no gap, a request there
+// or not (every one aborted), their axes broken only where the
+// requests' is (the store's gap) and a bridge across them, and their
+// counts say how many steps had requests and how many have a point;
+// every point 0% is said once
 // and labelled once, on the bottom row; the CPU's and a p95 under a
 // millisecond's labels differ, and no value is a "<" floor. With no
 // requests panel, each step with no point breaks the axis, as before.
@@ -1021,22 +1086,24 @@ func TestMetricsQuiet(t *testing.T) {
 	if strings.Count(rqAxis, " ") < 6 {
 		t.Fatalf("the requests' axis is not broken at the store's gap: %q", rqAxis)
 	}
-	// The requests' axis, broken too in the cells of minute 12's span.
-	want := []byte(rqAxis)
-	for c := int(math.Round((11*60+1)/3600.0*181)) / 2; c <= int(math.Round(12*60/3600.0*181))/2; c++ {
-		want[c] = ' '
-	}
 	for _, label := range []string{"5xx share", "p95"} {
 		rows, axis, times := plotOf(ls, label)
-		if axis != string(want) || !strings.Contains(times, "5 of 61 steps had requests") {
-			t.Errorf("%s: axis %q, want %q; times %q", label, axis, want, times)
+		if axis != rqAxis || !strings.Contains(times, "5 of 61 steps had requests, 4 with a point") {
+			t.Errorf("%s: axis %q, want the requests' %q; times %q", label, axis, rqAxis, times)
 		}
-		// No bridge across minute 12: nothing between minute 5's cells
-		// and minute 20's.
-		for _, r := range rows {
-			if mid := []rune(strings.SplitN(r, " |", 2)[1])[9:27]; strings.TrimSpace(string(mid)) != "" {
-				t.Errorf("%s: a bridge across the step with requests: %q", label, r)
+		// The bridge across minute 12, from minute 5's cells to minute
+		// 20's: a dot in every second cell.
+		dots := 0
+		for c := 9; c < 27; c++ {
+			for _, r := range rows {
+				if []rune(strings.SplitN(r, " |", 2)[1])[c] != ' ' {
+					dots++
+					break
+				}
 			}
+		}
+		if dots < 8 {
+			t.Errorf("%s: no bridge across the step with requests and no point:\n%s", label, strings.Join(rows, "\n"))
 		}
 	}
 	rows, _, _ := plotOf(ls, "5xx share")
