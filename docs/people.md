@@ -268,7 +268,8 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   fields are the box's own and pass no filter. While the app's
   `env_file` cannot be read, each line's text is the filter's sentence
   (`[withheld: …]`) and the rest is sent. Of a line longer than 4 KiB
-  the filter reads at most 12 KiB, more than is sent. Not a value the
+  the filter reads 4 KiB and a margin, 8 KiB or the longest form of a
+  value it knows if that is longer: more than is sent. Not a value the
   app prints across two lines, which are two lines here. Not a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started):
   changing a value does not hide it in lines already written, so
   revoke the old credential.

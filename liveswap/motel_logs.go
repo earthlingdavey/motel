@@ -163,8 +163,10 @@ func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle,
 // sent: the reach of a credential the shape and entropy layers know,
 // whose rule needs its end (a PEM block of an RSA key of 4,096 bits on
 // one line, about 3.3 KB; a JWT's three segments; a provider token).
-// A line is at most 48 KiB as journald stores it, so the filter reads
-// at most 12 KiB of one, 16 such lines an answer.
+// The filter reads 4 KiB of a line and this margin, or the longest form
+// of a known value it holds if that is longer (bounded, redact.go): 12
+// KiB of a 48 KiB line, as journald stores one at most, unless a known
+// value's longest form is longer than 8 KiB.
 const logsCutMargin = 8 << 10
 
 // tokenAlphabet is layer 4's (entropyTokenRe in redact.go).

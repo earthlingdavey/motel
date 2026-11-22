@@ -241,19 +241,25 @@ Properties that matter to the model:
   by a fingerprint. Markers are chosen so that none contains a known
   value, and the first layer runs once more over the text, so the
   promise holds for the text sent. Each run Go quoted inside an error
-  is also filtered as the bytes it quotes. motel's own sentence for a
+  is also filtered as the bytes it quotes, and an error's text is carried
+  to 4 KiB at most, so that what an app makes Go's client quote costs
+  moteld no more to filter than a logs line. motel's own sentence for a
   probe that got no answer leaves motel's URL out, so that the error
   net does not meet `DB_HOST=localhost` in motel's words.
   While an app's `env_file` cannot be read (after a restart, or a
   reload to another file), its values are unknown to the filter: each
   text of the app's, and each error's text, is the filter's sentence
   (`[withheld: …]`), and moteld's own fields are sent; a lifecycle
-  summary told meanwhile is the sentence too. A deploy whose own launch
+  summary told meanwhile that quotes an error's text is the sentence
+  too, one of motel's words alone is told as written. An error's text
+  is the sentence also when the file read before no longer reads or
+  parses: an error can quote a line of it. A deploy whose own launch
   rendered the file filters its error with the values it launched with,
   and one that failed before its launch, with the file not there,
   filters it with the values this process remembers, when it remembers
-  some (a file not there holds no others). moteld's journal line names
-  a withheld error and the file's own read error. A deploy's record holds the result with its app text
+  some (a file not there holds no others). moteld's journal says every
+  error as it came, and beside a withheld one the file's own read
+  error. A deploy's record holds the result with its app text
   and error text already filtered, marked so, and is served as written;
   a record an older moteld wrote has its error and detail filtered
   again when it is read.
@@ -290,8 +296,9 @@ Properties that matter to the model:
   the alert and silence rows as Alertmanager holds them (a summary
   motel told passed the app's filter when it was told); (5) the
   heuristics over other programs' and the operator's text: the backups'
-  lines (sqlite3's words about a damaged copy can name a table the app
-  made, which no app's values ever met), the rules, and the box
+  lines (an app can name a table or an index, sqlite3's words about a
+  damaged copy name it, and a viewer of the box reads that name; no
+  app's values ever met it), the rules, and the box
   webhook's answers (a refusal quotes the operator's own Caddyfile);
   (6) moteld's own names, words, times and figures. None of the six is
   the app printing one of its values while it runs; the first two are
