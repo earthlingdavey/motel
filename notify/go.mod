@@ -2,7 +2,7 @@
 // Alertmanager on a unix socket (notify/DESIGN-notify.md). Its own module,
 // as liveswap, penaltybox and box are; it imports liveswap (the apps'
 // deploy trust, the response filter) and the backup record, never the
-// other way round: liveswap emits through Caddy's events app and knows
+// other way round: liveswap reports to its Notifier interface and knows
 // nothing of notify.
 module github.com/smallhoursorg/motel/notify
 
