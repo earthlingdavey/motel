@@ -251,9 +251,15 @@ Properties that matter to the model:
   text of the app's, and each error's text, is the filter's sentence
   (`[withheld: …]`), and moteld's own fields are sent; a lifecycle
   summary told meanwhile that quotes an error's text is the sentence
-  too, one of motel's words alone is told as written. An error's text
-  is the sentence also when the file read before no longer reads or
-  parses: an error can quote a line of it. A deploy whose own launch
+  too, one of motel's words alone is told as written. Where an error
+  can quote a line of the file (one that is no assignment), its text is
+  the sentence also when the file read before no longer reads or
+  parses: a deploy's error from before its launch, a recovery that gave
+  up, a refused relaunch's `last_failure`, a push that could not be
+  staged, an interrupted deploy's record. That sentence says moteld's
+  journal has the error, which it does. Not a failed probe's
+  `last_failure`, an older record's error as it is served, or a
+  refusal's summary: none quotes a line of the file. A deploy whose own launch
   rendered the file filters its error with the values it launched with,
   and one that failed before its launch, with the file not there,
   filters it with the values this process remembers, when it remembers
