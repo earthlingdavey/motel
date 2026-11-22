@@ -173,8 +173,8 @@ func (f *fakeSystemdConn) UnitStatus(_ context.Context, name string) (unitStatus
 
 func (f *fakeSystemdConn) UnitStatusAndEnvironment(ctx context.Context, name string) (unitStatus, []string, error) {
 	st, err := f.UnitStatus(ctx, name)
-	if err != nil {
-		return st, nil, err
+	if err != nil || st.LoadState == "not-found" {
+		return st, nil, err // as the real client: a unit not known has none
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -695,6 +695,13 @@ func (c *endedJobConn) UnitStatus(ctx context.Context, name string) (unitStatus,
 	return c.fakeSystemdConn.UnitStatus(ctx, name)
 }
 
+func (c *endedJobConn) UnitStatusAndEnvironment(ctx context.Context, name string) (unitStatus, []string, error) {
+	if c.onEndedJob(ctx) {
+		return unitStatus{}, nil, context.DeadlineExceeded
+	}
+	return c.fakeSystemdConn.UnitStatusAndEnvironment(ctx, name)
+}
+
 func (c *endedJobConn) ResetFailedUnit(ctx context.Context, name string) error {
 	if c.onEndedJob(ctx) {
 		return context.DeadlineExceeded
@@ -1016,19 +1023,19 @@ func TestStatusCarriesNoEnvironment(t *testing.T) {
 	}
 }
 
-// TestSystemdRunnerReattachThatCannotReadIsAnError: the status and the
-// environment are one read, so a read that fails adopts nothing and is
-// the caller's retry (recover), never an adoption whose environment
-// the filter does not know (#657's review, round 3).
-func TestSystemdRunnerReattachThatCannotReadIsAnError(t *testing.T) {
+// TestSystemdRunnerReattachAdoptsAUnitWithNoEnvironment: a read that
+// succeeds with no environment (the property missing, or a shape not
+// read) still adopts the running unit, which serves; the handle reports
+// none, and the app's filter knows the file as it is now.
+func TestSystemdRunnerReattachAdoptsAUnitWithNoEnvironment(t *testing.T) {
 	r, conn := newTestSystemdRunner(t)
-	conn.mu.Lock()
-	conn.env = map[string][]string{"live.service": {"API_TOKEN=launched-value-01"}}
-	conn.mu.Unlock()
 	conn.setStatus("live.service", unitStatus{LoadState: "loaded", ActiveState: "active", SubState: "running", MainPID: 77, Sandboxed: true})
-	conn.setStatusErr(errors.New("dbus: reply lost"))
-	if h, ok, err := r.Reattach(handleState{Unit: "live.service"}); ok || h != nil || err == nil {
-		t.Fatalf("an unread unit must not be adopted: h=%v ok=%v err=%v", h, ok, err)
+	h, ok, err := r.Reattach(handleState{Unit: "live.service"})
+	if !ok || err != nil {
+		t.Fatalf("a running unit must be adopted though it reports no environment: ok=%v err=%v", ok, err)
+	}
+	if env := h.launchEnv(); env != nil {
+		t.Fatalf("no environment reported as %q", env)
 	}
 }
 

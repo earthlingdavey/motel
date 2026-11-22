@@ -100,10 +100,11 @@ type systemdConn interface {
 	// UnitStatusAndEnvironment is UnitStatus plus the unit's own
 	// Environment=, KEY=VALUE pairs as the manager holds them (not its
 	// defaults, which apply at exec): the environment the caller built
-	// for the launch, from the same single read, so either both are
-	// read or the call fails. Reattach alone calls it, for the response
-	// filter (handle.launchEnv); the pairs hold env_file values, so they
-	// are never logged nor kept elsewhere.
+	// for the launch, from the same single read, so a read that fails
+	// fails for both. A property missing or of a shape not read is no
+	// environment (nil), on a read that succeeded. Reattach alone calls
+	// it, for the response filter (handle.launchEnv); the pairs hold
+	// env_file values, so they are never logged nor kept elsewhere.
 	UnitStatusAndEnvironment(ctx context.Context, name string) (unitStatus, []string, error)
 	// ResetFailedUnit clears a failed unit so the manager unloads it.
 	ResetFailedUnit(ctx context.Context, name string) error
@@ -1194,9 +1195,11 @@ func (r *systemdRunner) Reattach(st handleState) (handle, bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(r.ctx, startJobTimeout)
 	defer cancel()
-	// The environment comes with the status, in one read: a failure of
-	// it is the caller's retry, never an adoption that does not know
-	// what the instance holds (#657).
+	// The environment comes with the status, in one read: a read that
+	// fails is the caller's retry, never an adoption whose environment
+	// went unread (#657). One that reads none (a property missing, a
+	// shape not read) adopts with none, and the app's filter says so
+	// and knows the file as it is now (rememberRunningEnv).
 	us, env, err := r.conn.UnitStatusAndEnvironment(ctx, st.Unit)
 	if err != nil {
 		return nil, false, fmt.Errorf("reading recorded unit %s: %w", st.Unit, err)

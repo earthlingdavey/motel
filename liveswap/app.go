@@ -1463,7 +1463,7 @@ func (ma *managedApp) ensureRunning() error {
 		// response about it is filtered with what it holds, not the
 		// env_file as it is now (#657).
 		if !ma.rememberRunningEnv(spec, st.CurrentVersion, socket, releaseDir, h.launchEnv()) {
-			c.logger.Warn("the reattached unit's environment was not read back; the response filter knows its env_file only as the file is now",
+			c.logger.Warn("the reattached unit's environment, as the manager reports it, is not one motel built for this instance (no SOCKET of its own); the response filter knows its env_file only as the file is now",
 				zap.String("unit", st.Handle.Unit))
 		}
 		inst := &instance{version: st.CurrentVersion, nonce: st.Nonce, socket: socket, sock: sock, handle: h}

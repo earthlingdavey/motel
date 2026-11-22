@@ -186,7 +186,7 @@ func TestReattachWithNoEnvironmentKnowsTheFileAsBefore(t *testing.T) {
 		if len(rig.ma.secrets) != 0 {
 			t.Errorf("%q: remembered %q", env, rig.ma.secrets)
 		}
-		if got := logs.FilterMessageSnippet("environment was not read back").All(); len(got) != 1 || strings.Contains(got[0].Message, launchedToken) {
+		if got := logs.FilterMessageSnippet("is not one motel built for this instance").All(); len(got) != 1 || strings.Contains(got[0].Message, launchedToken) {
 			t.Errorf("%q: warned %v", env, logs.All())
 		}
 		if r := rig.ma.redactorFor(rig.ma.status()); r.withhold == "" {

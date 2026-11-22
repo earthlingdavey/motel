@@ -735,13 +735,25 @@ func (c *userManagerClient) ResetFailedUnit(ctx context.Context, name string) er
 // trip (GetAll with an empty interface spans Unit and Service). A unit
 // the manager does not know comes back as not-found, never an error.
 func (c *userManagerClient) UnitStatus(ctx context.Context, name string) (unitStatus, error) {
-	st, _, err := c.UnitStatusAndEnvironment(ctx, name)
+	st, _, err := c.unitProps(ctx, name)
 	return st, err
 }
 
 // UnitStatusAndEnvironment is UnitStatus's one read, with the unit's
 // Environment taken out of it as well (envStrings): Reattach's alone.
+// A not-found unit has none.
 func (c *userManagerClient) UnitStatusAndEnvironment(ctx context.Context, name string) (unitStatus, []string, error) {
+	st, props, err := c.unitProps(ctx, name)
+	if err != nil {
+		return st, nil, err
+	}
+	return st, envStrings(props["Environment"]), nil
+}
+
+// unitProps is the one GetAll both make: the status, and the raw map
+// for the caller that also wants the environment. A unit the manager
+// does not know is not-found with no map.
+func (c *userManagerClient) unitProps(ctx context.Context, name string) (unitStatus, map[string]any, error) {
 	conn, err := c.get()
 	if err != nil {
 		return unitStatus{}, nil, err
@@ -756,7 +768,7 @@ func (c *userManagerClient) UnitStatusAndEnvironment(ctx context.Context, name s
 	}
 	st := statusFromProps(props)
 	st.Name = name
-	return st, envStrings(props["Environment"]), nil
+	return st, props, nil
 }
 
 // isNoSuchUnit reports the manager saying it does not know the unit —
