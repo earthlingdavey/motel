@@ -31,7 +31,6 @@ application/json OK
 # GET ?deploy=v1
 application/json OK
 {"version":"v1","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>","artifact_entries":0,"artifact_bytes":0,"phases":[{"name":"downloading","started_at":"<time>","seconds":<s>},{"name":"extracting","started_at":"<time>","seconds":<s>},{"name":"preparing","started_at":"<time>","seconds":<s>},{"name":"starting","started_at":"<time>","seconds":<s>},{"name":"soaking","started_at":"<time>","seconds":<s>},{"name":"promoting","started_at":"<time>","seconds":<s>}],"filtered_at_entry":true}
-
 # GET ?deploy=v9
 application/json Not Found
 {"error":"no deploy recorded for version v9"}

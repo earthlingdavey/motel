@@ -417,6 +417,16 @@ func (ma *managedApp) errText(s string, read bool, names ...string) (wire.ErrTex
 	return d.errText(s), d.keys()
 }
 
+// netError is err through the error net (errText), for the error a
+// deploy or a probe ends with, whose text the answer, last_deploy, the
+// record and moteld's journal line all then carry; and the env_file's
+// own read error when the door could not read it, which the journal
+// line names beside the filter's sentence.
+func (ma *managedApp) netError(err error, read bool, names ...string) *doorError {
+	d := ma.door(read, names...)
+	return &doorError{err: err, msg: d.errText(err.Error()), keys: d.keys(), unread: d.unreadErr}
+}
+
 // errText is the net for a place that holds the app's door already.
 func (d *door) errText(s string) wire.ErrText { return wire.ErrText(d.quoted(s)) }
 
@@ -429,8 +439,10 @@ type door struct {
 	// unread, when set, is why the app's values are unknown to the
 	// filter (its env_file could not be read after a restart or a
 	// reload): the app's text is withheld, each text alone, and the
-	// rest of the answer is sent.
-	unread string
+	// rest of the answer is sent. unreadErr is the read's error, for
+	// moteld's journal (doorError).
+	unread    string
+	unreadErr error
 }
 
 // text is s, which the app wrote, as an answer may carry it.
@@ -493,17 +505,19 @@ func (d *door) logLine(text string) wire.AppText {
 	return wire.AppText(out)
 }
 
-// lines is text over a journal tail: filtered as one text, so that a
-// rule that spans lines (a PEM block) sees them together, and a line
-// is the unit a reader sees again after.
+// lines is a journal tail through the door, each line on its own, as
+// the logs read filters each: a rule that reaches across white space
+// (a bearer token, an assignment) then never joins two lines or masks
+// the next line's first word, and the tail keeps its count of lines.
+// A PEM block printed a line at a time is no block to the shape rule;
+// its lines are long base64 runs the entropy layer takes.
 func (d *door) lines(lines []string) []wire.AppText {
 	if len(lines) == 0 {
 		return nil
 	}
-	parts := strings.Split(d.mixed(strings.Join(lines, "\n")), "\n")
-	out := make([]wire.AppText, len(parts))
-	for i, p := range parts {
-		out[i] = wire.AppText(p)
+	out := make([]wire.AppText, len(lines))
+	for i, l := range lines {
+		out[i] = wire.AppText(d.mixed(l))
 	}
 	return out
 }

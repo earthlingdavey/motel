@@ -659,7 +659,7 @@ func (h *Handler) runDeploy(w http.ResponseWriter, r *http.Request, ma *managedA
 	if !wantsStream(r) {
 		return h.mapDeployResult(w, ma, ma.Deploy(r.Context(), req))
 	}
-	st := newDeployStream(w, ma)
+	st := newDeployStream(w)
 	req.onPhase = st.phase
 	return st.finish(ma, ma.Deploy(r.Context(), req))
 }
@@ -671,7 +671,7 @@ func (h *Handler) finishDeploy(w http.ResponseWriter, r *http.Request, ma *manag
 	if !wantsStream(r) {
 		return h.mapDeployResult(w, ma, run(nil))
 	}
-	st := newDeployStream(w, ma)
+	st := newDeployStream(w)
 	return st.finish(ma, run(st.phase))
 }
 
@@ -721,18 +721,15 @@ func deployOutcome(ma *managedApp, err error) (int, any) {
 	case errors.Is(err, context.Canceled):
 		return 0, nil
 	default:
-		// The keys the net replaced are last_deploy's, which the
-		// status holds, when the pipeline ran; an error from outside it
-		// brings its own.
+		// The keys the net replaced in this error's text, and those of
+		// the status beside it (its last_deploy's detail, the watchdog's
+		// failure): the status is read after the pipeline let go of the
+		// lock, so its last_deploy may already be another deploy's.
 		text, keys := ma.outcomeText(err)
-		redacted := status.RedactedEnv
-		if _, ran := err.(*doorError); !ran && len(keys) > 0 { //nolint:errorlint // as outcomeText
-			redacted = union(redacted, keys)
-		}
 		return http.StatusInternalServerError, wire.Failure{
 			Error:       text,
 			Status:      status, // shows the old version still serving
-			RedactedEnv: redacted,
+			RedactedEnv: union(status.RedactedEnv, keys),
 		}
 	}
 }
@@ -775,12 +772,11 @@ func wantsStream(r *http.Request) bool {
 // streamed yet and is the single response with its real code.
 type deployStream struct {
 	w     http.ResponseWriter
-	ma    *managedApp
 	begun bool
 }
 
-func newDeployStream(w http.ResponseWriter, ma *managedApp) *deployStream {
-	return &deployStream{w: w, ma: ma}
+func newDeployStream(w http.ResponseWriter) *deployStream {
+	return &deployStream{w: w}
 }
 
 // write sends one JSON object as a line and flushes it. A

@@ -401,16 +401,8 @@ func (w *watchdogState) setLastFailure(desc wire.ErrText, keys ...string) {
 // says the filtered text, for the journal's line; the count is the
 // consecutive failures.
 func (ma *managedApp) probeFailed(version string, err error) (int, error) {
-	text, keys := ma.errText(err.Error(), true, version)
-	err = &doorError{err: err, msg: text, keys: keys}
-	return ma.wd.recordFailure(text, keys), err
-}
-
-// failureKeys is the env keys the door replaced in the last failure.
-func (w *watchdogState) failureKeys() []string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.lastFailureKeys
+	de := ma.netError(err, true, version)
+	return ma.wd.recordFailure(de.msg, de.keys), de
 }
 
 // noteFlap breaks the continuous-health streak without counting toward
@@ -536,10 +528,18 @@ func (w *watchdogState) reset() {
 }
 
 func (w *watchdogState) statusSnapshot(now time.Time, window time.Duration) *watchdogSnapshot {
+	s, _ := w.statusWithKeys(now, window)
+	return s
+}
+
+// statusWithKeys is statusSnapshot and the env keys the app's filter
+// replaced in its last_failure, read under one lock so that the two are
+// the same failure's.
+func (w *watchdogState) statusWithKeys(now time.Time, window time.Duration) (*watchdogSnapshot, []string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.state == "" {
-		return nil // watchdog never armed (e.g. before first Start)
+		return nil, nil // watchdog never armed (e.g. before first Start)
 	}
 	inWindow := 0
 	for _, t := range w.restarts {
@@ -554,7 +554,7 @@ func (w *watchdogState) statusSnapshot(now time.Time, window time.Duration) *wat
 		LastRestartAt:    w.lastRestartAt,
 		LastRestartCause: w.lastRestartCause,
 		LastFailure:      w.lastFailure,
-	}
+	}, w.lastFailureKeys
 }
 
 // watchdogLoop runs until ctx is canceled (Destruct). Each cycle

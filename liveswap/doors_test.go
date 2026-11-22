@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
@@ -474,7 +475,7 @@ func TestOldRecordIsFilteredWhenRead(t *testing.T) {
 	// Marked, the same bytes are sent as they stand.
 	marked := strings.Replace(old, `"error":`, `"filtered_at_entry":true,"error":`, 1)
 	must(t, writeDeployRecord(d, "v8", []byte(marked)))
-	if w := do(t, b.h, http.MethodGet, "/demo?deploy=v8", appToken(t), ""); w.Body.String() != marked+"\n\n" { // the file's newline, and the answer's
+	if w := do(t, b.h, http.MethodGet, "/demo?deploy=v8", appToken(t), ""); w.Body.String() != marked+"\n" {
 		t.Errorf("a marked record: %s", w.Body)
 	}
 	// An error or a detail not of its type is not sent: it could not be
@@ -659,5 +660,67 @@ func TestProbeWithNoAnswerLeavesMotelsURLOut(t *testing.T) {
 	b := newDoorBox(t, "PGHOST=localhost\nHEALTH=/health?ready=1\n")
 	if text, keys := b.rig.ma.errText("health gate: not healthy within deadline 5m0s: "+err.Error(), true); strings.Contains(string(text), "[redacted:") || keys != nil {
 		t.Errorf("the net replaced motel's own words: %q %v", text, keys)
+	}
+}
+
+// A failed deploy's tail passes the door line by line: a rule that
+// reaches across white space (a bearer token, an assignment) never
+// joins two lines or masks the next line's first word, and a line that
+// holds a line break of its own stays one line, as the journal kept it.
+func TestDoorTailKeepsItsLines(t *testing.T) {
+	d := &door{r: NewRedactor(nil, nil), seen: map[string]bool{}}
+	in := []string{"refreshing token", "ConnectionPoolManagerStarted ok", "db password:", "connection established", "one\ntwo"}
+	got := strs(d.lines(in))
+	if strings.Join(got, "|") != strings.Join(in, "|") {
+		t.Errorf("the tail through the door: %q", got)
+	}
+}
+
+// A version the records name is moteld's own name, left alone by the
+// heuristics in an error's text as the versions on disk are: a
+// generated-looking version that is no longer on disk (a pruned
+// release, a recovery that finds its release gone) is not masked.
+func TestErrorNetLeavesRecordedVersionsAlone(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	sha := strings.Repeat("9f8e7d6c5b4a", 3) + "3a2b"
+	must(t, writeDeployRecord(b.rig.spec.dirs, sha, []byte(`{"version":"`+sha+`","status":"failed"}`)))
+	msg := "state names version " + sha + " but its release dir is missing"
+	if text, _ := b.rig.ma.errText(msg, true); string(text) != msg {
+		t.Errorf("a recorded version in an error: %q", text)
+	}
+	if text, _ := b.rig.ma.errText(strings.Replace(msg, sha, strings.Repeat("7c6b5a4d3e2f", 3)+"1a0b", 1), true); !strings.Contains(string(text), "[masked, 40 chars]") {
+		t.Errorf("the premise, a version no record names is masked: %q", text)
+	}
+}
+
+// A failed deploy's answer names the keys the net replaced in its own
+// error, whatever deploy the status beside it describes by then.
+func TestFailureNamesItsOwnErrorsKeys(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	err := &doorError{err: errors.New("x"), msg: "start failed: [redacted:TOKEN]", keys: []string{"TOKEN"}}
+	code, body := deployOutcome(b.rig.ma, err)
+	f, ok := body.(wire.Failure)
+	if code != http.StatusInternalServerError || !ok || strings.Join(f.RedactedEnv, ",") != "TOKEN" || f.Error != err.msg {
+		t.Errorf("%d %+v", code, body)
+	}
+}
+
+// With its env_file unreadable, a failed deploy's answer and record say
+// the filter's sentence, and moteld's journal line names the file's own
+// read error beside it.
+func TestDeployFailedJournalNamesTheEnvFilesError(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	core, logs := observer.New(zap.ErrorLevel)
+	b.rig.ma.logger = zap.New(core)
+	must(t, os.WriteFile(b.rig.spec.envFile, []byte("not a line\n"), 0o600))
+	b.rig.ma.secretsMu.Lock()
+	b.rig.ma.secretsLoaded = false
+	b.rig.ma.secretsMu.Unlock()
+	if code, body := b.post(t, "v2", false); code != http.StatusInternalServerError || !strings.Contains(body, `"error":"[withheld: the app's env_file could not be read`) {
+		t.Fatalf("%d %s", code, body)
+	}
+	lines := logs.FilterMessage("deploy failed").All()
+	if len(lines) != 1 || !strings.Contains(fmt.Sprint(lines[0].ContextMap()["env_file"]), "not KEY=VALUE") {
+		t.Errorf("the journal line: %v", lines)
 	}
 }

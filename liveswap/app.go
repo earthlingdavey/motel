@@ -368,10 +368,12 @@ func (ma *managedApp) doorKnowing(also []string, read bool, names ...string) *do
 		safe = append(safe, spec.dirs.root, spec.dirs.app, spec.dirs.releases, spec.dirs.shared, spec.dirs.run)
 		onDisk, _ := listReleases(spec.dirs) // names only
 		safe = append(safe, onDisk...)
+		safe = append(safe, recordNames(spec.dirs)...)
 	}
 	d := &door{r: NewRedactor(kvs, safe), seen: map[string]bool{}}
 	if unread != nil {
 		d.unread = "the app's env_file could not be read, so its values are unknown to the filter"
+		d.unreadErr = unread // the journal's to say (doorError)
 	}
 	return d
 }
@@ -384,6 +386,10 @@ type doorError struct {
 	err  error
 	msg  wire.ErrText
 	keys []string
+	// unread is the env_file's own read error when the door could not
+	// read it, and msg is then the filter's sentence: moteld's journal
+	// names it, since no answer can (it may quote a line of the file).
+	unread error
 }
 
 func (e *doorError) Error() string { return string(e.msg) }
@@ -901,10 +907,10 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 			// of a refused pin are names the heuristics leave alone.
 			var dm digestMismatch
 			_ = errors.As(err, &dm)
-			text, keys := ma.errText(err.Error(), !rendered, append([]string{req.version, pin}, dm.names()...)...)
-			err = &doorError{err: err, msg: text, keys: keys}
-			redacted = union(redacted, keys)
-			result.Error = text
+			de := ma.netError(err, !rendered, append([]string{req.version, pin}, dm.names()...)...)
+			err = de
+			redacted = union(redacted, de.keys)
+			result.Error = de.msg
 			result.Detail, result.RedactedEnv = detail, redacted
 		}
 		// One step from the deploy in flight to its outcome: a status
@@ -928,7 +934,11 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		}
 		ma.mu.Unlock()
 		if err != nil {
-			logger.Error("deploy failed", zap.Error(err))
+			fields := []zap.Field{zap.Error(err)}
+			if de, ok := err.(*doorError); ok && de.unread != nil { //nolint:errorlint // the one deployLocked made above
+				fields = append(fields, zap.NamedError("env_file", de.unread))
+			}
+			logger.Error("deploy failed", fields...)
 		} else {
 			logger.Info("deploy succeeded")
 		}
@@ -1936,15 +1946,16 @@ func (ma *managedApp) statusFrom(c collaborators, available, byMtime []string, d
 	// After current: the watchdog records a restart before it installs
 	// the new instance, so a status that shows the instance shows why
 	// it was started.
+	// The keys the doors replaced in the app's text this status holds:
+	// last_deploy's, and the watchdog's last failure's when it is shown.
+	var keys, wk []string
 	if c.spec != nil && c.clock != nil {
-		s.Watchdog = ma.wd.statusSnapshot(c.clock.Now(), c.spec.wdWindow)
+		s.Watchdog, wk = ma.wd.statusWithKeys(c.clock.Now(), c.spec.wdWindow)
 	}
-	// The keys the doors replaced in the app's text this status holds.
-	var keys []string
 	if s.LastDeploy != nil {
 		keys = s.LastDeploy.RedactedEnv
 	}
-	if wk := ma.wd.failureKeys(); len(keys)+len(wk) > 0 {
+	if len(keys)+len(wk) > 0 {
 		s.RedactedEnv = union(keys, wk)
 	}
 	return s

@@ -1,6 +1,7 @@
 package liveswap
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,6 +162,7 @@ func releaseNames(releasesDir string) ([]string, error) {
 // or a detail that is not of its type in such a record is not sent:
 // it could not be filtered as one.
 func (ma *managedApp) servedRecord(rec []byte, version string) []byte {
+	rec = bytes.TrimSuffix(rec, []byte("\n")) // the file's own, which the answer adds again
 	var top map[string]json.RawMessage
 	if json.Unmarshal(rec, &top) != nil {
 		return rec // readDeployRecord parsed it: not reached
@@ -200,6 +202,30 @@ func (ma *managedApp) servedRecord(rec []byte, version string) []byte {
 		return rec // raw values that parsed: not reached
 	}
 	return out
+}
+
+// recordNames is the versions the records directory holds a file
+// under, those valid as versions: names the app's filter leaves to its
+// known values alone (managedApp.door), as the versions the status
+// lists. The directory is listed, never followed, and no record is
+// read: a name is only a name, and a safe string equal to a known value
+// exempts nothing.
+func recordNames(d appDirs) []string {
+	dir, err := recordsDir(d, false)
+	if err != nil {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if v, ok := strings.CutSuffix(e.Name(), ".json"); ok && validVersion(v) {
+			names = append(names, v)
+		}
+	}
+	return names
 }
 
 // recordsDir is the records directory as the directory it names
