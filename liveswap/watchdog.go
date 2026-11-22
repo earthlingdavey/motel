@@ -398,8 +398,8 @@ func (w *watchdogState) setLastFailure(desc wire.ErrText, keys ...string) {
 // probeFailed records a failed probe of the running instance. Its
 // error passes the error net (errText, redact.go): Go's HTTP client
 // quotes a probe answer that is no HTTP into it. The error it returns
-// says the filtered text, for the journal's line; the count is the
-// consecutive failures.
+// is the net's (logFields gives the journal the error as it came); the
+// count is the consecutive failures.
 func (ma *managedApp) probeFailed(version string, err error) (int, error) {
 	de := ma.netError(err, true, false, version)
 	return ma.wd.recordFailure(de.msg, de.keys), de
