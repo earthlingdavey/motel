@@ -171,3 +171,60 @@ func TestReattachWithNoEnvironmentKnowsTheFileAsBefore(t *testing.T) {
 		}
 	}
 }
+
+// reattachedRig is a rig after a moteld restart whose reattach read
+// the unit's environment back (env, with the instance's SOCKET), the
+// spec's env_file at envFile, which the test may leave unwritten.
+func reattachedRig(t *testing.T, envFile string, env ...string) *testRig {
+	t.Helper()
+	rig := newTestRig(t)
+	rig.spec.envFile = envFile
+	socket := rig.spec.dirs.socket(recordedNonce)
+	env = append(env, "SOCKET="+socket)
+	rig.runner.reattachOK, rig.runner.reattachEnv = true, env
+	rig.store.state = appState{CurrentVersion: "v1", Nonce: recordedNonce, Handle: handleState{Unit: "motel-demo.v1." + recordedNonce + ".service"}}
+	rig.store.ok = true
+	must(t, os.MkdirAll(rig.spec.dirs.release("v1"), 0o755))
+	bindSocket(t, socket)
+	must(t, rig.ma.ensureRunning())
+	if !rig.ma.runningEnvRead {
+		t.Fatal("the reattach did not read the environment")
+	}
+	return rig
+}
+
+// TestReattachKeepsWithholdingForABoxWrittenFile: a box-written env
+// file's NOTIFY_ values are withheld from every unit (buildEnvFull), so
+// the environment a reattach reads back cannot hold them: while such a
+// file cannot be read, every body is withheld as before the reattach.
+func TestReattachKeepsWithholdingForABoxWrittenFile(t *testing.T) {
+	boxDir := t.TempDir()
+	orig := boxSecretsDir
+	boxSecretsDir = boxDir
+	t.Cleanup(func() { boxSecretsDir = orig })
+	rig := reattachedRig(t, filepath.Join(boxDir, "demo", "env"), "API_TOKEN="+launchedToken) // never written: unreadable
+	if r := rig.ma.redactorFor(rig.ma.status()); r.withhold == "" {
+		t.Fatal("a box-written file that cannot be read must withhold every body: its NOTIFY_ values are no unit's")
+	}
+}
+
+// TestLaunchEndsWhatTheReattachStoodInFor: once the app is launched
+// again, the filter is what it is in a moteld that never restarted: a
+// reload naming another env_file that cannot be read withholds every
+// body, though the values the reattach read stay known.
+func TestLaunchEndsWhatTheReattachStoodInFor(t *testing.T) {
+	dir := t.TempDir()
+	rig := reattachedRig(t, filepath.Join(dir, "gone.env"), "API_TOKEN="+launchedToken)
+	if r := rig.ma.redactorFor(rig.ma.status()); r.withhold != "" {
+		t.Fatalf("after the reattach, an unreadable file withholds: %s", r.withhold)
+	}
+	rig.ma.rememberSecrets(rig.spec.envFile, nil) // a launch
+	rig.spec.envFile = filepath.Join(dir, "other.env")
+	r := rig.ma.redactorFor(rig.ma.status())
+	if r.withhold == "" {
+		t.Fatal("after a launch, a reload to a file that cannot be read must withhold as it always did")
+	}
+	if out, _ := NewRedactor(rig.ma.secrets, nil).Redact(launchedToken); out != "[redacted:API_TOKEN]" {
+		t.Fatalf("the reattach's values are no longer known: %q", out)
+	}
+}

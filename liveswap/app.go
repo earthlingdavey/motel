@@ -290,11 +290,13 @@ type managedApp struct {
 	// deploys, relaunches, reattaches and configure.
 	secretsMu sync.Mutex
 	secrets   []string
-	// runningEnvRead is set once a reattach has read the running
+	// runningEnvRead is set when a reattach has read the running
 	// instance's environment back from the manager: the values the app
 	// holds are then known whatever its env_file holds now, so a file
-	// that cannot be read withholds no body (redactorFor). Never unset:
-	// every instance after it is a launch, which remembers its own.
+	// that cannot be read withholds no body (redactorFor), unless it is
+	// one the box writes, whose NOTIFY_ values no unit holds. A launch
+	// unsets it (rememberSecrets): from then on the filter is what it
+	// is in a moteld that never restarted.
 	runningEnvRead bool
 	// secretsFrom is the env_file path whose contents are in secrets
 	// (rendered by a launch, or read for the filter); a spec naming a
@@ -324,6 +326,7 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 	defer ma.secretsMu.Unlock()
 	ma.secretsFrom, ma.secretsLoaded = path, true
 	ma.secrets = mergeSecrets(ma.secrets, kvs)
+	ma.runningEnvRead = false // a launch: what a reattach read stops standing in for an unread file
 }
 
 // redactorFor is the filter for a response about this app: the
@@ -339,7 +342,10 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 // is retried on the next response until it succeeds. The values the
 // reattached instance was launched with are not the file's now: the
 // reattach read them back from the manager (rememberRunningEnv), and
-// once it has, a file that cannot be read withholds nothing.
+// once it has, and until the next launch, a file that cannot be read
+// withholds nothing — but a file the box writes still does: the
+// NOTIFY_ values in it are withheld from every unit, so the reattach
+// cannot have read them (buildEnvFull).
 func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 	// The spec is read under secretsMu so the "which env_file is
 	// loaded" check and the spec it is checked against are one
@@ -355,7 +361,7 @@ func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 		} else if kvs, err := parseEnvFile(spec.envFile); err == nil {
 			ma.secrets = mergeSecrets(ma.secrets, kvs)
 			ma.secretsFrom, ma.secretsLoaded = spec.envFile, true
-		} else if !ma.runningEnvRead {
+		} else if !ma.runningEnvRead || boxWritten(spec.envFile) {
 			unread = err
 		}
 	}

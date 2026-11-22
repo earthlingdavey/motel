@@ -323,7 +323,8 @@ Properties that matter to the model:
   own punctuation matching the structure rather than a string) is
   withheld, with the keys still reported; and while an app's
   `env_file` cannot be read and no running instance's environment has
-  been read back, its values are unknown to the filter and
+  been read back since the last launch (or the file is one the box
+  writes, whose `NOTIFY_` values no unit holds), its values are unknown to the filter and
   every body that holds anything of that app's is withheld rather than
   sent through the heuristics alone. The values the running instance
   was launched with are known whatever the file holds now: a launch
