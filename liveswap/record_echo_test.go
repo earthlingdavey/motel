@@ -78,7 +78,7 @@ func TestRecordNotReadTellsNothingOfTheEnv(t *testing.T) {
 	}
 	// The app's filter does know the values: any body of the app's
 	// would have them replaced.
-	if got := string(ma.door(true).text("correcthorse s3cretpw9")); !strings.Contains(got, "[redacted:DB_PASSWORD]") || !strings.Contains(got, "[redacted:DATABASE_URL]") {
+	if got := string(ma.door().text("correcthorse s3cretpw9")); !strings.Contains(got, "[redacted:DB_PASSWORD]") || !strings.Contains(got, "[redacted:DATABASE_URL]") {
 		t.Fatalf("the app's filter does not know the test's values: %s", got)
 	}
 	callers := map[string]func(method, target, body string) (int, string){

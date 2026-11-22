@@ -917,7 +917,7 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 			reason = refused.said
 		}
 		if ma.wd.setRefused(inst.version, reason) {
-			ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchRefused, Release: inst.version,
+			ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchRefused, Release: inst.version, quotesError: true,
 				Summary: refusedSummary(inst.version, boundReason(reason))})
 		}
 		c.logger.Error("watchdog: relaunch refused; the app stays down until a deploy of another version (or a rollback to one), or a reload once the cause is fixed, launches it",

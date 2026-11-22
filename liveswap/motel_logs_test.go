@@ -239,7 +239,7 @@ func TestLogsLineFilteredBeforeItIsCut(t *testing.T) {
 	}
 	// The order this replaces: the cut first, then the filter, sends a
 	// piece of the value no filter knows.
-	f := h.app.managed["demo"].door(true).r
+	f := h.app.managed["demo"].door().r
 	if naive, _ := f.Redact(cutText(across, logsLineMax)); !strings.HasSuffix(naive, "sess=made-u") {
 		t.Errorf("the cut before the filter did not send the piece the test is about: %q", naive[len(naive)-40:])
 	}
@@ -281,8 +281,9 @@ func TestLogsBodyTimesAndCursorPassNoFilter(t *testing.T) {
 // TestLogsUnreadableEnvFile: with the app's env_file unreadable the
 // filter knows no value, so no line's text is sent: each is the
 // filter's sentence (an empty line empty), and the rest of the answer
-// (each line's time and release, the cursor) is moteld's own and sent,
-// with the read's line in the journal. A command reading it exits 0.
+// (each line's time and release, the cursor) is moteld's own and sent;
+// the journal gets no read's line, since no line's text was sent. A
+// command reading it exits 0.
 func TestLogsUnreadableEnvFile(t *testing.T) {
 	j := demoJournal(3, func(i int) string { return []string{"made-up-value-0001 printed", "", "plain"}[i] })
 	h, people, _, logs := logsRig(t, j)
@@ -304,8 +305,8 @@ func TestLogsUnreadableEnvFile(t *testing.T) {
 	if strings.Contains(w.Body.String(), "made-up-value-0001") || strings.Contains(w.Body.String(), "plain") {
 		t.Errorf("a line's text is sent: %s", w.Body)
 	}
-	if n := logs.FilterMessage("access: person read logs").Len(); n != 1 {
-		t.Errorf("the read wrote %d read's lines", n)
+	if n := logs.FilterMessage("access: person read logs").Len(); n != 0 {
+		t.Errorf("a read that sent no line's text wrote %d read's lines", n)
 	}
 }
 

@@ -329,22 +329,26 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 // names that text may hold, which the heuristics leave alone (the
 // app's, the versions given, the releases on disk, the app's dirs).
 //
-// read is whether the env_file may be read now. A deploy's door does
-// not: its launch rendered the file and remembered the values
-// (rememberSecrets), and no other unit of the app's wrote the text.
-// Any other door does: after a moteld restart the app is reattached
-// without a launch, and a reload can name another env_file than the
-// last launch rendered. A file that cannot be read then leaves the
-// values unknown, and the door withholds the app's text (door.unread),
-// that text alone.
-func (ma *managedApp) door(read bool, names ...string) *door {
-	return ma.doorKnowing(nil, read, names...)
+// It may read the env_file: after a moteld restart the app is
+// reattached without a launch, and a reload can name another env_file
+// than the last launch rendered. A file that cannot be read then leaves
+// the values unknown, and the door withholds the app's text
+// (door.unread), that text alone. (A deploy's failed detail does not
+// read it: its launch rendered the file and remembered the values,
+// failureDetail.)
+func (ma *managedApp) door(names ...string) *door {
+	return ma.doorKnowing(nil, true, false, names...)
 }
 
 // doorKnowing is door, knowing the pairs also: a launch's own, which a
 // failed deploy's detail is filtered with whatever the process
 // remembers (failureDetail).
-func (ma *managedApp) doorKnowing(also []string, read bool, names ...string) *door {
+//
+// checkNow is for an error's text, which can quote a line of the
+// env_file that is no assignment (invalidEnvKeyMsg): the file is read
+// as it is now even when it was read before, and one that does not read
+// or parse leaves the values unknown, whatever was learnt from it.
+func (ma *managedApp) doorKnowing(also []string, read, checkNow bool, names ...string) *door {
 	// The spec is read under secretsMu so the "which env_file is
 	// loaded" check and the spec it is checked against are one
 	// snapshot. secretsMu → specMu is the only nesting.
@@ -358,6 +362,10 @@ func (ma *managedApp) doorKnowing(also []string, read bool, names ...string) *do
 			ma.secrets = mergeSecrets(ma.secrets, kvs)
 			ma.secretsFrom, ma.secretsLoaded = spec.envFile, true
 		} else {
+			unread = err
+		}
+	} else if read && checkNow && spec != nil && spec.envFile != "" {
+		if _, err := parseEnvFile(spec.envFile); err != nil {
 			unread = err
 		}
 	}
@@ -692,7 +700,7 @@ func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, version stri
 	// env_file rendered) and those every launch remembered, so no file
 	// is read and nothing is withheld on a file that went unreadable
 	// since: the record keeps its detail.
-	known := ma.doorKnowing(l.secrets, false, version)
+	known := ma.doorKnowing(l.secrets, false, false, version)
 	return raw.through(known), known.keys()
 }
 
@@ -766,7 +774,7 @@ func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result de
 		if ve.said != "" {
 			why = ve.said
 		}
-		ev.Name, ev.Summary = EventDeployRefused, "deploy of "+req.version+" refused: "+firstLine(why)
+		ev.Name, ev.Summary, ev.quotesError = EventDeployRefused, "deploy of "+req.version+" refused: "+firstLine(why), true
 	default:
 		// What serves now is not said: a first deploy, or one to an app
 		// already down, leaves nothing serving.

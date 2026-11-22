@@ -133,15 +133,16 @@ func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle,
 			releases = append(releases, rels[i])
 		}
 	}
-	d := app.ma.door(true, releases...)
+	d := app.ma.door(releases...)
 	body := wire.Logs{Kept: wire.KeptOn, Lines: make([]wire.LogLine, len(read.lines)), More: read.more, Gap: read.gap, Cursor: read.cursor}
 	for i, e := range read.lines {
 		body.Lines[i] = wire.LogLine{At: e.at, Release: rels[i], Text: d.logLine(e.text)}
 	}
 	body.RedactedEnv = d.keys()
 	// At Warn, as the refusals are: a level that quiets moteld's Info
-	// lines leaves the record of who read what.
-	if len(read.lines) > 0 {
+	// lines leaves the record of who read what. None when the env_file
+	// could not be read: no line's text was sent.
+	if len(read.lines) > 0 && d.unread == "" {
 		fields := []zap.Field{zap.String("person", app.who), zap.String("app", app.ma.name), zap.Int("lines", len(read.lines)),
 			zap.String("first", read.lines[0].cursor), zap.String("last", read.lines[len(read.lines)-1].cursor)}
 		if read.gap {

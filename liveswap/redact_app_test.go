@@ -21,14 +21,14 @@ func TestDoorLoadsEnvFileWithoutALaunch(t *testing.T) {
 	ma := newManagedApp(spec.name)
 	ma.spec = spec
 
-	out, keys := ma.door(true).r.Redact("dial postgres://app:s3cr3t-pw-value@db/app: refused")
+	out, keys := ma.door().r.Redact("dial postgres://app:s3cr3t-pw-value@db/app: refused")
 	if strings.Contains(out, "s3cr3t-pw-value") || strings.Join(keys, ",") != "DATABASE_URL" {
 		t.Fatalf("env_file value not known before any launch: %q %v", out, keys)
 	}
 
 	// A launch with a rotated value: both are known afterwards.
 	ma.rememberSecrets(envFile, []string{"DATABASE_URL=postgres://app:new-pw-value-2@db/app"})
-	out, _ = ma.door(true).r.Redact("old s3cr3t-pw-value new new-pw-value-2")
+	out, _ = ma.door().r.Redact("old s3cr3t-pw-value new new-pw-value-2")
 	if strings.Contains(out, "s3cr3t-pw-value") || strings.Contains(out, "new-pw-value-2") {
 		t.Fatalf("a rotated value must stay redacted: %q", out)
 	}
@@ -42,7 +42,7 @@ func TestDoorLoadsEnvFileWithoutALaunch(t *testing.T) {
 	reloaded := testSpec(t)
 	reloaded.envFile = other
 	ma.spec = reloaded
-	out, _ = ma.door(true).r.Redact("from-the-other-file and s3cr3t-pw-value")
+	out, _ = ma.door().r.Redact("from-the-other-file and s3cr3t-pw-value")
 	if strings.Contains(out, "from-the-other-file") || strings.Contains(out, "s3cr3t-pw-value") {
 		t.Fatalf("after a reload naming another env_file: %q", out)
 	}
@@ -55,16 +55,16 @@ func TestDoorLoadsEnvFileWithoutALaunch(t *testing.T) {
 	ma2.spec = spec2
 	// …but the app's text is withheld until it reads: the running app's
 	// values are unknown, and the heuristics alone are not the promise.
-	if out := ma2.door(true).text("a low-entropy secret"); strings.Contains(string(out), "low-entropy") || !strings.Contains(string(out), "env_file could not be read") {
+	if out := ma2.door().text("a low-entropy secret"); strings.Contains(string(out), "low-entropy") || !strings.Contains(string(out), "env_file could not be read") {
 		t.Fatalf("the app's text sent with the env_file unread: %s", out)
 	}
 	if err := os.WriteFile(spec2.envFile, []byte("TOKEN=late-but-known-value\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, _ := ma2.door(true).r.Redact("saw late-but-known-value"); strings.Contains(out, "late-but-known-value") {
+	if out, _ := ma2.door().r.Redact("saw late-but-known-value"); strings.Contains(out, "late-but-known-value") {
 		t.Fatalf("env_file written after the first response was never read: %q", out)
 	}
-	if out := ma2.door(true).text("fine now"); out != "fine now" {
+	if out := ma2.door().text("fine now"); out != "fine now" {
 		t.Fatalf("the app's text still withheld after the env_file read: %s", out)
 	}
 
@@ -78,7 +78,7 @@ func TestDoorLoadsEnvFileWithoutALaunch(t *testing.T) {
 	}
 	ma3 := newManagedApp(spec3.name)
 	ma3.spec = spec3
-	if out, keys := ma3.door(true).r.Redact("socket " + spec3.dirs.app + "/run/x/app.sock"); strings.Contains(out, spec3.dirs.app) || strings.Join(keys, ",") != "APP_ROOT" {
+	if out, keys := ma3.door().r.Redact("socket " + spec3.dirs.app + "/run/x/app.sock"); strings.Contains(out, spec3.dirs.app) || strings.Join(keys, ",") != "APP_ROOT" {
 		t.Fatalf("a safe string exempted the env_file value equal to it: %q %v", out, keys)
 	}
 }

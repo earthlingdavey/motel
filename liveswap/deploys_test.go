@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // A record is written for every deploy — a failure with its detail, a
@@ -491,15 +493,15 @@ func TestDeployRecordTimesMustBeStrings(t *testing.T) {
 	}
 }
 
-// A record the filter leaves larger than a reader accepts is written
-// as an envelope, readable, rather than as a file every reader refuses.
+// A record larger than a reader accepts is written as an envelope,
+// readable, rather than as a file every reader refuses. The pipeline
+// carries at most errTextMax of an error and 8 KiB of a tail, so the
+// result is made large here by hand.
 func TestDeployRecordTooLargeIsAnEnvelope(t *testing.T) {
 	t.Parallel()
 	rig := newTestRig(t)
-	rig.runner.startErr = errors.New("boom: " + strings.Repeat("x", 2*deployRecordMaxBytes))
-	if err := deployOnceV1(t, rig); err == nil {
-		t.Fatal("v1 should have failed")
-	}
+	rig.ma.recordDeploy(rig.ma.snapshot(), deployResult{Version: "v1", Status: "failed", Phase: "starting",
+		Error: wire.ErrText("boom: " + strings.Repeat("x", 2*deployRecordMaxBytes))})
 	rec, err := readDeployRecord(rig.spec.dirs, "v1")
 	if err != nil {
 		t.Fatalf("an oversized outcome must still leave a readable record: %v", err)
@@ -561,14 +563,13 @@ func TestDeployRecordOfAPrePhaseFailureHasNoPhase(t *testing.T) {
 func TestDeployRecordSizeBoundCountsTheNewline(t *testing.T) {
 	t.Parallel()
 	rig := newTestRig(t)
-	// Pad the error so the filtered JSON lands on the bound exactly.
-	probe := deployResult{Version: "v1", Status: "failed", By: "test", Error: ""}
+	// Pad the error so the JSON lands on the bound exactly.
+	probe := deployResult{Version: "v1", Status: "failed", By: "test", FilteredAtEntry: true}
 	base, err := json.Marshal(probe)
 	must(t, err)
-	rig.runner.startErr = errors.New(strings.Repeat("x", deployRecordMaxBytes-len(base)-len("start failed: ")))
-	if err := deployOnceV1(t, rig); err == nil {
-		t.Fatal("v1 should have failed")
-	}
+	probe.FilteredAtEntry = false
+	probe.Error = wire.ErrText(strings.Repeat("x", deployRecordMaxBytes-len(base)-len(`,"error":""`)))
+	rig.ma.recordDeploy(rig.ma.snapshot(), probe)
 	if _, err := readDeployRecord(rig.spec.dirs, "v1"); err != nil {
 		t.Fatalf("a record at the bound must be readable (as itself or as the envelope): %v", err)
 	}
@@ -638,10 +639,8 @@ func TestDeployRecordEnvelopeKeepsThePin(t *testing.T) {
 			rig := newTestRig(t)
 			rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
 			must(t, os.WriteFile(rig.spec.envFile, []byte(tc.env), 0o600))
-			rig.runner.startErr = errors.New("boom: " + strings.Repeat("x", 2*deployRecordMaxBytes))
-			if err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://example.test/v1.tgz", version: "v1", sha256: pin, by: "test"}); err == nil {
-				t.Fatal("v1 should have failed")
-			}
+			rig.ma.recordDeploy(rig.ma.snapshot(), deployResult{Version: "v1", Status: "failed", SHA256: pin,
+				Error: wire.ErrText("boom: " + strings.Repeat("x", 2*deployRecordMaxBytes))})
 			rec, err := readDeployRecord(rig.spec.dirs, "v1")
 			must(t, err)
 			if s := string(rec); !strings.Contains(s, "larger than a record can be") || strings.Contains(s, pin) != tc.want {

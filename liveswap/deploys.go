@@ -175,7 +175,7 @@ func (ma *managedApp) servedRecord(rec []byte, version string) []byte {
 	if json.Unmarshal(top["sha256"], &pin) == nil {
 		names = append(names, pin)
 	}
-	d := ma.door(true, names...)
+	d := ma.door(names...)
 	if raw, ok := top["error"]; ok {
 		var e string
 		if json.Unmarshal(raw, &e) != nil {

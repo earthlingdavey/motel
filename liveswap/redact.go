@@ -422,7 +422,7 @@ func (ma *managedApp) errText(s string, read bool, names ...string) (wire.ErrTex
 	if s == "" {
 		return "", nil
 	}
-	d := ma.door(read, names...)
+	d := ma.doorKnowing(nil, read, read, names...)
 	return d.errText(s), d.keys()
 }
 
@@ -443,7 +443,7 @@ func (ma *managedApp) errText(s string, read bool, names ...string) (wire.ErrTex
 // whose values it does not know: the text is withheld, as it is
 // anywhere else a file is gone (a probe of a running app).
 func (ma *managedApp) netError(err error, read, beforeLaunch bool, names ...string) *doorError {
-	d := ma.door(read, names...)
+	d := ma.doorKnowing(nil, read, beforeLaunch, names...)
 	if beforeLaunch && errors.Is(d.unreadErr, fs.ErrNotExist) && len(d.r.secrets) > 0 {
 		d.unread, d.unreadErr = "", nil
 	}
@@ -454,21 +454,32 @@ func (ma *managedApp) netError(err error, read, beforeLaunch bool, names ...stri
 	return de
 }
 
-// logFields is what moteld's journal line about err says of it: its
-// text, which passed the error net, and when the net could not read
-// the app's env_file, the error as it came and the file's read error.
-// The journal is the operator's, which an older moteld gave every
-// error as it came.
+// logFields is what moteld's journal line about err says of it: the
+// error as it came, as an older moteld's journal said it (the journal
+// is the operator's, not an answer), and, when the error net could not
+// read the app's env_file, the file's own read error.
 func logFields(err error) []zap.Field {
-	fields := []zap.Field{zap.Error(err)}
-	if de, ok := err.(*doorError); ok && de.unread != nil { //nolint:errorlint // the outermost error alone: the one netError made
-		fields = append(fields, zap.NamedError("cause", de.err), zap.NamedError("env_file", de.unread))
+	de, ok := err.(*doorError) //nolint:errorlint // the outermost error alone: the one netError made
+	if !ok {
+		return []zap.Field{zap.Error(err)}
+	}
+	fields := []zap.Field{zap.Error(de.err)}
+	if de.unread != nil {
+		fields = append(fields, zap.NamedError("env_file", de.unread))
 	}
 	return fields
 }
 
 // errText is the net for a place that holds the app's door already.
-func (d *door) errText(s string) wire.ErrText { return wire.ErrText(d.quoted(s)) }
+//
+// At most errTextMax bytes of it are carried (bounded), each run Go
+// quoted in it read as the bytes it quotes (quoted).
+func (d *door) errText(s string) wire.ErrText {
+	if s == "" || d.unread != "" {
+		return wire.ErrText(d.mixed(s))
+	}
+	return wire.ErrText(d.bounded(s, errTextMax, d.quoted))
+}
 
 // door is an app's filter at a place the app's bytes enter: the app's
 // known values, the names its text may hold, and the keys found so far,
@@ -495,72 +506,100 @@ func (d *door) excerpt(s string, max int) wire.AppText {
 }
 
 // logLine is one journal line's text through the door, at most
-// logsLineMax bytes of it sent, with what is read of a long line and
-// what is sent of it as the logs read has always had them (#635). The
-// filter sees the text cut to logsLineMax and a margin, the longest
-// form it knows or logsCutMargin if more, so every value or credential
-// that begins inside what is sent is whole when it is looked for (A);
-// a line is at most 48 KiB as journald stores it, so the filter reads
-// at most 12 KiB of one. Where that cut fell, a value or token it split
-// is a piece no layer can know; it begins in the margin, past
-// logsLineMax, unless it is a token longer than the margin. So the
-// filter also sees the text cut at logsLineMax (B), and what is kept is
-// the start A and B have in common, less a run of layer 4's alphabet at
-// its end. A piece the first cut split is past B's input, so not in it;
-// one the second cut split is whole in A and replaced there, so A and B
-// part at it; a token longer than the margin, raw in both, is the run
-// that goes. Then what is left is made valid UTF-8 and cut to
-// logsLineMax with "…" (a marker or plain text may be cut there,
-// nothing a layer would have replaced). The keys A replaced are the
-// door's. A door whose env_file could not be read sends its withheld
-// sentence for the line, and an empty line empty.
+// logsLineMax bytes of it sent (bounded), and valid UTF-8. A door whose
+// env_file could not be read sends its withheld sentence for the line,
+// and an empty line empty.
 func (d *door) logLine(text string) wire.AppText {
 	if d.unread != "" {
 		return wire.AppText(d.mixed(text))
 	}
+	// journald ends a stdout line at a NUL, so none is in one; a NUL is
+	// what the safe list's placeholders are made of (protectSafe).
+	return wire.AppText(d.bounded(strings.ReplaceAll(text, "\x00", "\uFFFD"), logsLineMax, d.mixedInto))
+}
+
+// errTextMax is the most of an error's text a field carries: what an
+// app makes Go's client quote (an answer that is one long line that is
+// no HTTP, megabytes of it) is read and filtered no further than a
+// logs line is, whatever the app sends, every probe interval.
+const errTextMax = logsLineMax
+
+// bounded is filter over s, of which at most limit bytes are sent, with
+// what is read of a longer s and what is sent of it as the logs read
+// has always had them (#635). The filter sees s cut to max and a margin,
+// the longest form it knows or logsCutMargin if more, so every value or
+// credential that begins inside what is sent is whole when it is looked
+// for (A): of a longer s, limit plus the margin is read, and no more. Where
+// that cut fell, a value or token it split is a piece no layer can
+// know; it begins in the margin, past limit, unless it is a token longer
+// than the margin. So the filter also sees s cut at limit (B), and what
+// is kept is the start A and B have in common, less a run of layer 4's
+// alphabet at its end. A piece the first cut split is past B's input,
+// so not in it; one the second cut split is whole in A and replaced
+// there, so A and B part at it; a token longer than the margin, raw in
+// both, is the run that goes. Then what is left is made valid UTF-8 and
+// cut to limit with "…" (a marker or plain text may be cut there, nothing
+// a layer would have replaced). The keys A replaced are the door's.
+func (d *door) bounded(s string, limit int, filter func(string, map[string]bool) string) string {
 	longest := logsCutMargin
 	if len(d.r.secrets) > 0 {
 		longest = max(longest, len(d.r.secrets[0].text)) // longest first
 	}
-	pre := logsLineMax + longest
-	cut := len(text) > pre
+	pre := limit + longest
+	cut := len(s) > pre
 	if cut {
-		text = cutText(text, pre)
+		s = cutText(s, pre)
 	}
-	// journald ends a stdout line at a NUL, so none is in one; a NUL is
-	// what the safe list's placeholders are made of (protectSafe).
-	text = strings.ReplaceAll(text, "\x00", "\uFFFD")
-	out := d.mixed(text)
+	out := filter(s, d.seen)
 	if cut {
-		b, _ := d.r.Redact(cutText(text, logsLineMax))
+		b := filter(cutText(s, limit), map[string]bool{})
 		out = strings.TrimRight(commonStart(out, b), tokenAlphabet)
 	}
-	// The app's bytes that are not UTF-8, each run one U+FFFD, only now:
-	// the filter saw them as written. Before the last cut, so the text
-	// sent stays within logsLineMax.
+	// Bytes that are not UTF-8, each run one U+FFFD, only now: the
+	// filter saw them as written. Before the last cut, so the text sent
+	// stays within limit.
 	out = strings.ToValidUTF8(out, "\uFFFD")
-	if cut || len(out) > logsLineMax {
-		out = cutText(out, logsLineMax-len("…")) + "…"
+	if cut || len(out) > limit {
+		out = cutText(out, limit-len("…")) + "…"
 	}
-	return wire.AppText(out)
+	return out
 }
 
 // lines is a journal tail through the door, each line on its own, as
 // the logs read filters each: a rule that reaches across white space
 // (a bearer token, an assignment) then never joins two lines or masks
-// the next line's first word, and the tail keeps its count of lines.
-// A PEM block printed a line at a time is no block to the shape rule;
-// its lines are long base64 runs the entropy layer takes.
+// the next line's first word. The one rule that spans lines is the PEM
+// block's: a private key printed a line at a time, from the line that
+// begins it to the line that ends it, becomes one line, the text before
+// the block, its marker and the text after, as the filter over a whole
+// tail made of it before the filter moved to the doors. A block with no
+// end in the tail is filtered line by line.
 func (d *door) lines(lines []string) []wire.AppText {
 	if len(lines) == 0 {
 		return nil
 	}
-	out := make([]wire.AppText, len(lines))
-	for i, l := range lines {
-		out[i] = wire.AppText(d.mixed(l))
+	out := make([]wire.AppText, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		l := d.mixed(lines[i])
+		if b := pemBeginRe.FindStringIndex(l); b != nil && !pemEndRe.MatchString(l[b[1]:]) {
+			for j := i + 1; j < len(lines); j++ {
+				if e := pemEndRe.FindStringIndex(lines[j]); e != nil {
+					l, i = l[:b[0]]+"[redacted:private-key]"+d.mixed(lines[j][e[1]:]), j
+					break
+				}
+			}
+		}
+		out = append(out, wire.AppText(l))
 	}
 	return out
 }
+
+// pemBeginRe and pemEndRe are a PEM private key's first and last lines,
+// as the shape rule reads them.
+var (
+	pemBeginRe = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
+	pemEndRe   = regexp.MustCompile(`-----END [A-Z ]*PRIVATE KEY-----`)
+)
 
 // again is det, a failed deploy's detail an older moteld stored, with
 // its app text and its error text through the door now (servedRecord,
@@ -584,14 +623,17 @@ func (d *door) again(det deployDetail) deployDetail {
 // again. s is the app's text, or a string of motel's that may quote the
 // app's bytes or name a path the app made (an error); motel's own words
 // in such a string meet the app's values too.
-func (d *door) mixed(s string) string {
+func (d *door) mixed(s string) string { return d.mixedInto(s, d.seen) }
+
+// mixedInto is mixed, the keys it replaced added to seen.
+func (d *door) mixedInto(s string, seen map[string]bool) string {
 	if s == "" {
 		return ""
 	}
 	if d.unread != "" {
 		return "[withheld: " + d.unread + "]"
 	}
-	return d.r.replaceKnown(d.r.filter(s, d.seen), d.seen)
+	return d.r.replaceKnown(d.r.filter(s, seen), seen)
 }
 
 // goQuotedRe is a run Go's %q wrote: a quote, escapes, a quote.
@@ -603,27 +645,35 @@ var goQuotedRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
 // app's text as the app sent it, and written quoted again when the
 // filter changed them. Without it a value the app sent JSON-escaped
 // arrives escaped twice, a form layer 1 does not list.
-func (d *door) quoted(s string) string {
+func (d *door) quoted(s string, seen map[string]bool) string {
 	s = goQuotedRe.ReplaceAllStringFunc(s, func(q string) string {
 		raw, err := strconv.Unquote(q)
 		if err != nil || raw == q[1:len(q)-1] {
 			return q // nothing escaped: the pass below sees the same bytes
 		}
-		if out := d.mixed(raw); out != raw {
+		if out := d.mixedInto(raw, seen); out != raw {
 			return strconv.Quote(out)
 		}
 		return q
 	})
-	return d.mixed(s)
+	return d.mixedInto(s, seen)
 }
 
 // keys is the env keys whose values the door replaced, sorted; nil
 // when none.
+//
+// A key's name that is a form of another key's value is that value's
+// marker in the list, as in any text (KEY_NAME=STRIPE_LIVE_KEY beside
+// STRIPE_LIVE_KEY=…): a list of names must not spell a value.
 func (d *door) keys() []string {
 	if len(d.seen) == 0 {
 		return nil
 	}
-	return reportedKeys(d.seen)
+	keys := reportedKeys(d.seen)
+	for i, k := range keys {
+		keys[i] = d.r.replaceKnown(k, map[string]bool{})
+	}
+	return keys
 }
 
 // safeSpanMinLen is the shortest safe string protectSafe holds out of

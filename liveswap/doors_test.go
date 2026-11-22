@@ -417,12 +417,12 @@ func TestADoorsNamesExemptNoValue(t *testing.T) {
 	const value = "release-named-like-a-value-01"
 	b := newDoorBox(t, "TOKEN="+value+"\n")
 	must(t, os.MkdirAll(b.rig.spec.dirs.release(value), 0o755))
-	d := b.rig.ma.door(true, value)
+	d := b.rig.ma.door(value)
 	if got := d.text("serving " + value); got != "serving [redacted:TOKEN]" {
 		t.Errorf("the app's text: %q", got)
 	}
 	sha := strings.Repeat("4c2d9e7b1a05", 3) + "0f9e"
-	if got := b.rig.ma.door(true, sha).text("built " + sha); got != wire.AppText("built "+sha) {
+	if got := b.rig.ma.door(sha).text("built " + sha); got != wire.AppText("built "+sha) {
 		t.Errorf("a version that looks generated, named: %q", got)
 	}
 }
@@ -766,8 +766,8 @@ func TestFailureNamesItsOwnErrorsKeys(t *testing.T) {
 
 // With its env_file unreadable, a failed deploy's answer and record say
 // the filter's sentence and that moteld's journal has the error, and
-// the journal line names the error as it came and the file's own read
-// error beside it.
+// the journal line says the error as it came (as main's did) and the
+// file's own read error beside it.
 func TestDeployFailedJournalNamesTheEnvFilesError(t *testing.T) {
 	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
 	core, logs := observer.New(zap.ErrorLevel)
@@ -781,17 +781,17 @@ func TestDeployFailedJournalNamesTheEnvFilesError(t *testing.T) {
 	}
 	lines := logs.FilterMessage("deploy failed").All()
 	if len(lines) != 1 || !strings.Contains(fmt.Sprint(lines[0].ContextMap()["env_file"]), "not KEY=VALUE") ||
-		!strings.Contains(fmt.Sprint(lines[0].ContextMap()["cause"]), "not KEY=VALUE") || !strings.Contains(fmt.Sprint(lines[0].ContextMap()["error"]), "moteld's journal has this error") {
+		!strings.Contains(fmt.Sprint(lines[0].ContextMap()["error"]), "not KEY=VALUE") {
 		t.Errorf("the journal line: %v", lines)
 	}
 	// A deploy that fails for another reason meanwhile: its cause is in
-	// the journal, the answer says where.
+	// the journal as it came, and the answer says where.
 	logs.TakeAll()
 	b.rig.fetch.err = errors.New("downloading https://example.test/v3.tgz: HTTP 404")
 	if code, body := b.post(t, "v3", false); code != http.StatusInternalServerError || !strings.Contains(body, "moteld's journal has this error") {
 		t.Fatalf("%d %s", code, body)
 	}
-	if lines := logs.FilterMessage("deploy failed").All(); len(lines) != 1 || !strings.Contains(fmt.Sprint(lines[0].ContextMap()["cause"]), "HTTP 404") {
+	if lines := logs.FilterMessage("deploy failed").All(); len(lines) != 1 || fmt.Sprint(lines[0].ContextMap()["error"]) != "downloading https://example.test/v3.tgz: HTTP 404" {
 		t.Errorf("the journal line: %v", lines)
 	}
 }
@@ -831,22 +831,28 @@ func TestMissingEnvFileBeforeALaunch(t *testing.T) {
 	}
 }
 
-// A lifecycle event told while the app's env_file cannot be read says
-// the filter's sentence for its summary (a refusal's reason can name a
-// path the app wrote, and the alerts routes send what Alertmanager
-// holds); with the file readable the summary is filtered as it always
-// was.
+// A lifecycle event told while the app's env_file cannot be read: a
+// summary that quotes an error's text (a refusal's reason, which can
+// name a path the app wrote) is the filter's sentence, since the
+// alerts routes send what Alertmanager holds; one made of motel's words
+// alone is told as motel wrote it, filtered with what is remembered.
+// With the file readable both are filtered as they always were.
 func TestToldSummaryWhileTheEnvFileIsUnread(t *testing.T) {
 	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
 	ma := b.rig.ma
 	n := &recNotifier{}
-	ma.tell(n, LifecycleEvent{Name: EventRelaunchRefused, Release: "v1", Summary: "relaunch of v1 refused: /x/some-value-of-the-app-01/bin"})
+	refused := func(s string) LifecycleEvent {
+		return LifecycleEvent{Name: EventRelaunchRefused, Release: "v1", Summary: s, quotesError: true}
+	}
+	ma.tell(n, refused("relaunch of v1 refused: /x/some-value-of-the-app-01/bin"))
 	must(t, os.Remove(b.rig.spec.envFile))
 	ma.secretsMu.Lock()
 	ma.secrets, ma.secretsLoaded = nil, false
 	ma.secretsMu.Unlock()
-	ma.tell(n, LifecycleEvent{Name: EventRelaunchRefused, Release: "v1", Summary: "relaunch of v1 refused: /x/other-value-unknown-02/bin"})
-	if len(n.evs) != 2 || n.evs[0].Summary != "relaunch of v1 refused: /x/[redacted:TOKEN]/bin" || !strings.HasPrefix(n.evs[1].Summary, "[withheld: the app's env_file could not be read") {
+	ma.tell(n, refused("relaunch of v1 refused: /x/other-value-unknown-02/bin"))
+	ma.tell(n, LifecycleEvent{Name: EventWatchdogThrottled, Release: "v1", Summary: "restart loop: 5 restarts in 10m0s spent the watchdog's budget"})
+	if len(n.evs) != 3 || n.evs[0].Summary != "relaunch of v1 refused: /x/[redacted:TOKEN]/bin" || !strings.HasPrefix(n.evs[1].Summary, "[withheld: the app's env_file could not be read") ||
+		n.evs[2].Summary != "restart loop: 5 restarts in 10m0s spent the watchdog's budget" {
 		t.Errorf("%+v", n.evs)
 	}
 }
@@ -858,10 +864,89 @@ func TestADoorsNamesAreTheRecordsPins(t *testing.T) {
 	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
 	pin := strings.Repeat("3f9a1c7e", 8)
 	must(t, writeDeployRecord(b.rig.spec.dirs, "v7", []byte(`{"version":"v7","status":"succeeded","sha256":"`+pin+`"}`)))
-	if got := b.rig.ma.door(true).text("artifact sha256 " + pin); got != wire.AppText("artifact sha256 "+pin) {
+	if got := b.rig.ma.door().text("artifact sha256 " + pin); got != wire.AppText("artifact sha256 "+pin) {
 		t.Errorf("the app's text: %q", got)
 	}
-	if got := b.rig.ma.door(true).text("artifact sha256 " + strings.Repeat("8b2d6e4f", 8)); !strings.Contains(string(got), "[masked, 64 chars]") {
+	if got := b.rig.ma.door().text("artifact sha256 " + strings.Repeat("8b2d6e4f", 8)); !strings.Contains(string(got), "[masked, 64 chars]") {
 		t.Errorf("the premise, a digest no record names is masked: %q", got)
+	}
+}
+
+// A private key the app prints a line at a time, in a failed deploy's
+// tail, is replaced whole, from the line that begins it to the line
+// that ends it, as the filter over a whole tail replaced it; the lines
+// around it, and two lines a rule across white space could join, stay
+// as the app wrote them.
+func TestDoorTailReplacesAKeyPrintedOverLines(t *testing.T) {
+	d := &door{r: NewRedactor(nil, nil), seen: map[string]bool{}}
+	var body []string
+	for i := range 25 {
+		body = append(body, strings.Repeat(fmt.Sprintf("Ab/%02dXy9+", i), 8)[:64])
+	}
+	in := append(append([]string{"loading key", "-----BEGIN RSA PRIVATE KEY-----"}, body...), "-----END RSA PRIVATE KEY----- loaded", "refreshing token", "ConnectionPoolManagerStarted ok") // gitleaks:allow (made up: 25 lines of a repeated pattern)
+	got := strs(d.lines(in))
+	want := []string{"loading key", "[redacted:private-key] loaded", "refreshing token", "ConnectionPoolManagerStarted ok"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("the tail through the door:\n%q\nwant\n%q", got, want)
+	}
+	// A block with no end in the tail is filtered line by line.
+	if got := strs(d.lines([]string{"-----BEGIN RSA PRIVATE KEY-----", "short line"})); strings.Join(got, "|") != "-----BEGIN RSA PRIVATE KEY-----|short line" {
+		t.Errorf("a block with no end: %q", got)
+	}
+}
+
+// A deploy that fails on an env_file line that is no assignment, in a
+// process that launched from that file before, says the filter's
+// sentence, not the line: the file as it is now does not parse, so
+// what the line holds is unknown to the filter, whatever was learnt.
+func TestErrorNetWhenTheEnvFileNoLongerParses(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	must(t, os.WriteFile(b.rig.spec.envFile, []byte("TOKEN=some-value-of-the-app-01\n3q2x8wZk7Lm9Pa==\n"), 0o600))
+	code, body := b.post(t, "v2", false)
+	if code != http.StatusInternalServerError || strings.Contains(body, "3q2x8wZk7Lm9Pa") || !strings.Contains(body, `"error":"[withheld: the app's env_file could not be read`) {
+		t.Fatalf("%d %s", code, body)
+	}
+	if rec := b.sinks(t)["record of v2"]; strings.Contains(rec, "3q2x8wZk7Lm9Pa") {
+		t.Errorf("the record: %s", rec)
+	}
+}
+
+// What moteld spends to record a failed probe is bounded whatever the
+// app answers: Go's client quotes an answer that is one long line that
+// is no HTTP whole into its error, and the error net reads at most a
+// line's worth of it, and carries at most errTextMax.
+func TestErrorNetIsBoundedWhateverTheAppAnswers(t *testing.T) {
+	var env strings.Builder
+	for i := range 30 {
+		fmt.Fprintf(&env, "K%02d=a-value-of-the-app-%02d\n", i, i)
+	}
+	b := newDoorBox(t, env.String())
+	ma := b.rig.ma
+	ma.wd.mu.Lock()
+	ma.wd.state = wdStateWatching
+	ma.wd.mu.Unlock()
+	answer := strings.Repeat("an answer that is no HTTP a-value-of-the-app-07 ", 4<<20/48)
+	start := time.Now()
+	_, _ = ma.probeFailed("v1", fmt.Errorf("net/http: malformed HTTP response %q", answer))
+	took := time.Since(start)
+	s := ma.status().Watchdog
+	if s == nil || len(s.LastFailure) > errTextMax || !strings.HasSuffix(string(s.LastFailure), "…") || strings.Contains(string(s.LastFailure), "a-value-of-the-app-07") {
+		t.Fatalf("last_failure: %d bytes", len(s.LastFailure))
+	}
+	if took > 2*time.Second {
+		t.Errorf("recording a failed probe of a 4 MiB answer took %v", took)
+	}
+}
+
+// redacted_env never spells a value: a key's name that is another key's
+// value is that value's marker in the list.
+func TestRedactedEnvSpellsNoValue(t *testing.T) {
+	d := &door{r: NewRedactor([]string{"PRIMARY_KEY_NAME=STRIPE_LIVE_KEY", "STRIPE_LIVE_KEY=sk-value-0123456789"}, nil), seen: map[string]bool{}}
+	if got := d.text("boot sk-value-0123456789"); strings.Contains(string(got), "sk-value") {
+		t.Fatalf("the text: %q", got)
+	}
+	keys := d.keys()
+	if len(keys) != 1 || keys[0] == "STRIPE_LIVE_KEY" || !strings.HasPrefix(keys[0], "[") {
+		t.Errorf("redacted_env: %q", keys)
 	}
 }
