@@ -6,28 +6,22 @@
 // tested against the real handlers in-process.
 //
 // The types are the shape and nothing else: no state, no behaviour.
-// Field order is part of the shape — the response filter keeps a
-// nested object's keys in the order they are marshalled (liveswap's
-// withField sorts only the top level), and the examples' deploy.sh
-// reads a failure body by position (Failure, Status.LastDeploy) — so a
-// field is added in the place it belongs, never moved. liveswap/testdata/wire
+// Field order is part of the shape: the examples' deploy.sh reads a
+// failure body by position (Failure, Status.LastDeploy), so a field is
+// added in the place it belongs, never moved. liveswap/testdata/wire
 // pins every body byte for byte.
 //
-// Every body passes the app's response filter after it is marshalled
-// (liveswap/redact.go): any string can come back as a marker, a time
-// only in a deploy record written before #604 or in a body the filter's
-// rule 7 sends whole (a value across a time's or a number's edge, or
-// holding a time's quote, the filter changing what held a time, a
-// string of the app's that is a NUL, a ; and digits alone), or from a
-// box older than #604, and a
-// number never: rule 7 holds numbers too, and a body it sends whole
-// with a value in a number is withheld, as every such body was before,
-// or, for a value made of JSON punctuation that runs from a string
-// across a number into the next, sent without that key and number.
-// A body the filter changed gains a top-level "redacted_env" naming the
-// env keys whose values it replaced, which only DeployResult has a
-// field for. Apps is made of bodies, one per app: each entry is
-// filtered by its own app's filter, and gains its own "redacted_env".
+// No filter runs over a body once it is marshalled. The app's text in
+// it was filtered where it entered, and has a type that says so:
+// AppText for what the app wrote, ErrText for an error's text. Every
+// other string field is classed by its `text` tag, which no encoder
+// reads: "moteld" for moteld's own (a name, a version, a word of a
+// closed set, a path or a sentence of its own), "passes" for text that
+// passes as written because it is the caller's, the operator's or
+// another program's. TestEveryStringFieldIsClassed fails for a string
+// field that has neither a type nor a tag. A body whose app text the
+// filter changed carries "redacted_env", the env keys whose values it
+// replaced, in the type's own field.
 //
 // The package imports only the standard library, so a program that
 // reads these bodies does not link Caddy (TestImportsOnlyTheStandardLibrary).
@@ -40,23 +34,23 @@ import (
 
 // Status is GET /<app>'s body, and a successful deploy's response.
 type Status struct {
-	App            string `json:"app"`
-	Phase          string `json:"phase"`
-	CurrentVersion string `json:"current_version,omitempty"`
+	App            string `json:"app" text:"moteld"`
+	Phase          string `json:"phase" text:"moteld"`
+	CurrentVersion string `json:"current_version,omitempty" text:"moteld"`
 	// Socket is the unix socket the instance listens on, under its
 	// run/ dir. It is what the app bound, not what motel dials:
 	// that is a hard link to the same inode under proxy/, outside
 	// the app's reach. Reachable by the motel user (run/ is 0750).
-	Socket string `json:"socket,omitempty"`
+	Socket string `json:"socket,omitempty" text:"moteld"`
 	PID    int    `json:"pid,omitempty"`
 	// Command is the argv the manager reports for the running unit —
 	// rendered, so an absolute path with placeholders substituted, and
 	// not what the config says now (a reload does not restart an app).
 	// Env is not reported: see DESIGN-threat-model.md.
-	Command []string `json:"command,omitempty"`
+	Command []string `json:"command,omitempty" text:"passes"`
 	// Unit is the systemd unit running the instance — what to pass to
 	// journalctl for the app's own output.
-	Unit    string `json:"unit,omitempty"`
+	Unit    string `json:"unit,omitempty" text:"moteld"`
 	Running bool   `json:"running"`
 	// Caps is what the running unit is bounded to, as the manager last
 	// applied them: set at the unit's start, changed live by a reload,
@@ -68,7 +62,7 @@ type Status struct {
 	// the unit's cgroup, so the manager holds the value and the kernel
 	// bounds nothing (not the case on Debian 13). Absent when every
 	// cap is enforced.
-	CapsUnenforced []string `json:"caps_unenforced,omitempty"`
+	CapsUnenforced []string `json:"caps_unenforced,omitempty" text:"moteld"`
 	// Deploying is the deploy running now; absent when none is. Before
 	// last_deploy (see there). It is gone from the status by the time a
 	// deploy's own response is written.
@@ -91,7 +85,7 @@ type Status struct {
 	// relaunch. Always serialized (a healthy app with no releases
 	// reports []), so an empty set is distinguishable from a server
 	// that doesn't report the field.
-	AvailableVersions []string `json:"available_versions"`
+	AvailableVersions []string `json:"available_versions" text:"moteld"`
 	// OrderedByMtime names the entries of AvailableVersions placed by
 	// their release dir's mtime, which the app can set: those with no
 	// deploy record (deployed before records, a record write that
@@ -99,11 +93,15 @@ type Status struct {
 	// is there but cannot be read. Each comes after every recorded
 	// release unless it is the running version, which the list puts
 	// first; absent when there are none.
-	OrderedByMtime []string `json:"ordered_by_mtime,omitempty"`
+	OrderedByMtime []string `json:"ordered_by_mtime,omitempty" text:"moteld"`
 	// Metrics is the metrics store's summary of the app's numbers
 	// (notify/DESIGN-metrics.md, "metrics in GET /<app>"): in GET /<app>
 	// alone, and only when the monitor block's metrics line is loaded.
 	Metrics *Metrics `json:"metrics,omitempty"`
+	// RedactedEnv is the env keys whose values the filter replaced in
+	// the app's text this status carries: last_deploy's, and the
+	// watchdog's last failure's. Absent when none was.
+	RedactedEnv []string `json:"redacted_env,omitempty" text:"moteld"`
 }
 
 // Caps is the unit's resource caps, in the directives' own names and
@@ -115,35 +113,34 @@ type Caps struct {
 }
 
 // DeploySummary is a record's outcome as the status lists it. The
-// times are carried as the record has them, not parsed: a record is
-// the filter's output, and a filter that replaced a value the shape
-// of a timestamp must not make the record vanish from the list. The
-// list is ordered by the record's write time instead. The pin is
-// carried the same way, for the same reason: a digest equal to an
-// env_file value is redacted in the record like any other.
+// times and the pin are carried as the record has them, not parsed: a
+// record an older moteld wrote passed its filter whole, which could
+// replace a value inside a time or a digest, and such a record must not
+// vanish from the list. The list is ordered by the record's write time
+// instead.
 type DeploySummary struct {
-	Version    string          `json:"version"`
-	Status     string          `json:"status"`
-	Phase      string          `json:"phase,omitempty"` // where it failed
-	By         string          `json:"deployed_by,omitempty"`
-	SHA256     json.RawMessage `json:"sha256,omitempty"` // the pin; absent when there was none
-	StartedAt  json.RawMessage `json:"started_at,omitempty"`
-	FinishedAt json.RawMessage `json:"finished_at,omitempty"`
+	Version    string          `json:"version" text:"moteld"`
+	Status     string          `json:"status" text:"moteld"`
+	Phase      string          `json:"phase,omitempty" text:"moteld"` // where it failed
+	By         string          `json:"deployed_by,omitempty" text:"passes"`
+	SHA256     json.RawMessage `json:"sha256,omitempty" text:"moteld"` // the pin; absent when there was none
+	StartedAt  json.RawMessage `json:"started_at,omitempty" text:"moteld"`
+	FinishedAt json.RawMessage `json:"finished_at,omitempty" text:"moteld"`
 }
 
 // DeployResult is one deploy attempt's outcome: the status's
-// last_deploy, and GET /<app>?deploy=<v>'s body (the record, as the
-// filter left it). A record the filter could not keep whole is an
-// envelope of some of the same fields — version, status, phase,
-// sha256, the times — in sorted order, whose error says why the rest
-// is withheld.
+// last_deploy, and GET /<app>?deploy=<v>'s body (the record). A record
+// too large to read back is an envelope of some of the same fields
+// (version, status, phase, sha256, the times) in sorted order, whose
+// error says why the rest is missing; so is one an older moteld's
+// filter could not keep whole.
 type DeployResult struct {
-	Version    string    `json:"version"`
-	Status     string    `json:"status"` // "succeeded" | "failed"
-	Error      string    `json:"error,omitempty"`
-	Phase      string    `json:"phase,omitempty"`       // phase reached when it failed
-	By         string    `json:"deployed_by,omitempty"` // the trust source that authorized it, and the token's attribution claims
-	SHA256     string    `json:"sha256,omitempty"`      // the pin the deployer asserted, the digest of the bytes a push uploaded, or a rollback's carried from the record it replaces; never a hash of an unpinned download
+	Version    string    `json:"version" text:"moteld"`
+	Status     string    `json:"status" text:"moteld"` // "succeeded" | "failed"
+	Error      ErrText   `json:"error,omitempty"`
+	Phase      string    `json:"phase,omitempty" text:"moteld"`       // phase reached when it failed
+	By         string    `json:"deployed_by,omitempty" text:"passes"` // the trust source that authorized it, and the token's attribution claims
+	SHA256     string    `json:"sha256,omitempty" text:"moteld"`      // the pin the deployer asserted, the digest of the bytes a push uploaded, or a rollback's carried from the record it replaces; never a hash of an unpinned download
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
 	// Note says what the deploy did that its outcome words do not: a
@@ -152,7 +149,7 @@ type DeployResult struct {
 	// last_deploy and the response only — a relaunch writes no record,
 	// so the version's record keeps the deploy that put it there, its
 	// pin and its times.
-	Note string `json:"note,omitempty"`
+	Note string `json:"note,omitempty" text:"moteld"`
 	// What the artifact cost against max_artifact_entries and the
 	// decompressed byte cap — the files, directories and links
 	// extraction created, and its bytes — so an app growing toward
@@ -169,12 +166,15 @@ type DeployResult struct {
 	// lines it wrote. Nil for a success, and for a failure before a
 	// launch (nothing of the app's ran).
 	Detail *DeployDetail `json:"detail,omitempty"`
-	// RedactedEnv is the env keys whose values the detail's early
-	// replacement found: by the time the response filter runs they are
-	// markers already, so it reports them from here — this field,
-	// wherever the result sits in a body, is hoisted into the body's
-	// own `redacted_env` (liveswap's withField).
-	RedactedEnv []string `json:"redacted_env,omitempty"`
+	// RedactedEnv is the env keys whose values the filter replaced in
+	// this result's error and detail, where the app's text entered.
+	RedactedEnv []string `json:"redacted_env,omitempty" text:"moteld"`
+	// FilteredAtEntry is true in a record written by a moteld that
+	// filters the app's text where it enters: its error and detail have
+	// passed the app's filter, and no read filters them again. Absent
+	// from a record an older moteld wrote, whose error and detail are
+	// filtered again when it is read, and from last_deploy.
+	FilteredAtEntry bool `json:"filtered_at_entry,omitempty"`
 }
 
 // DeployInFlight is a deploy the app is running: set when the box takes
@@ -188,9 +188,9 @@ type DeployResult struct {
 type DeployInFlight struct {
 	// Version is the version asked for: every deploy names it before
 	// it begins.
-	Version string `json:"version"`
+	Version string `json:"version" text:"moteld"`
 	// By is who it runs under, as DeployResult.By.
-	By string `json:"deployed_by,omitempty"`
+	By string `json:"deployed_by,omitempty" text:"passes"`
 	// StartedAt is when the box took it: the started_at its
 	// last_deploy and record will carry, but for a push, whose record
 	// begins once the upload is staged.
@@ -204,20 +204,20 @@ type DeployInFlight struct {
 
 // PhaseTiming is one phase a deploy passed through.
 type PhaseTiming struct {
-	Name      string    `json:"name"`
+	Name      string    `json:"name" text:"moteld"`
 	StartedAt time.Time `json:"started_at"`
 	Seconds   float64   `json:"seconds"`
 }
 
 // DeployDetail is the app's side of a failed deploy. Every string in
-// it has passed the response filter, and the known values were
-// replaced as it was built, before the tail and body caps cut, so a
-// cap never leaves a fragment of one.
+// it but Exit (moteld's own) has passed the app's filter as it was
+// built, before the tail and body caps cut, so a cap never leaves a
+// fragment of a known value.
 type DeployDetail struct {
 	// Exit is how the process ended, from the runner: "exit status 3",
 	// "killed by signal 9 (killed)". The pre_start's when that failed,
 	// otherwise the app's, when it died before becoming healthy.
-	Exit string `json:"exit,omitempty"`
+	Exit string `json:"exit,omitempty" text:"moteld"`
 	// Probe is the last health probe that completed with a non-2xx
 	// answer: the status, a redirect's target, the first bytes of the
 	// body — where "Invalid HTTP_HOST header" or "no such table" is.
@@ -229,33 +229,67 @@ type DeployDetail struct {
 	// deploy_log_lines and 8 KiB; LogTailTruncated says when a cap
 	// dropped lines. LogTailError says why there is no tail when there
 	// should have been one (journalctl missing, the journal unreadable).
-	LogTail          []string `json:"log_tail,omitempty"`
-	LogTailTruncated bool     `json:"log_tail_truncated,omitempty"`
-	LogTailError     string   `json:"log_tail_error,omitempty"`
+	LogTail          []AppText `json:"log_tail,omitempty"`
+	LogTailTruncated bool      `json:"log_tail_truncated,omitempty"`
+	LogTailError     ErrText   `json:"log_tail_error,omitempty"`
 }
 
 // ProbeDetail is the last non-2xx health probe answer.
 type ProbeDetail struct {
-	Status   int    `json:"status"`
-	Location string `json:"location,omitempty"`
-	Body     string `json:"body,omitempty"`
+	Status   int     `json:"status"`
+	Location AppText `json:"location,omitempty"`
+	Body     AppText `json:"body,omitempty"`
 }
+
+// AppText is text the app wrote while it ran (a line of its output, a
+// probe's answer), as the app's filter left it: its env values
+// replaced. A string on the wire. On the box only the filter makes one
+// (liveswap's door, redact.go; TestAppTextOnlyFromTheDoor holds that),
+// so a field of this type cannot be given the app's bytes as they came.
+type AppText string
+
+// ErrText is an error's text, or a refusal's sentence, as an answer or
+// a deploy's record carries it. On the box one is made from a string
+// that is not a constant in two ways only: through the app's filter, as
+// text (liveswap's errText and door.errText, redact.go), since an
+// error's text can quote what the app answered a probe with or name a
+// path the app made; or by OwnText, for a sentence that holds nothing
+// an app wrote. TestErrTextMakers holds that, so a field of this type
+// cannot be given err.Error() as it came. An untyped constant is
+// assignable to it: moteld's own fixed words need no filter and get
+// none. A string on the wire.
+type ErrText string
+
+// OwnText is s, a sentence of moteld's or the box's own, as an
+// ErrText: words over what the request itself sent (a name, a query
+// that does not parse, a body that did not read), over the box's own
+// figures and names, or over text a door of the box's already filtered.
+// Never an error's text from under an app's directories, and never the
+// app's bytes: those pass the app's filter (liveswap's errText). Its
+// callers are listed in TestErrTextMakers (liveswap) and
+// TestBoxErrTextMakers (box): a new one is a decision someone writes
+// down there.
+func OwnText(s string) ErrText { return ErrText(s) }
 
 // Watchdog is the app's watchdog as the status reports it.
 type Watchdog struct {
-	State            string    `json:"state"`
+	State            string    `json:"state" text:"moteld"`
 	Failures         int       `json:"consecutive_failures,omitempty"`
 	RestartsInWindow int       `json:"restarts_in_window,omitempty"`
 	LastRestartAt    time.Time `json:"last_restart_at,omitzero"`
-	LastRestartCause string    `json:"last_restart_cause,omitempty"`
-	LastFailure      string    `json:"last_failure,omitempty"`
+	LastRestartCause string    `json:"last_restart_cause,omitempty" text:"moteld"`
+	LastFailure      ErrText   `json:"last_failure,omitempty"`
 }
 
 // Error is every refusal's body, and every failure's but a failed
 // deploy's: the 401, 404, 405, 409, 422, 503 and the 500s before a
-// deploy runs, and a body the filter withheld whole.
+// deploy runs.
 type Error struct {
-	Error string `json:"error"`
+	Error ErrText `json:"error"`
+	// RedactedEnv is the env keys whose values the app's filter replaced
+	// in Error: a refusal of the deploy pipeline's can name a path in a
+	// release the app wrote. Absent when none was.
+	RedactedEnv []string `json:"redacted_env,omitempty" text:"moteld"`
 }
 
 // Forbidden is the 403 to a caller whose token the box verified and
@@ -266,9 +300,9 @@ type Error struct {
 // does not. Error comes first, so a client decoding Error reads the
 // sentence.
 type Forbidden struct {
-	Error string `json:"error"`
-	Needs string `json:"needs"`
-	Scope string `json:"scope"`
+	Error ErrText `json:"error"`
+	Needs string  `json:"needs" text:"moteld"`
+	Scope string  `json:"scope" text:"moteld"`
 }
 
 // Failure is a deploy that failed once it ran (500): why, and the
@@ -276,8 +310,11 @@ type Forbidden struct {
 // comes first: the examples' deploy.sh reads the cause as the body's
 // first key.
 type Failure struct {
-	Error  string `json:"error"`
-	Status Status `json:"status"`
+	Error  ErrText `json:"error"`
+	Status Status  `json:"status"`
+	// RedactedEnv is the status's, at the body's top, where a client
+	// looks for it.
+	RedactedEnv []string `json:"redacted_env,omitempty" text:"moteld"`
 }
 
 // A streamed deploy (Accept: application/x-ndjson) is one JSON object
@@ -290,26 +327,25 @@ const (
 	EventDone  = "done"
 )
 
-// PhaseEvent is a streamed deploy's line for one phase entered. A line
-// whose body the filter withheld (an env_file it could not read, a
-// known value overlapping the line's own structure) has Error, why, in
-// place of At, and may have a top-level "redacted_env" beside it.
+// PhaseEvent is a streamed deploy's line for one phase entered. Error
+// is never sent by this moteld: an older one, which filtered every
+// finished body, sent it in place of At when its filter withheld the
+// line.
 type PhaseEvent struct {
-	Error string    `json:"error,omitempty"`
+	Error ErrText   `json:"error,omitempty"`
 	At    time.Time `json:"at,omitzero"`
-	Event string    `json:"event"` // EventPhase
-	Phase string    `json:"phase"`
+	Event string    `json:"event" text:"moteld"` // EventPhase
+	Phase string    `json:"phase" text:"moteld"`
 }
 
 // DoneEvent is the fields the last line adds to the single response's
 // body: the event, and the status code that response would have had.
-// The handler appends them to the filtered body, so they are there
-// when the filter withheld the rest — and then the body is an Error
-// whatever HTTPStatus says, a 200 included: which body a line carries
-// is told by its keys ("error" alone, or "error" and "status", or
-// neither), never by its code.
+// The handler appends them to the body as marshalled. Which body a line
+// carries is told by its keys ("error" alone, or "error" and "status",
+// or neither), never by its code: an older moteld, whose filter could
+// withhold a whole body, sent an Error with a 200.
 type DoneEvent struct {
-	Event      string `json:"event"` // EventDone
+	Event      string `json:"event" text:"moteld"` // EventDone
 	HTTPStatus int    `json:"http_status"`
 }
 
@@ -318,13 +354,13 @@ type DoneEvent struct {
 // runs, the box's key for secrets, and whether that Caddyfile is not the
 // one the box recorded for the commit.
 type BoxStatus struct {
-	Commit     string `json:"commit"`
-	BoxWebhook string `json:"box_webhook"`
-	SHA256     string `json:"sha256"`
+	Commit     string `json:"commit" text:"moteld"`
+	BoxWebhook string `json:"box_webhook" text:"passes"`
+	SHA256     string `json:"sha256" text:"moteld"`
 	// Recipient is the box's key for secrets, which the workflow
 	// compares with the first line of recipients ("The box's key").
 	// Absent when the box has none.
-	Recipient string `json:"recipient,omitempty"`
+	Recipient string `json:"recipient,omitempty" text:"moteld"`
 	// OutOfBand is true when SHA256 is not the digest the box recorded
 	// for Commit, the comparison a push's own
 	// caddyfile_edited_out_of_band makes: an edit at the console, or a
@@ -347,20 +383,20 @@ type BoxStatus struct {
 // key signed reaches it.
 type WhoAmI struct {
 	// Name is the name on the key's line.
-	Name string `json:"name"`
+	Name string `json:"name" text:"passes"`
 	// Key is the key that signed, SHA256:<base64> as ssh-keygen -l
 	// prints it.
-	Key string `json:"key"`
+	Key string `json:"key" text:"moteld"`
 	// Roles are the grants that apply from this request's address, one
 	// per role and scope, the box's first, then each app by name, viewer
 	// before logs on one scope; always present, [] for none. No address
 	// list is shown.
 	Roles []RoleHeld `json:"roles"`
 	// Box is the box's identity: the token's aud.
-	Box string `json:"box"`
+	Box string `json:"box" text:"passes"`
 	// Version is the release the box runs, which no header names; ""
 	// for a build that links none.
-	Version string `json:"version"`
+	Version string `json:"version" text:"moteld"`
 	// Protocol is the number of the person-token forms the box takes
 	// (liveswap.Protocol), which no header names.
 	Protocol int `json:"protocol"`
@@ -371,8 +407,8 @@ type WhoAmI struct {
 // RoleHeld is one role held here, "viewer" or "logs", on one scope:
 // "box", or "app:<name>".
 type RoleHeld struct {
-	Role  string `json:"role"`
-	Scope string `json:"scope"`
+	Role  string `json:"role" text:"moteld"`
+	Scope string `json:"scope" text:"moteld"`
 }
 
 // Apps is GET /_motel/apps's body: the apps the caller may view, sorted
@@ -389,26 +425,16 @@ type Apps struct {
 // know, and reads a key's absence as "not known" (a box that sends
 // none, or a row withheld), never as false or zero.
 //
-// Each entry's summary is a body of its own to the response filter:
-// the summary alone is marshalled and passed through its own app's
-// filter, as GET /<app> is, and the name is put beside it after (the
-// handler's appRow), so one app's values are never in another app's
-// row and the list is never withheld because of one app. Name is the
-// handler's own word, put beside what the filter returned; a field of
-// the app's added here is filtered only if appRow puts it inside what
-// it gives the filter, as it does Summary. A row that passed is
-// written with its keys sorted, and gains a "redacted_env" of its own,
-// naming that app's keys, when the filter replaced one of the app's
-// known values in it. A row the filter withheld is the name and the
-// error alone, in the order declared here. The list's top level holds
-// "apps" alone.
+// Each entry's summary is the one GET /<app> gives at the same moment,
+// in part. The list's top level holds "apps" alone.
 type AppEntry struct {
 	// Name is the app's name, as in the path of its routes.
-	Name string `json:"name"`
-	// Error is why the entry holds the name alone: the app's filter
-	// withheld the row (its env_file could not be read, say), in the
-	// filter's words. Absent when Summary is there.
-	Error string `json:"error,omitempty"`
+	Name string `json:"name" text:"moteld"`
+	// Error is why the entry holds the name alone: "forbidden" (the
+	// person's grants and the box's table falling apart). An older
+	// moteld also said here why its filter withheld the row. Absent when
+	// Summary is there.
+	Error ErrText `json:"error,omitempty"`
 	// Summary is the app's state as GET /<app> gives it at the same
 	// moment, in part: each value is taken from the same status.
 	Summary *AppSummary `json:"summary,omitempty"`
@@ -419,18 +445,18 @@ type AppEntry struct {
 // socket, pid, unit or command: those are GET /<app>'s.
 type AppSummary struct {
 	// Phase is Status.Phase: "idle", or the phase of a deploy in flight.
-	Phase string `json:"phase"`
+	Phase string `json:"phase" text:"moteld"`
 	// Running is Status.Running.
 	Running bool `json:"running"`
 	// CurrentVersion is Status.CurrentVersion: absent when nothing runs.
-	CurrentVersion string `json:"current_version,omitempty"`
+	CurrentVersion string `json:"current_version,omitempty" text:"moteld"`
 	// Watchdog is Status.Watchdog.State: absent when the app's watchdog
 	// was never armed.
-	Watchdog string `json:"watchdog,omitempty"`
+	Watchdog string `json:"watchdog,omitempty" text:"moteld"`
 	// NewestDeploy is Status.Deploys[0], the newest deploy record's
 	// outcome: absent when no record is kept.
 	NewestDeploy *DeploySummary `json:"newest_deploy,omitempty"`
 	// Deploying is Status.Deploying.Version, the version of the deploy
 	// running now: absent when none is.
-	Deploying string `json:"deploying,omitempty"`
+	Deploying string `json:"deploying,omitempty" text:"moteld"`
 }

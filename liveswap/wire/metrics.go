@@ -11,11 +11,11 @@ var MetricsRanges = []string{"1h", "24h"}
 // Metrics is the status's `metrics` object: the metrics store's
 // summary of the app over one of MetricsRanges (notify/DESIGN-metrics.md,
 // "metrics in GET /<app>"). Every fraction is rounded (the memory
-// values are bytes as pushed), so none marshals as the run of digits
-// the response filter would read as a secret. A store that did not
+// values are bytes as pushed), so none marshals as a long run of
+// digits. A store that did not
 // answer is the object with Error alone.
 type Metrics struct {
-	Window string `json:"window,omitempty"`
+	Window string `json:"window,omitempty" text:"moteld"`
 	// At is the newest point of the window's range, of memory or CPU,
 	// not the time of a push; absent with no point.
 	At     *time.Time     `json:"at,omitempty"`
@@ -26,7 +26,7 @@ type Metrics struct {
 	MemoryMax *float64        `json:"memory_max_bytes,omitempty"`
 	CPU       *CPUSummary     `json:"cpu_cores,omitempty"`
 	Requests  *RequestSummary `json:"requests,omitempty"`
-	Error     string          `json:"error,omitempty"`
+	Error     ErrText         `json:"error,omitempty"`
 }
 
 // MemorySummary is the app's memory over the window, in bytes.
@@ -57,7 +57,7 @@ type CPUSummary struct {
 type RequestSummary struct {
 	Total     uint64            `json:"total"`
 	PerSecond float64           `json:"per_second"`
-	ByClass   map[string]uint64 `json:"by_class,omitempty"`
+	ByClass   map[string]uint64 `json:"by_class,omitempty" text:"moteld"`
 	// Share5xx is of the responses sent: a client gone first (aborted)
 	// is in the total, not here. Absent with none sent.
 	Share5xx *float64 `json:"5xx_share,omitempty"`

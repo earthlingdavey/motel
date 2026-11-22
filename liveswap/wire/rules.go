@@ -21,7 +21,7 @@ type RulesListing struct {
 	// what this config renders into it: RulesFileDiffers, RulesFileMissing
 	// or RulesFileUnreadable. It speaks for the file, not for what
 	// vmalert loaded.
-	RulesFile string         `json:"rules_file,omitempty"`
+	RulesFile string         `json:"rules_file,omitempty" text:"moteld"`
 	Alerts    []AlertListing `json:"alerts"`
 }
 
@@ -35,7 +35,7 @@ const (
 // StoreQueries are the store's socket and how vmalert's evaluations
 // line up with a query a client makes there.
 type StoreQueries struct {
-	Socket string `json:"socket"`
+	Socket string `json:"socket" text:"moteld"`
 	// QueryOffsetSeconds is how far behind its run vmalert stamps an
 	// evaluation, at most: its interval and its -rule.evalDelay. A value
 	// query at now minus it reads no later than what vmalert compared.
@@ -43,13 +43,13 @@ type StoreQueries struct {
 	// StateQuery and ActiveSinceQuery are pending or firing, and since
 	// when: vmalert writes both series for an alert that is not
 	// inactive, with a gap at each evaluation that the lookback covers.
-	StateQuery       string `json:"state_query"`
-	ActiveSinceQuery string `json:"active_since_query"`
+	StateQuery       string `json:"state_query" text:"passes"`
+	ActiveSinceQuery string `json:"active_since_query" text:"passes"`
 	// Values is StoreOn when the store answered the box's own
 	// evaluation of these queries, whose numbers are each store rule's
 	// Readings, or StoreUnanswered when it did not within the box's
 	// budget: the store rules then have no readings, and say nothing.
-	Values string `json:"values"`
+	Values string `json:"values" text:"passes"`
 }
 
 // Rules is the people's listing: GET /_motel/rules and GET
@@ -63,11 +63,11 @@ type Rules struct {
 	// not answer within the box's budget: the store rules have no
 	// readings, and say nothing). A client reads a word it does not know
 	// as not knowing any store rule's value.
-	Store string `json:"store"`
+	Store string `json:"store" text:"moteld"`
 	// RulesFile is as RulesListing's, a word, on both reads: a reading's
 	// state is vmalert's, which evaluates the file, so a file that is not
 	// this config's qualifies every store rule's state.
-	RulesFile string `json:"rules_file,omitempty"`
+	RulesFile string `json:"rules_file,omitempty" text:"moteld"`
 	// Alerts are the alerts motel can raise, in the listing's order: an
 	// app's read holds those whose subject is an app, every app's or that
 	// app's alone, each with that app's readings and no other's.
@@ -83,31 +83,31 @@ const (
 
 // AlertListing is one alert name, and what it fires on.
 type AlertListing struct {
-	Name string `json:"name"`
+	Name string `json:"name" text:"passes"`
 	// Source is builtin (a store rule motel ships), operator (a rule
 	// line) or motel check (motel's own detectors).
-	Source string `json:"source"`
+	Source string `json:"source" text:"moteld"`
 	// Severity is the one it is first raised at.
-	Severity string `json:"severity"`
+	Severity string `json:"severity" text:"passes"`
 	// Subject is box or app; App the one app a rule line is pinned to.
-	Subject string `json:"subject"`
-	App     string `json:"app,omitempty"`
+	Subject string `json:"subject" text:"moteld"`
+	App     string `json:"app,omitempty" text:"moteld"`
 	// Apps are the apps an alert's rule lines pin it to when every one
 	// of them is pinned and they name more than one (post_deploy_regressed,
 	// one name for all of an operator's post_deploy lines; one app is App).
 	// An app's read keeps such an alert for those apps alone, with App its
 	// own and no Apps.
-	Apps []string `json:"apps,omitempty"`
+	Apps []string `json:"apps,omitempty" text:"moteld"`
 	// Kind is threshold, guarded (a threshold with guards) or event
 	// (nothing to be close to).
-	Kind string `json:"kind"`
+	Kind string `json:"kind" text:"moteld"`
 
 	// A store rule's: ValueQuery Op Threshold is its condition, held
 	// for ForSeconds. The people's listing has no ValueQuery.
-	ValueQuery string         `json:"value_query,omitempty"`
-	Op         string         `json:"op,omitempty"`
+	ValueQuery string         `json:"value_query,omitempty" text:"passes"`
+	Op         string         `json:"op,omitempty" text:"moteld"`
 	Threshold  *float64       `json:"threshold,omitempty"`
-	Unit       string         `json:"unit,omitempty"`
+	Unit       string         `json:"unit,omitempty" text:"moteld"`
 	ForSeconds int            `json:"for_seconds,omitempty"`
 	Guards     []GuardListing `json:"guards,omitempty"`
 
@@ -123,20 +123,20 @@ type AlertListing struct {
 // Value, or with no Op, Query having a series at all. The people's
 // listing has no Query and no Match: its Meaning says it.
 type GuardListing struct {
-	Query string   `json:"query,omitempty"`
-	Op    string   `json:"op,omitempty"`
+	Query string   `json:"query,omitempty" text:"passes"`
+	Op    string   `json:"op,omitempty" text:"moteld"`
 	Value *float64 `json:"value,omitempty"`
 	// Match is how the guard's series are matched to the value's, such
 	// as "on (app)", or "on ()" for a guard with no labels, which holds
 	// for every series of the value; none for all their labels.
-	Match   string `json:"match,omitempty"`
-	Meaning string `json:"meaning"`
+	Match   string `json:"match,omitempty" text:"passes"`
+	Meaning string `json:"meaning" text:"moteld"`
 }
 
 // LevelListing is one of disk_low's: fired at Threshold, cleared under
 // ClearsBelow.
 type LevelListing struct {
-	Severity    string  `json:"severity"`
+	Severity    string  `json:"severity" text:"moteld"`
 	Threshold   float64 `json:"threshold"`
 	ClearsBelow float64 `json:"clears_below"`
 }
@@ -145,8 +145,8 @@ type LevelListing struct {
 // (Instance, the alert's instance), or one app (App), or for the one
 // series a value with no label has (neither).
 type Reading struct {
-	Instance string `json:"instance,omitempty"`
-	App      string `json:"app,omitempty"`
+	Instance string `json:"instance,omitempty" text:"passes"`
+	App      string `json:"app,omitempty" text:"passes"`
 	// Value is absent only on a store rule's reading of a series vmalert
 	// holds pending or firing whose value the store gave none of at
 	// MeasuredAt.
@@ -155,13 +155,13 @@ type Reading struct {
 	Threshold     *float64 `json:"threshold,omitempty"`
 	WindowSeconds float64  `json:"window_seconds,omitempty"`
 	// Level is disk_low's severity firing now, which its gap decides.
-	Level      string    `json:"level,omitempty"`
+	Level      string    `json:"level,omitempty" text:"moteld"`
 	MeasuredAt time.Time `json:"measured_at"`
 	// State is a store rule's, as vmalert last wrote it to the store:
 	// RuleInactive, RulePending (its condition holds, not yet for its
 	// for) or RuleFiring; ActiveSince is since when it is pending or
 	// firing. A client reads a word it does not know as not knowing.
-	State       string     `json:"state,omitempty"`
+	State       string     `json:"state,omitempty" text:"passes"`
 	ActiveSince *time.Time `json:"active_since,omitempty"`
 }
 
