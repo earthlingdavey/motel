@@ -1,0 +1,24 @@
+✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.… live · 0s ago
+apps › shop › metrics 1h                             as of 14:12:40 UTC · 0s ago
+        |
+        |
+        |
+     0% |    ⢀⣀⡀ ⡀ ⡀ ⡀ ⡀ ⡀ ⡀ ⡀ ⡀⢀⣀                                ⢀⣀⡀
+        +----------------------------------------        -----------------------
+         13:12                 4 of 61 steps had requests                  14:12
+
+p95         newest 0.5 ms at 14:02 (10m ago)
+            max 0.5ms 13:17 · min 0.3ms 13:33
+  0.5ms |    ⠈⠉⠁ ⠁ ⠁ ⠁ ⠁ ⠁ ⠁ ⠁ ⠁⢸                                 ⠈⠉⠁
+        |                       ⢸
+        |                       ⢸
+        |                       ⢸
+        |                       ⢸
+        |                       ⠈⡇
+        |                        ⡇
+        |                        ⡇
+        |                        ⡇
+  0.3ms |                        ⣇
+        +----------------------------------------        -----------------------
+         13:12                 4 of 61 steps had requests                  14:12
+↑↓ scroll  t window  y json  c cmd  esc back  ? more

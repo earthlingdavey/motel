@@ -199,9 +199,14 @@ named), a point a step (a minute over the hour, 5 minutes over the day,
 30 over 7 days, an hour over 14), the newest of the last whole step. It
 prints the box's window, step and end, then a line a panel it knows
 (`memory`, `cpu`, `requests`, `5xx share`, `p95`): its lowest, highest
-and newest value, each with its time, and how many of the window's
-steps have a point; every word and number the client's own, written
-from the box's numbers. A panel it does not know is named as the box's,
+and newest value, each with its time (the lowest and highest written
+alike until they differ, the newest no coarser), and how many of the window's steps have a
+point (a rate under 0.001/s written an hour's, `1.0/h`); for the 5xx
+share and the p95, beside a requests panel, how
+many had requests (a rate above 0), since a step with none has no
+point of theirs, and how many have a point when the two differ.
+Every word and number is the client's own, written from the box's
+numbers. A panel it does not know is named as the box's,
 a word of its grammar, and not drawn; the request panels' absence says
 the box counts them only for an app behind `observe`. `--json` prints
 the points. It exits 0 when it read them, and when the box keeps no
@@ -593,6 +598,7 @@ made by hand. Accepted:
 | `motel backup status` whose stdout takes none of its human output (a full disk, a closed pipe) exits 2 with the write's error, not the box's verdict (1, 3): every command's human output fails so | 2 | 3 | 1 | 6 | 2 | accepted: red and named; `--json` and the verdict's exit are what a script reads |
 | On the backups screen in a window 14 columns wide or less, far below the smallest the screens are laid for (60), a could not tell's quoted why is laid one character a row, each past its 14 columns of indent, so the rows show blank | 2 | 5 | 1 | 10 | 2 | accepted: no screen is laid for such a width; `y` shows the answer |
 | After a 404 to the backups (a moteld older than the read) the read is held until ctrl-r, and the screen does not say ctrl-r asks again, as an app's screen does not after a 404: once the box is upgraded it says the 404 until ctrl-r or `r` | 2 | 5 | 1 | 10 | 1 | accepted: the sentence names the cause, and ctrl-r is among the screen's keys (`?`) |
+| A rate of 100k/s or more that is not round (123456.7/s) has no compact writing in a plot label's seven cells (`123.5k/s` is eight), so its axis label is cut, marked: `123.5k~`. The head above the plot writes the value whole, and main did the same | 2 | 5 | 1 | 10 | 2 (a writing of its own for rates past 100k/s) | accepted: the cut is marked and the head has the value |
 | The metrics screen's plots are braille dots (U+2801 to U+28FF), which every East Asian width table gives one cell, and its axes and marks ASCII; but a terminal whose font has no braille draws each as its fallback glyph, and the plot reads as a row of boxes. The numbers above each plot (newest, highest, lowest, each with its time) still say what it shows | 2 | 2 | 1 | 4 | 2 (an ASCII plot, `.` and `'`, at half the height) | accepted: `motel metrics` prints the same numbers in words; the plots are checked on tcell's simulation screen alone, not yet in a real terminal or on a Mac |
 | A series point the box sends as other than a pair of numbers (`[t]`, `[t, null]`, `[t, v, x]`) is decoded as `[t, 0]` or its first two (Go's decoding into `[2]float64`), and drawn or printed as such, a zero where moteld would have sent no pair. moteld sends pairs of numbers alone | 2 | 1 | 3 | 6 | 2 (the points decoded as lists of any length and refused unless pairs) | accepted: it takes a box that is not moteld's, which the answer's other grammars mostly catch; found in the series read's first self-review |
 | After the box refuses an app's status and then answers it again, a window of the app's series shown again within 30 s of its last answer says "asking…" until that answer is 30 s old, when it is read: the refusal dropped the answer held, and the engine waits out the answer's age | 3 | 2 | 3 | 18 | 2 (the engine told the answer was dropped) | accepted: it takes a refusal and a window shown again within 30 s; the read comes within 30 s. Found in the series read's second self-review |
@@ -709,14 +715,31 @@ the page, three rows at the least (at 60x16, six rows of four dots
 each), above each its
 newest value with its time and age and, on a row of its own, its
 highest and lowest with their times, those two again at the top and
-the bottom of its axis, and under it the time axis with a `^` in each column that holds a
+the bottom of its axis, written alike to more places until they differ
+to places fine enough that neither rounds away from its value by
+more than the two are apart, both in the highest's unit (cores too
+small for the label's seven cells in millicores, `0.04m`; rates in an
+hour's, `1.0/h`; a pair no writing fits alike each in its own, so no
+label a quiet app's numbers give is cut);
+every point of one value is said once (`every point 0%`) and labelled
+once, on its line's row, the bottom one at zero (values no label tells
+apart, a page of memory, are drawn so too); and under it the time axis with a `^` in each column that holds a
 version's latest deploy that succeeded (from the app's status, which
 the screen goes on reading), broken (a space) in each column whose span
 holds part of a step with no point (a deploy's `^` stands over a
 break), and under it the window's two ends and how many of its steps
 have a point. Points a step apart are joined; a step
 with no point is a gap, never a zero or a line across it, and where a
-column holds several steps the axis's break says it. A panel absent says why (no point in the window; the request
+column holds several steps the axis's break says it. A point joined to
+neither is drawn across its step, two dots wide at the least, so it
+shows and is never one dot of a bridge. The 5xx share and the
+p95 have no point at a step with no request (nor the p95 at one of
+cache hits alone): in those two, a step the requests panel has a point
+at is no break, the count says how many steps had requests (a rate
+above 0) and, when that differs, how many have a point, and two points
+with only such steps between them are bridged by a dotted line, a dot
+every second cell (with no requests panel, every step with no point is
+a gap). A panel absent says why (no point in the window; the request
 panels only for an app behind `observe`), and one the client does not
 know is named as the box's. The box with no metrics line, a store that
 did not answer, a word for the store the client does not know, and a

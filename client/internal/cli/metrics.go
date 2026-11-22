@@ -29,9 +29,12 @@ func (r *runner) metrics() *cobra.Command {
 			"box: the app's numbers over a window, as the box's metrics store holds them,\n" +
 			"a point a step (1h: a minute; 24h: 5 minutes; 7d: 30; 14d: an hour), the newest\n" +
 			"of the last whole step. It prints each one's lowest, highest and newest value\n" +
-			"and when, and how many steps have a point; motel alone draws them (g on an\n" +
-			"app's screen), and --json prints the points. The request numbers are there\n" +
-			"only for an app behind observe. <app> is a name, or the app's URL\n" +
+			"and when (a rate under 0.001/s an hour's, 1.0/h), and how many steps have a\n" +
+			"point; for the 5xx share and the p95, beside a requests panel, how many steps\n" +
+			"had requests, and how many of those have a point when that differs. motel\n" +
+			"alone draws them (g on an app's screen), and --json prints the points. The\n" +
+			"request numbers are there only for an app behind observe. <app> is a name,\n" +
+			"or the app's URL\n" +
 			"(https://deploy.example.com/blog), which names the box too. The box asks its\n" +
 			"store at most every 30 s for an app and window, so an answer can be that old.\n" +
 			"It exits 0 when it read them, and when the box keeps no numbers (it has no\n" +
@@ -101,6 +104,20 @@ func seriesView(s wire.Series, app, host string) render.Series {
 		steps = int(model.SeriesSpan(s.Window)/v.Step) + 1
 	}
 	at := func(pt [2]float64) time.Time { return time.Unix(int64(pt[0]), 0) }
+	// Beside a requests panel with a point, the 5xx share's and the p95's
+	// count is of the steps that had requests (a rate above 0), as the
+	// screen's.
+	requests, requested := false, 0
+	for _, p := range s.Panels {
+		if p.Name == wire.PanelRequests && p.Unit == wire.UnitPerSecond {
+			requests = len(p.Points) > 0
+			for _, pt := range p.Points {
+				if pt[1] != 0 {
+					requested++
+				}
+			}
+		}
+	}
 	for _, p := range s.Panels {
 		label, known := model.SeriesLabel(p.Name, p.Unit)
 		// A panel this client does not know may be one the box's filter
@@ -108,7 +125,8 @@ func seriesView(s wire.Series, app, host string) render.Series {
 		if p.Name == wire.PanelRequests && known || !known {
 			v.NoRequests = false
 		}
-		pn := render.SeriesPanel{Label: label, Name: tx(p.Name), Unit: tx(p.Unit), Known: known, Points: len(p.Points), Steps: steps}
+		pn := render.SeriesPanel{Label: label, Name: tx(p.Name), Unit: tx(p.Unit), Known: known, Points: len(p.Points), Steps: steps,
+			HadRequests: known && requests && (p.Name == wire.Panel5xx || p.Name == wire.PanelP95), Requested: requested}
 		if known && len(p.Points) > 0 {
 			lo, hi := p.Points[0], p.Points[0]
 			for _, pt := range p.Points {
@@ -120,9 +138,11 @@ func seriesView(s wire.Series, app, host string) render.Series {
 				}
 			}
 			newest := p.Points[len(p.Points)-1]
-			pn.Min = render.SeriesPoint{V: model.SeriesValue(p.Name, lo[1], false), T: at(lo)}
-			pn.Max = render.SeriesPoint{V: model.SeriesValue(p.Name, hi[1], false), T: at(hi)}
-			pn.Newest = render.SeriesPoint{V: model.SeriesValue(p.Name, newest[1], false), T: at(newest)}
+			// The two written alike until they differ, as the screen's.
+			maxV, minV := model.SeriesExtremes(p.Name, hi[1], lo[1], false)
+			pn.Min = render.SeriesPoint{V: minV, T: at(lo)}
+			pn.Max = render.SeriesPoint{V: maxV, T: at(hi)}
+			pn.Newest = render.SeriesPoint{V: model.SeriesNewest(p.Name, newest[1], hi[1], lo[1]), T: at(newest)}
 		}
 		v.Panels = append(v.Panels, pn)
 	}

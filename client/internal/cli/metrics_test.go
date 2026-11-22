@@ -52,10 +52,10 @@ func TestMetrics(t *testing.T) {
 	}
 	const want = `127.0.0.1 holds blog's numbers over 24h, a point every 5 m, to 2026-11-19 14:00 UTC:
 memory     min 150.0 MiB (11-18 14:05 UTC)  max 306.0 MiB (05:40 UTC)  newest 182.0 MiB (14:00 UTC)  3 of 289 steps
-cpu        min <0.001 cores (13:10 UTC)  max 0.250 cores (14:00 UTC)  newest 0.250 cores (14:00 UTC)  2 of 289 steps
+cpu        min 0.0004 cores (13:10 UTC)  max 0.2500 cores (14:00 UTC)  newest 0.2500 cores (14:00 UTC)  2 of 289 steps
 requests   min 2.50/s (14:00 UTC)  max 2.50/s (14:00 UTC)  newest 2.50/s (14:00 UTC)  1 of 289 steps
-5xx share  min 1.2% (14:00 UTC)  max 1.2% (14:00 UTC)  newest 1.2% (14:00 UTC)  1 of 289 steps
-p95        min 80.1 ms (14:00 UTC)  max 80.1 ms (14:00 UTC)  newest 80.1 ms (14:00 UTC)  1 of 289 steps
+5xx share  min 1.2% (14:00 UTC)  max 1.2% (14:00 UTC)  newest 1.2% (14:00 UTC)  1 of 289 steps had requests
+p95        min 80.1 ms (14:00 UTC)  max 80.1 ms (14:00 UTC)  newest 80.1 ms (14:00 UTC)  1 of 289 steps had requests
 other      the box's disk_bytes in bytes: not one this client draws
 `
 	if r.stdout != want {
@@ -69,6 +69,25 @@ other      the box's disk_bytes in bytes: not one this client draws
 	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || !strings.Contains(r.stdout, "over 1h, a point every 1 m") ||
 		!strings.Contains(r.stdout, "requests   none in the window: the box counts requests only for an app behind observe") {
 		t.Errorf("1h, no requests: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	// Without a requests panel, the 5xx share's steps are counted as any
+	// panel's; a highest and lowest are written alike until they differ.
+	t1 := func(back int) float64 { return float64(end.Add(-time.Duration(back) * time.Minute).Unix()) }
+	fb.series.Panels = append(fb.series.Panels, wire.Panel{Name: wire.Panel5xx, Unit: wire.UnitShare, Points: [][2]float64{{t1(9), 0.0123}, {t1(1), 0.0121}}})
+	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || !strings.Contains(r.stdout, "5xx share  min 1.21% (13:59 UTC)  max 1.23% (13:51 UTC)  newest 1.21% (13:59 UTC)  2 of 61 steps\n") {
+		t.Errorf("5xx, no requests: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	// A requests panel with no point: the same.
+	fb.series.Panels = append(fb.series.Panels, wire.Panel{Name: wire.PanelRequests, Unit: wire.UnitPerSecond, Points: [][2]float64{}})
+	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || !strings.Contains(r.stdout, "newest 1.21% (13:59 UTC)  2 of 61 steps\n") {
+		t.Errorf("5xx beside no requests point: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	// Beside a requests panel, the count is of the steps it has a rate
+	// above 0 at, a 5xx point there or not (every request aborted), and
+	// the 5xx share's points beside it when they differ.
+	fb.series.Panels[len(fb.series.Panels)-1].Points = [][2]float64{{t1(9), 0.05}, {t1(5), 0.02}, {t1(1), 0.1}, {t1(0), 0}}
+	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || !strings.Contains(r.stdout, "newest 1.21% (13:59 UTC)  3 of 61 steps had requests, 2 with a point\n") {
+		t.Errorf("5xx beside requests: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
 	// No point of the app at all: no cause said for the request panels.
 	fb.series.Panels = []wire.Panel{}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
+	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/hostile"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 	"github.com/smallhoursorg/motel/liveswap/wire"
@@ -134,6 +135,38 @@ func TestMetricsOldBox(t *testing.T) {
 	if strings.Contains(rows[0].text, "refused") || !strings.Contains(h.screen(), "(a moteld older than") {
 		t.Errorf("an older box's 404:\n%s", h.screen())
 	}
+}
+
+// quiet gives shop a quiet hour ending at the fake's last minute: CPU
+// at every step, under a thousandth of a core; requests at every step
+// but a store gap from minute 35 to 40, none but at minutes 5, 20, 21
+// and 50; and there alone, the 5xx share, all 0, and the p95, under a
+// millisecond.
+func quiet(f *demo.Fake) {
+	end := f.Now().Truncate(time.Minute).UTC()
+	start := end.Add(-time.Hour)
+	busy := map[int]float64{5: 0.05, 20: 0.4, 21: 0.15, 50: 0.03}
+	var cpu, rps, share, p95 [][2]float64
+	for m := 0; m <= 60; m++ {
+		ts := float64(start.Add(time.Duration(m) * time.Minute).Unix())
+		cpu = append(cpu, [2]float64{ts, 0.0001 + 0.0001*float64(m%7)})
+		if m >= 35 && m <= 40 {
+			continue
+		}
+		rps = append(rps, [2]float64{ts, busy[m]})
+		if _, ok := busy[m]; ok {
+			share = append(share, [2]float64{ts, 0})
+			p95 = append(p95, [2]float64{ts, 0.3 + float64(m%3)/10})
+		}
+	}
+	s := wire.Series{Store: wire.StoreOn, Window: "1h", StepSeconds: 60, End: &end, Panels: []wire.Panel{
+		{Name: wire.PanelCPU, Unit: wire.UnitCores, Points: cpu},
+		{Name: wire.PanelRequests, Unit: wire.UnitPerSecond, Points: rps},
+		{Name: wire.Panel5xx, Unit: wire.UnitShare, Points: share},
+		{Name: wire.PanelP95, Unit: wire.UnitMs, Points: p95},
+	}}
+	b, _ := json.Marshal(s)
+	f.Body("series/shop/1h.json", string(b))
 }
 
 // hostileSeries is a series whose every word of the box's is an attack,
