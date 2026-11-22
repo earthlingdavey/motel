@@ -114,9 +114,10 @@ func TestReattachKnowsTheLaunchedValues(t *testing.T) {
 // pair as the current spec expands it — so a diagnostic can still name
 // them; every other pair is one. An inline value changed in the config
 // since the launch is a known value until the next launch (the
-// default's cost, which the owner is to confirm). A repeated key, an
-// empty value and a value holding = are each a pair as the manager
-// gave it.
+// default's cost, which the owner is to confirm). An empty value and a
+// value holding = are each a pair as the manager gave it. (No key
+// twice: the manager refuses such an environment at the start, so a
+// running unit never reports one.)
 func TestReattachRemembersOnlyWhatMotelDidNotPut(t *testing.T) {
 	rig := newTestRig(t)
 	spec := rig.spec
@@ -127,7 +128,6 @@ func TestReattachRemembersOnlyWhatMotelDidNotPut(t *testing.T) {
 		"API_TOKEN="+launchedToken,
 		"EMPTY=",
 		"DSN=user=app password=launched-pass-01", // gitleaks:allow
-		"API_TOKEN=repeated-value-0001",
 		"DATA="+spec.dirs.shared+"/db",
 		"WHERE="+releaseDir+"/v1",
 		"MODE=config-mode-then",
@@ -136,7 +136,7 @@ func TestReattachRemembersOnlyWhatMotelDidNotPut(t *testing.T) {
 	if !rig.ma.rememberRunningEnv(spec, "v1", socket, releaseDir, env) {
 		t.Fatal("an environment with the instance's SOCKET was not remembered")
 	}
-	want := []string{"API_TOKEN=" + launchedToken, "EMPTY=", "DSN=user=app password=launched-pass-01", "API_TOKEN=repeated-value-0001", "MODE=config-mode-then"} // gitleaks:allow
+	want := []string{"API_TOKEN=" + launchedToken, "EMPTY=", "DSN=user=app password=launched-pass-01", "MODE=config-mode-then"} // gitleaks:allow
 	if !slices.Equal(rig.ma.secrets, want) {
 		t.Fatalf("remembered %q, want %q", rig.ma.secrets, want)
 	}

@@ -967,9 +967,11 @@ func TestStatusFromPropsAndStopBudget(t *testing.T) {
 // TestStatusFromPropsEnvironment: the unit's Environment, an "as" that
 // godbus decodes as a []string, is read as the manager gave it, every
 // pair in its order: a repeated key twice, an empty value, a value
-// holding = whole. It is what a reattach hands the response filter
-// (#657), so a pair dropped here is a value sent as written. Any other
-// shape is no environment, never a panic.
+// holding = whole. (The manager refuses a key twice at a unit's start,
+// "Invalid environment block", so a running unit never reports one;
+// the parser still drops nothing it is given.) It is what a reattach
+// hands the response filter (#657), so a pair dropped here is a value
+// sent as written. Any other shape is no environment, never a panic.
 func TestStatusFromPropsEnvironment(t *testing.T) {
 	env := []string{"API_TOKEN=one-value-0001", "EMPTY=", "DSN=user=app password=p=q", "API_TOKEN=two-value-0002", "SOCKET=/run/app.sock"}
 	st := statusFromProps(map[string]any{"Environment": env})
