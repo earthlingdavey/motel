@@ -491,14 +491,17 @@ const wirePath = "github.com/smallhoursorg/motel/liveswap/wire"
 
 // madeIn is every place in the Go files under dirs (none of them tests),
 // each named relative to base, where an AppText or an ErrText is made
-// from something that is not a constant: a conversion (written with the
-// package's name or any name it is imported under, in parentheses or
-// not, a generic function instantiated with the type, a type declared
-// as or over it), by the file it is in; and a call of OwnText, by the
-// function it is in. What a walk of the source cannot see is a decode:
-// json.Unmarshal into such a field makes one with nothing written
-// (servedRecord's decode of an older record's detail is the one, and
-// passes the door again).
+// from something that is not a constant, in the forms a walk of the
+// source sees: a conversion written with the package's name or any
+// name it is imported under, in parentheses or not, through a type or
+// an alias declared outside wire, or as a generic function's explicit
+// type argument, by the file it is in; and a call of OwnText, by the
+// function it is in. It is not complete and is not made so: a dot
+// import, OwnText passed as a value, an alias declared in wire, an
+// inferred type argument, a scan (fmt.Sscan) or a decode (json.Unmarshal)
+// into such a field make one with nothing here to see, and are review's
+// (servedRecord's decode of an older record's detail is the one on the
+// box, and passes the door again).
 func madeIn(t *testing.T, base string, dirs ...string) (conversions, ownText map[string][]string) {
 	t.Helper()
 	conversions, ownText = map[string][]string{}, map[string][]string{}
@@ -612,9 +615,11 @@ func madeIn(t *testing.T, base string, dirs ...string) (conversions, ownText map
 	return conversions, ownText
 }
 
-// The modules that fill an answer's text fields: liveswap, the box
-// webhook, and notify (wire.Metrics.Error, an app's alerts).
-var guardDirs = []string{".", filepath.Join("..", "box"), filepath.Join("..", "notify")}
+// The directories that import wire outside liveswap's own tree, each
+// of which can fill an answer's text fields: the box webhook, notify
+// (wire.Metrics.Error, an app's alerts), backups/status (the backups'
+// lines) and cmd/moteld.
+var guardDirs = []string{".", filepath.Join("..", "box"), filepath.Join("..", "notify"), filepath.Join("..", "backups", "status"), filepath.Join("..", "cmd", "moteld")}
 
 // The app's text has a type only the filter makes: no conversion to
 // wire.AppText is written anywhere on the box but in redact.go, so a

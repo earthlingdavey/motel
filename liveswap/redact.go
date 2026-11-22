@@ -40,11 +40,16 @@ import (
 // text, wire.ErrText for an error's. Go refuses a string variable in
 // such a field, so one gets there by a conversion or a decode. A
 // conversion is written in this file alone (and wire.OwnText's), which
-// TestAppTextOnlyFromTheDoor and TestErrTextMakers hold for the forms a
-// walk of the source sees: the type named under any import name, in
-// parentheses, through a declared type or an alias, or instantiating a
-// generic function. A decode (json.Unmarshal into such a field) makes
-// one with nothing written, and only review sees it. An answer is then
+// TestAppTextOnlyFromTheDoor and TestErrTextMakers hold, in every
+// directory that imports wire to fill an answer, for the forms a walk
+// of the source sees: the type named under any import name, in
+// parentheses, through a type or an alias declared outside wire, or
+// as the explicit type argument of a generic function; and each call
+// of wire.OwnText. The guards are not complete, and are not made so:
+// a dot import, wire.OwnText passed as a value, an alias declared in
+// wire, a generic function whose type argument is inferred, a scan
+// (fmt.Sscan) or a decode (json.Unmarshal) into such a field are
+// review's to see. An answer is then
 // marshalled from its typed struct and sent: no filter runs over a
 // finished body, so motel's own data (a key, a word of its vocabulary,
 // a version, a time, a number, the app's name) is never replaced, and a

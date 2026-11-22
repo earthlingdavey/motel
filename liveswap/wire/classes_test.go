@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -84,8 +85,16 @@ func fields(t *testing.T, prefix string, st *ast.StructType, structs map[string]
 			}
 			tag = reflect.StructTag(s)
 		}
-		if len(fld.Names) == 0 || tag.Get("json") == "-" {
-			continue // embedded (its own type is walked), or not on the wire
+		if tag.Get("json") == "-" {
+			continue // not on the wire
+		}
+		if len(fld.Names) == 0 {
+			// Embedded: one of the package's structs is walked on its
+			// own; any other type's fields are not seen here.
+			if !knownType(fld.Type, structs) {
+				out[prefix+"."+types.ExprString(fld.Type)] = "?"
+			}
+			continue
 		}
 		for _, id := range fld.Names {
 			if !id.IsExported() {
@@ -96,7 +105,7 @@ func fields(t *testing.T, prefix string, st *ast.StructType, structs map[string]
 			if inline != nil {
 				fields(t, key, inline, structs, out)
 			}
-			if !holds && inline == nil && !knownType(fld.Type, structs) {
+			if !holds && inline == nil && !knownType(fld.Type, structs) || !mapParts(fld.Type, structs) {
 				out[key] = "?"
 				continue
 			}
@@ -115,6 +124,24 @@ func fields(t *testing.T, prefix string, st *ast.StructType, structs map[string]
 			}
 		}
 	}
+}
+
+// mapParts is false for a map (behind any pointers or slices) whose key
+// or value is a type the walk cannot class, though the other holds text.
+func mapParts(e ast.Expr, structs map[string]bool) bool {
+	switch x := e.(type) {
+	case *ast.StarExpr:
+		return mapParts(x.X, structs)
+	case *ast.ArrayType:
+		return mapParts(x.Elt, structs)
+	case *ast.MapType:
+		for _, part := range []ast.Expr{x.Key, x.Value} {
+			if h, _, inline := text(part); !h && inline == nil && !knownType(part, structs) || !mapParts(part, structs) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // knownType is whether e is a type that holds no text the walk could
@@ -240,6 +267,10 @@ type T struct {
 	L other.Type ` + "`json:\"l\"`" + `
 	M int ` + "`json:\"m\"`" + `
 	N time.Time ` + "`json:\"n\"`" + `
+	O map[string]any ` + "`json:\"o\"`" + `
+	P map[string]int ` + "`json:\"p\"`" + `
+	other.Embedded
+	Known
 }`
 	f, err := parser.ParseFile(token.NewFileSet(), "t.go", src, 0)
 	if err != nil {
@@ -247,8 +278,8 @@ type T struct {
 	}
 	out := map[string]string{}
 	st := f.Decls[0].(*ast.GenDecl).Specs[0].(*ast.TypeSpec).Type.(*ast.StructType)
-	fields(t, "T", st, map[string]bool{}, out)
-	want := map[string]string{"T.A": "", "T.B": "moteld", "T.C": "AppText", "T.D": "", "T.E": "", "T.G.H": "", "T.I": "?", "T.J": "?", "T.K": "?", "T.L": "?"}
+	fields(t, "T", st, map[string]bool{"Known": true}, out)
+	want := map[string]string{"T.A": "", "T.B": "moteld", "T.C": "AppText", "T.D": "", "T.E": "", "T.G.H": "", "T.I": "?", "T.J": "?", "T.K": "?", "T.L": "?", "T.O": "?", "T.P": "", "T.other.Embedded": "?"}
 	if !reflect.DeepEqual(out, want) {
 		t.Errorf("got %v, want %v", out, want)
 	}
