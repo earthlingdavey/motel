@@ -247,9 +247,13 @@ Properties that matter to the model:
   While an app's `env_file` cannot be read (after a restart, or a
   reload to another file), its values are unknown to the filter: each
   text of the app's, and each error's text, is the filter's sentence
-  (`[withheld: …]`), and moteld's own fields are sent. A deploy whose
-  own launch rendered the file filters its error with the values it
-  launched with. A deploy's record holds the result with its app text
+  (`[withheld: …]`), and moteld's own fields are sent; a lifecycle
+  summary told meanwhile is the sentence too. A deploy whose own launch
+  rendered the file filters its error with the values it launched with,
+  and one that failed before its launch, with the file not there,
+  filters it with the values this process remembers, when it remembers
+  some (a file not there holds no others). moteld's journal line names
+  a withheld error and the file's own read error. A deploy's record holds the result with its app text
   and error text already filtered, marked so, and is served as written;
   a record an older moteld wrote has its error and detail filtered
   again when it is read.

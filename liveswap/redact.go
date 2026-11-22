@@ -430,14 +430,16 @@ func (ma *managedApp) errText(s string, read bool, names ...string) (wire.ErrTex
 //
 // beforeLaunch is a deploy's error from before its launch rendered the
 // env_file (a download, an extraction, the file's own parse): then an
-// env_file that is not there holds no values to know, as no launch of
-// that file put any in a process, and the error passes the filter with
-// the values remembered (main's record filter held the same). Anywhere
-// else (a probe of a running app after a restart) a file gone is values
-// unknown, and the text is withheld.
+// env_file that is not there holds no values to know beyond those this
+// process remembers from its launches, and the error passes the filter
+// with those (main's record filter held the same), provided it
+// remembers some. A process that remembers none (a restart, then the
+// file gone) may be reattached to an instance launched from the file,
+// whose values it does not know: the text is withheld, as it is
+// anywhere else a file is gone (a probe of a running app).
 func (ma *managedApp) netError(err error, read, beforeLaunch bool, names ...string) *doorError {
 	d := ma.door(read, names...)
-	if beforeLaunch && errors.Is(d.unreadErr, fs.ErrNotExist) {
+	if beforeLaunch && errors.Is(d.unreadErr, fs.ErrNotExist) && len(d.r.secrets) > 0 {
 		d.unread, d.unreadErr = "", nil
 	}
 	de := &doorError{err: err, msg: d.errText(err.Error()), keys: d.keys(), unread: d.unreadErr}

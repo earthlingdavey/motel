@@ -204,25 +204,17 @@ func (ma *managedApp) servedRecord(rec []byte, version string) []byte {
 	return out
 }
 
-// recordNames is the versions the records directory holds a file
-// under, those valid as versions: names the app's filter leaves to its
-// known values alone (managedApp.door), as the versions the status
-// lists. The directory is listed, never followed, and no record is
-// read: a name is only a name, and a safe string equal to a known value
-// exempts nothing.
+// recordNames is the versions and the pins the app's deploy records
+// hold, each proven a record and a digest as the status lists them
+// (listDeploySummaries, summaryPin): names the app's filter leaves to
+// its known values alone (managedApp.door), as the status's versions
+// and pins were. A safe string equal to a known value exempts nothing.
 func recordNames(d appDirs) []string {
-	dir, err := recordsDir(d, false)
-	if err != nil {
-		return nil
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
 	var names []string
-	for _, e := range entries {
-		if v, ok := strings.CutSuffix(e.Name(), ".json"); ok && validVersion(v) {
-			names = append(names, v)
+	for _, s := range listDeploySummaries(d) {
+		names = append(names, s.Version)
+		if pin := summaryPin(s); pin != "" {
+			names = append(names, pin)
 		}
 	}
 	return names

@@ -110,7 +110,15 @@ func (ma *managedApp) tell(n Notifier, ev LifecycleEvent) {
 		// label beside the summary anyway. The app's filter as text, as
 		// it always ran here: a summary is sent whatever the env_file's
 		// state, and a refusal's reason in it is an error's text.
-		ev.Summary, _ = ma.door(true, ev.Release).r.Redact(ev.Summary)
+		// While the env_file cannot be read the values are unknown, and
+		// a refusal's reason can name a path the app wrote: the summary
+		// is the filter's sentence, which the alerts routes then send as
+		// Alertmanager holds it.
+		if d := ma.door(true, ev.Release); d.unread != "" {
+			ev.Summary = d.mixed(ev.Summary)
+		} else {
+			ev.Summary, _ = d.r.Redact(ev.Summary)
+		}
 	}
 	n.Lifecycle(ev)
 }

@@ -761,4 +761,48 @@ func TestMissingEnvFileBeforeALaunch(t *testing.T) {
 	if !strings.HasPrefix(err.Error(), "[withheld:") {
 		t.Errorf("a probe's error with the file gone: %v", err)
 	}
+	// After a restart the process remembers no value, and may be
+	// reattached to an instance the file's values launched: the same
+	// deploy's error is withheld, the journal its to say.
+	ma.secretsMu.Lock()
+	ma.secrets, ma.secretsLoaded = nil, false
+	ma.secretsMu.Unlock()
+	if code, body := b.post(t, "v3", false); code != http.StatusInternalServerError || !strings.Contains(body, `"error":"[withheld: the app's env_file could not be read`) || strings.Contains(body, "some-value-of-the-app-01") {
+		t.Errorf("after a restart, the file gone: %d %s", code, body)
+	}
+}
+
+// A lifecycle event told while the app's env_file cannot be read says
+// the filter's sentence for its summary (a refusal's reason can name a
+// path the app wrote, and the alerts routes send what Alertmanager
+// holds); with the file readable the summary is filtered as it always
+// was.
+func TestToldSummaryWhileTheEnvFileIsUnread(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	ma := b.rig.ma
+	n := &recNotifier{}
+	ma.tell(n, LifecycleEvent{Name: EventRelaunchRefused, Release: "v1", Summary: "relaunch of v1 refused: /x/some-value-of-the-app-01/bin"})
+	must(t, os.Remove(b.rig.spec.envFile))
+	ma.secretsMu.Lock()
+	ma.secrets, ma.secretsLoaded = nil, false
+	ma.secretsMu.Unlock()
+	ma.tell(n, LifecycleEvent{Name: EventRelaunchRefused, Release: "v1", Summary: "relaunch of v1 refused: /x/other-value-unknown-02/bin"})
+	if len(n.evs) != 2 || n.evs[0].Summary != "relaunch of v1 refused: /x/[redacted:TOKEN]/bin" || !strings.HasPrefix(n.evs[1].Summary, "[withheld: the app's env_file could not be read") {
+		t.Errorf("%+v", n.evs)
+	}
+}
+
+// The versions and the pins the app's records hold are names the
+// heuristics leave alone in the app's text, as the status's were: an
+// app that prints its artifact's digest keeps it readable.
+func TestADoorsNamesAreTheRecordsPins(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	pin := strings.Repeat("3f9a1c7e", 8)
+	must(t, writeDeployRecord(b.rig.spec.dirs, "v7", []byte(`{"version":"v7","status":"succeeded","sha256":"`+pin+`"}`)))
+	if got := b.rig.ma.door(true).text("artifact sha256 " + pin); got != wire.AppText("artifact sha256 "+pin) {
+		t.Errorf("the app's text: %q", got)
+	}
+	if got := b.rig.ma.door(true).text("artifact sha256 " + strings.Repeat("8b2d6e4f", 8)); !strings.Contains(string(got), "[masked, 64 chars]") {
+		t.Errorf("the premise, a digest no record names is masked: %q", got)
+	}
 }
