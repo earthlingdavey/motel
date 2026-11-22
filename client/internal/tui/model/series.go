@@ -68,8 +68,8 @@ func SeriesLabel(name, unit string) (string, bool) {
 }
 
 // SeriesValue is v, a point of the panel named name, as the client
-// writes it: in MiB or GiB, cores, a rate a second, a percentage, or
-// milliseconds, compactly for a plot's axis. Every character is the
+// writes it: in MiB or GiB, cores, a rate a second (an hour, under
+// 0.001/s), a percentage, or milliseconds, compactly for a plot's axis. Every character is the
 // client's own: the box sent a number.
 func SeriesValue(name string, v float64, compact bool) string {
 	switch name {
@@ -98,6 +98,12 @@ func SeriesValue(name string, v float64, compact bool) string {
 			return trimZero(strconv.FormatFloat(v/1e6, 'f', 1, 64)) + "M/s"
 		case compact && v >= 1e3:
 			return trimZero(strconv.FormatFloat(v/1e3, 'f', 1, 64)) + "k/s"
+		case v > 0 && v < 0.001:
+			// Under a request in 1000 s, an hour's: 0.00028/s is 1.0/h.
+			if h := v * 3600; h < 1 {
+				return figures(h, 4) + "/h"
+			}
+			return strconv.FormatFloat(v*3600, 'f', 1, 64) + "/h"
 		}
 		return small(v, 0.01, 2) + "/s"
 	case wire.Panel5xx:
@@ -145,10 +151,7 @@ func figures(v float64, most int) string {
 }
 
 // SeriesExtremes is hi and lo, a panel's highest and lowest, written as
-// a pair, compactly for a plot's axis: in the first of their writings
-// (seriesWritings) in which the two differ, or are one value, are to
-// as many places when in one unit, and each tells its value. With none,
-// each in the first of its own writings that tells it.
+// a pair, compactly for a plot's axis (seriesPair).
 func SeriesExtremes(name string, hi, lo float64, compact bool) (string, string) {
 	h, l, _ := seriesPair(name, hi, lo, compact)
 	return h, l
@@ -160,38 +163,44 @@ func SeriesExtremes(name string, hi, lo float64, compact bool) (string, string) 
 // highest or lowest it may be.
 func SeriesNewest(name string, v, hi, lo float64) string {
 	_, _, i := seriesPair(name, hi, lo, false)
-	if w := seriesWritings(name, v, false)[i]; tells(w, v, false) {
+	if w := seriesWritings(name, v, hi, false)[i].s; tells(w, v, false) {
 		return w
 	}
 	return SeriesValue(name, v, false)
 }
 
-// seriesPair is SeriesExtremes, and the index of the writing it took.
+// seriesPair is hi and lo, a panel's highest and lowest, written in the
+// first of their writings (seriesWritings, both in hi's unit) in which
+// they are one value, or differ, to as many places, to places fine
+// enough that neither rounds away from its value by more than the two
+// are apart (1.6 ms and 1.4 ms are not 2ms and 1ms), and each tells its
+// value; and the index of that writing. With none, each in the first
+// of those writings that tells it (1 GiB and a page either side, 1G
+// and 1G); with none of those, in its own unit (0.50/s beside 1.0/h).
 func seriesPair(name string, hi, lo float64, compact bool) (string, string, int) {
-	hs, ls := seriesWritings(name, hi, compact), seriesWritings(name, lo, compact)
+	hs, ls := seriesWritings(name, hi, hi, compact), seriesWritings(name, lo, hi, compact)
 	for i := range hs {
-		hp, hu := placesOf(hs[i])
-		lp, lu := placesOf(ls[i])
-		alike := hu != lu || hp == lp
-		if (hs[i] != ls[i] || hi == lo) && alike && tells(hs[i], hi, compact) && tells(ls[i], lo, compact) {
-			return hs[i], ls[i], i
+		h, l := hs[i], ls[i]
+		hp, hu := placesOf(h.s)
+		lp, lu := placesOf(l.s)
+		if (hi == lo || h.s != l.s && hu == lu && hp == lp && h.res <= math.Abs(hi-lo)) && tells(h.s, hi, compact) && tells(l.s, lo, compact) {
+			return h.s, l.s, i
 		}
 	}
-	// No pair written alike tells both: each in the first of its own
-	// writings that tells it (compact, that fits the label: 0.200 beside
-	// 0.012m), so no label is cut.
-	return ownWriting(hs, hi, compact), ownWriting(ls, lo, compact), 0
+	return fallback(name, hi, hs, compact), fallback(name, lo, ls, compact), 0
 }
 
-// ownWriting is the first of ws, v's writings, that tells v; the first
-// with none.
-func ownWriting(ws []string, v float64, compact bool) string {
-	for _, w := range ws {
-		if tells(w, v, compact) {
-			return w
+// fallback is the first of ws, v's writings in another's unit, that
+// tells v; else the first of its own unit's; else its plain writing.
+func fallback(name string, v float64, ws []writing, compact bool) string {
+	for _, list := range [][]writing{ws, seriesWritings(name, v, v, compact)} {
+		for _, w := range list {
+			if tells(w.s, v, compact) {
+				return w.s
+			}
 		}
 	}
-	return ws[0]
+	return SeriesValue(name, v, compact)
 }
 
 // placesOf is the places of s's number, and what follows it (its unit).
@@ -209,80 +218,97 @@ func tells(s string, v float64, compact bool) bool {
 	return s != "" && !strings.HasPrefix(s, "<") && (v == 0 || strings.ContainsAny(s, "123456789")) && (!compact || len([]rune(s)) <= plotLabel)
 }
 
-// seriesWritings is the ways v of the panel named name is written,
-// coarsest first: as SeriesValue writes it, then in its unit to 0 to 6
-// places (none, "", to fewer places than the first), then, compact,
-// cores and rates in thousandths (thousandths: an "m", as "k" is
-// thousands) to 0 to 3 places, the box's six places. Every value of a
-// panel has as many, so the i-th of two values are written alike.
-func seriesWritings(name string, v float64, compact bool) []string {
-	out := []string{SeriesValue(name, v, compact)}
-	unit, suffix := 1.0, ""
+// writing is a value written, and the step between two values written
+// to its places in its unit.
+type writing struct {
+	s   string
+	res float64
+}
+
+// seriesUnit is the unit, and its suffix, v of the panel named name is
+// written in; 0 for a panel the client does not know.
+func seriesUnit(name string, v float64, compact bool) (float64, string) {
 	switch name {
 	case wire.PanelMemory:
 		switch {
 		case compact && v < 1<<20:
-			unit, suffix = 1<<10, "K"
+			return 1 << 10, "K"
 		case v >= 1<<30 && compact:
-			unit, suffix = 1<<30, "G"
+			return 1 << 30, "G"
 		case v >= 1<<30:
-			unit, suffix = 1<<30, " GiB"
+			return 1 << 30, " GiB"
 		case compact:
-			unit, suffix = 1<<20, "M"
-		default:
-			unit, suffix = 1<<20, " MiB"
+			return 1 << 20, "M"
 		}
+		return 1 << 20, " MiB"
 	case wire.PanelCPU:
-		if !compact {
-			suffix = " cores"
+		if compact {
+			return 1, ""
 		}
+		return 1, " cores"
 	case wire.PanelRequests:
 		switch {
 		case compact && v >= 1e6:
-			unit, suffix = 1e6, "M/s"
+			return 1e6, "M/s"
 		case compact && v >= 1e3:
-			unit, suffix = 1e3, "k/s"
-		default:
-			suffix = "/s"
+			return 1e3, "k/s"
+		case v > 0 && v < 0.001:
+			return 1.0 / 3600, "/h"
 		}
+		return 1, "/s"
 	case wire.Panel5xx:
-		unit, suffix = 0.01, "%"
+		return 0.01, "%"
 	case wire.PanelP95:
 		switch {
 		case compact && v >= 1000:
-			unit, suffix = 1000, "s"
+			return 1000, "s"
 		case compact:
-			suffix = "ms"
-		default:
-			suffix = " ms"
+			return 1, "ms"
 		}
-	default:
+		return 1, " ms"
+	}
+	return 0, ""
+}
+
+// seriesWritings is the ways v of the panel named name is written in
+// ref's unit, coarsest first: as SeriesValue writes it ("" in another
+// unit), then to 0 to 6 places (none, "", to fewer places than that),
+// then, compact, cores in millicores (an "m") to 0 to 3 places, the
+// box's six places, and rates an hour ("/h") to 0 to 3. Every value of
+// a panel has as many, so the i-th of two values are written alike.
+func seriesWritings(name string, v, ref float64, compact bool) []writing {
+	unit, suffix := seriesUnit(name, ref, compact)
+	vUnit, vSuffix := seriesUnit(name, v, compact)
+	plain := SeriesValue(name, v, compact)
+	first, _ := placesOf(plain)
+	out := []writing{{plain, vUnit * math.Pow10(-first)}}
+	if unit == 0 {
 		return out
 	}
-	// The first's places: none fewer, or a narrow spread rounds wide
-	// (1.51 % and 1.49 % to 2 % and 1 %).
-	first, _ := placesOf(out[0])
-	at := func(v float64, p, least int, suffix string) string {
+	if vSuffix != suffix {
+		out[0], first = writing{}, 0
+	}
+	at := func(v, unit float64, p, least int, suffix string) writing {
 		if p < least {
-			return ""
+			return writing{}
 		}
-		return strconv.FormatFloat(v, 'f', p, 64) + suffix
+		return writing{strconv.FormatFloat(v/unit, 'f', p, 64) + suffix, unit * math.Pow10(-p)}
 	}
 	for p := range 7 {
-		out = append(out, at(v/unit, p, first, suffix))
+		out = append(out, at(v, unit, p, first, suffix))
 	}
-	if milli, ok := thousandths[name]; ok && compact {
+	if name == wire.PanelCPU && compact {
 		for p := range 4 {
-			out = append(out, at(v*1000, p, first-3, milli))
+			out = append(out, at(v, 0.001, p, first-3, "m"))
+		}
+	}
+	if name == wire.PanelRequests && compact {
+		for p := range 4 {
+			out = append(out, at(v, 1.0/3600, p, 0, "/h"))
 		}
 	}
 	return out
 }
-
-// thousandths is how a label writes a value too small for its room in
-// its own unit, in thousandths of it: cores in millicores, rates in
-// thousandths a second.
-var thousandths = map[string]string{wire.PanelCPU: "m", wire.PanelRequests: "m/s"}
 
 func trimZero(s string) string {
 	if t, ok := strings.CutSuffix(s, ".0"); ok {
@@ -657,18 +683,23 @@ func panelPlot(p seriesPanel, in [][2]float64, rates map[int64]float64, start, e
 	// The window's ends, and between them how many of its steps have a
 	// point, which the breaks in the axis show where.
 	from, to := clock(start, now, false), clock(end, now, false)
-	count := strconv.Itoa(hits) + " of " + strconv.Itoa(int(end.Sub(start)/step)+1) + " steps"
+	// The longest that fits: with how many have a point, then without.
+	counts := []string{strconv.Itoa(hits) + " of " + strconv.Itoa(int(end.Sub(start)/step)+1) + " steps"}
 	if rates != nil {
-		count = strconv.Itoa(requested) + " of " + strconv.Itoa(int(end.Sub(start)/step)+1) + " steps had requests"
-		if hits != requested {
-			count += ", " + strconv.Itoa(hits) + " with a point"
+		had := strconv.Itoa(requested) + " of " + strconv.Itoa(int(end.Sub(start)/step)+1) + " steps had requests"
+		counts = []string{had + ", " + strconv.Itoa(hits) + " with a point", had}
+		if hits == requested {
+			counts = counts[1:]
 		}
 	}
 	room := plotW - len(from) - len(to)
 	mid := strings.Repeat(" ", max(room, 1))
-	if room >= len(count)+2 {
-		left := (room - len(count)) / 2
-		mid = strings.Repeat(" ", left) + count + strings.Repeat(" ", room-left-len(count))
+	for _, count := range counts {
+		if room >= len(count)+2 {
+			left := (room - len(count)) / 2
+			mid = strings.Repeat(" ", left) + count + strings.Repeat(" ", room-left-len(count))
+			break
+		}
 	}
 	out = append(out, cutTo(Line{ownC(strings.Repeat(" ", plotLabel+2)+from+mid+to, Dim)}, width, cells))
 	return out
@@ -764,7 +795,8 @@ func roughSpan(d time.Duration) string {
 // so a step with no point is a gap, never a zero or a line across it.
 // A point joined to neither is drawn across its step's span (the step
 // up to its time), and two dots wide at the least, so it shows and is
-// never one dot of a bridge. stored, when not nil, is the steps the
+// never one dot of a bridge; so too a run of points joined all on one
+// dot. stored, when not nil, is the steps the
 // store had (the requests panel's): two points further apart than a
 // step with every step between them stored (no gap) are bridged by a
 // dotted line, a dot every second cell. An empty cell is a space.
@@ -810,9 +842,17 @@ func Plot(pts [][2]float64, stored map[int64]bool, start, end time.Time, step ti
 		cx, cy := x(pt[0]), y(pt[1])
 		set(cx, cy)
 		left := cx
-		if !joined(i) && !joined(i+1) {
-			// Alone: across its step's span, at its height, two dots wide
-			// at the least (the one after it, at the window's start).
+		// A run of points joined from here to j: alone, or all on one dot
+		// (several steps a dot column), it is drawn across its first
+		// step's span, at its height, two dots wide at the least (the one
+		// after it, at the window's start), so never one dot as a
+		// bridge's are.
+		j, one := i, !joined(i)
+		for one && joined(j+1) {
+			j++
+			one = x(pts[j][0]) == cx && y(pts[j][1]) == cy
+		}
+		if one {
 			left = x(math.Max(pt[0]-s+1, float64(start.Unix())))
 			right := cx
 			switch {
@@ -831,8 +871,9 @@ func Plot(pts [][2]float64, stored map[int64]bool, start, end time.Time, step ti
 		px, py := x(pts[i-1][0]), y(pts[i-1][1])
 		if !joined(i) {
 			if bridged(stored, pts[i-1][0], pt[0], s) {
-				// No request between: a dot every fourth column (every
-				// second cell) on the line between, none beside either.
+				// No gap between (no request, or none this panel counts): a
+				// dot every fourth column (every second cell) on the line
+				// between, none beside either.
 				for xx := px + 4; xx < left-1; xx += 4 {
 					set(xx, lerp(px, py, cx, cy, xx))
 				}

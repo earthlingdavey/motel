@@ -621,6 +621,8 @@ func TestSeriesValue(t *testing.T) {
 		{wire.PanelRequests, 2.5, false, "2.50/s"},
 		{wire.PanelRequests, 0.004, false, "0.004/s"},
 		{wire.PanelRequests, 0.0033333, false, "0.0033/s"},
+		{wire.PanelRequests, 1.0 / 3600, false, "1.0/h"},
+		{wire.PanelRequests, 0.0001, true, "0.36/h"},
 		{wire.Panel5xx, 0.0123, false, "1.2%"},
 		{wire.Panel5xx, 0, false, "0%"},
 		{wire.Panel5xx, 0.0004, false, "0.04%"},
@@ -896,9 +898,10 @@ func dotCols(rows []string) map[int]bool {
 }
 
 // TestPlotLonePoints: in a window of many steps a column (a day's 289
-// on 91 cells), a point joined to neither is two dots wide, so never
-// one dot as a bridge's are, which stay one dot every fourth column;
-// and a point alone on the window's first step is two dots wide too.
+// on 91 cells), a point joined to neither, or a run of points joined
+// all on one dot, is two dots wide, so never one dot as a bridge's are,
+// which stay one dot every fourth column; and a point alone on the
+// window's first step is two dots wide too.
 func TestPlotLonePoints(t *testing.T) {
 	end := t0
 	start := end.Add(-24 * time.Hour)
@@ -925,6 +928,18 @@ func TestPlotLonePoints(t *testing.T) {
 			t.Errorf("two dots side by side in a bridge at dot column %d: %v", c, got)
 		}
 	}
+	// A run of points joined all on one dot (two steps of a day at 91
+	// cells, three at 51) is two dots wide, as a point alone is.
+	for _, c := range []struct{ w, from, to int }{{91, 52, 53}, {51, 2, 4}} {
+		var run [][2]float64
+		for k := c.from; k <= c.to; k++ {
+			run = append(run, [2]float64{at(k), 0})
+		}
+		got := dotCols(model.Plot(run, stored, start, end, step, 0, 0, c.w, 4))
+		if len(got) < 2 {
+			t.Errorf("steps %d to %d at %d cells: dots %v, not two wide", c.from, c.to, c.w, got)
+		}
+	}
 	// Alone on the first step of the hour: two dots wide.
 	hour := model.Plot([][2]float64{{float64(t0.Add(-time.Hour).Unix()), 1}}, nil, t0.Add(-time.Hour), t0, time.Minute, 1, 1, 91, 4)
 	if got := dotCols(hour); !got[0] || !got[1] {
@@ -935,10 +950,13 @@ func TestPlotLonePoints(t *testing.T) {
 // TestSeriesExtremes: a panel's highest and lowest are written alike
 // until they differ, to as many places in one unit, never coarser than
 // their plain writing, within a plot label's seven cells when compact,
-// never a "<" floor or a zero for a value above it; cores too small for
-// seven cells in millicores, and rates in thousandths a second; one
-// value once; and two values no writing in seven cells tells apart, or a panel the client does not know, as
-// SeriesValue writes them.
+// never a "<" floor or a zero for a value above it, nor so coarse that
+// a narrow spread rounds wide; in the highest's unit, a value either
+// side of a unit's boundary too; cores too small for seven cells in
+// millicores, and rates in an hour's; one value once; and two values
+// no writing in seven cells tells apart in one writing, each in its own
+// when none tells it in the highest's unit, or a panel the client does
+// not know, as SeriesValue writes them.
 func TestSeriesExtremes(t *testing.T) {
 	for _, c := range []struct {
 		name         string
@@ -966,15 +984,24 @@ func TestSeriesExtremes(t *testing.T) {
 		{wire.PanelP95, 80.1, 25, true, "80ms", "25ms"},
 		{wire.PanelMemory, 190840832, 187695104, true, "182M", "179M"},
 		{wire.PanelMemory, 190840832, 190840000, true, "182M", "182M"},
-		{wire.PanelRequests, 0.0004, 0.0003, true, "0.4m/s", "0.3m/s"},
-		{wire.PanelRequests, 1.0 / 3600, 0, true, "0.28m/s", "0.00m/s"},
+		{wire.PanelRequests, 0.0004, 0.0003, true, "1.4/h", "1.1/h"},
+		{wire.PanelRequests, 1.0 / 3600, 0, true, "1.0/h", "0.0/h"},
 		{wire.Panel5xx, 0.0151, 0.0149, true, "1.51%", "1.49%"},
 		{wire.PanelMemory, 150.51 * (1 << 20), 150.49 * (1 << 20), false, "150.51 MiB", "150.49 MiB"},
-		{wire.PanelRequests, 1.0 / 3600, 0, false, "0.00028/s", "0.00000/s"},
+		{wire.PanelRequests, 1.0 / 3600, 0, false, "1.0/h", "0.0/h"},
 		{"disk_bytes", 2, 1, true, "2", "1"},
 		// No pair fits alike: each in its own writing that fits.
 		{wire.PanelCPU, 0.2, 0.000012, true, "0.200", "0.012m"},
-		{wire.PanelRequests, 0.5, 0.003333, true, "0.50/s", "3.3m/s"},
+		{wire.PanelRequests, 0.5, 0.003333, true, "1800/h", "12/h"},
+		// A narrow spread, to places fine enough.
+		{wire.PanelP95, 1.6, 1.4, true, "1.6ms", "1.4ms"},
+		{wire.PanelP95, 12.6, 12.4, true, "12.6ms", "12.4ms"},
+		{wire.PanelMemory, 182.6 * (1 << 20), 182.4 * (1 << 20), true, "182.6M", "182.4M"},
+		// Either side of a unit's boundary: the highest's unit.
+		{wire.PanelMemory, 1<<30 + 4096, 1<<30 - 4096, true, "1G", "1G"},
+		{wire.PanelMemory, 1 << 20, 1<<20 - 100, true, "1M", "1M"},
+		{wire.PanelP95, 1000.2, 999.9, true, "1.0002s", "0.9999s"},
+		{wire.PanelRequests, 1000.4, 999.6, true, "1k/s", "1k/s"},
 	} {
 		h, l := model.SeriesExtremes(c.name, c.hi, c.lo, c.compact)
 		if c.compact && c.name != "disk_bytes" && (utf8.RuneCountInString(h) > 7 || utf8.RuneCountInString(l) > 7) {
@@ -996,6 +1023,7 @@ func TestSeriesExtremes(t *testing.T) {
 		{wire.PanelCPU, 0.0005, 0.0007, 0.0001, "0.0005 cores"},
 		{wire.PanelMemory, 182 << 20, 186 << 20, 179 << 20, "182.0 MiB"},
 		{wire.PanelCPU, 0.0012, 0.0016, 0.0009, "0.0012 cores"},
+		{wire.PanelP95, 1.5, 1.6, 1.4, "1.5 ms"},
 	} {
 		if got := model.SeriesNewest(c.name, c.v, c.hi, c.lo); got != c.want {
 			t.Errorf("newest %s %v of %v..%v: %q, want %q", c.name, c.v, c.lo, c.hi, got, c.want)
@@ -1104,6 +1132,13 @@ func TestMetricsQuiet(t *testing.T) {
 		}
 		if dots < 8 {
 			t.Errorf("%s: no bridge across the step with requests and no point:\n%s", label, strings.Join(rows, "\n"))
+		}
+	}
+	// At 60 columns the count without how many have a point, which does
+	// not fit.
+	for _, label := range []string{"5xx share", "p95"} {
+		if _, _, times := plotOf(s.MetricsViewFit("shop", "1h", now, 60, 30, runes), label); !strings.Contains(times, " 5 of 61 steps had requests ") {
+			t.Errorf("%s at 60 columns: times %q", label, times)
 		}
 	}
 	rows, _, _ := plotOf(ls, "5xx share")

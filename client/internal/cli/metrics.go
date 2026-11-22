@@ -29,11 +29,12 @@ func (r *runner) metrics() *cobra.Command {
 			"box: the app's numbers over a window, as the box's metrics store holds them,\n" +
 			"a point a step (1h: a minute; 24h: 5 minutes; 7d: 30; 14d: an hour), the newest\n" +
 			"of the last whole step. It prints each one's lowest, highest and newest value\n" +
-			"and when, and how many steps have a point; for the 5xx share and the p95,\n" +
-			"beside a requests panel, how many steps had requests, and how many of those\n" +
-			"have a point when that differs. motel alone draws them (g on an app's\n" +
-			"screen), and --json prints the points. The request numbers are there\n" +
-			"only for an app behind observe. <app> is a name, or the app's URL\n" +
+			"and when (a rate under 0.001/s an hour's, 1.0/h), and how many steps have a\n" +
+			"point; for the 5xx share and the p95, beside a requests panel, how many steps\n" +
+			"had requests, and how many of those have a point when that differs. motel\n" +
+			"alone draws them (g on an app's screen), and --json prints the points. The\n" +
+			"request numbers are there only for an app behind observe. <app> is a name,\n" +
+			"or the app's URL\n" +
 			"(https://deploy.example.com/blog), which names the box too. The box asks its\n" +
 			"store at most every 30 s for an app and window, so an answer can be that old.\n" +
 			"It exits 0 when it read them, and when the box keeps no numbers (it has no\n" +
