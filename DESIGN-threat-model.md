@@ -1118,8 +1118,9 @@ dump or a restore under it shows it nothing new; it can change what the
 next snapshot holds, as T1 can of its own app, and no earlier one.
 Skipping the handler's `motel-backup validate` installs a signed
 file that the next run refuses, red and named ("Config webhook").
-motel validates a declaration and does nothing else with it; the
-supervisor still holds no grant.
+motel validates a declaration, and beyond that only reads what
+`motel-backup status` reads as any account, for its alerts and for a
+person who may read the box; the supervisor still holds no grant.
 
 **Measured on a real provider.** `v0.5.0-rc1` ran the release-candidate
 checks on 2026-11-02 through B2's S3-compatible endpoint, the door the
