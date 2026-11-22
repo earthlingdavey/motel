@@ -75,6 +75,20 @@ func FuzzFrom(f *testing.F) {
 		if !strings.ContainsFunc(s, func(r rune) bool { return r == utf8.RuneError || unsafeRune(r) }) && out != s {
 			t.Fatalf("From(%q) = %q changed a clean string", s, out)
 		}
+		// Tabbed and TabbedLines are held the same: UTF-8, no rune From
+		// escapes (a tab among them), and From where s holds no tab.
+		tabbed := []string{Tabbed(s).String()}
+		for _, l := range TabbedLines(s) {
+			tabbed = append(tabbed, l.String())
+		}
+		for _, got := range tabbed {
+			if !utf8.ValidString(got) || strings.ContainsFunc(got, unsafeRune) {
+				t.Fatalf("Tabbed(%q) or a line of it = %q keeps an unsafe rune, or is not UTF-8", s, got)
+			}
+		}
+		if !strings.Contains(s, "\t") && tabbed[0] != out {
+			t.Fatalf("Tabbed(%q) = %q, From %q", s, tabbed[0], out)
+		}
 	})
 }
 
@@ -119,5 +133,34 @@ func TestJSON(t *testing.T) {
 	// terminal acts on.
 	if got := string(JSON([]byte("\x1b]0;title\x07 \x00"))); got != `\u001b]0;title\u0007 \u0000` {
 		t.Errorf("raw controls: %q", got)
+	}
+}
+
+// TestTabbed: a tab is spaces to the next stop of 8 in the text's own
+// columns, each escape counted as its characters; every other control
+// is escaped as From escapes it; no tab is written. TabbedLines splits
+// as Lines does.
+func TestTabbed(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"\t/app/main.go:10 +0x1d", "        /app/main.go:10 +0x1d"},
+		{"GET\t/cart\t200", "GET     /cart   200"},
+		{"12345678\tx", "12345678        x"},
+		{"a\t\tb", "a               b"},
+		{"\x1b[31m\tred\r", "\\x1b[31m        red\\x0d"},
+		{"日\tx", "日       x"},
+		{"\xff\tx", "\ufffd       x"},
+		{"no tab \x1b", "no tab \\x1b"},
+	} {
+		got := Tabbed(c.in).String()
+		if got != c.want || strings.ContainsRune(got, '\t') {
+			t.Errorf("%q: %q, want %q", c.in, got, c.want)
+		}
+	}
+	got := TabbedLines("a\tb\r\nc\n")
+	if len(got) != 2 || got[0].String() != "a       b" || got[1].String() != "c" {
+		t.Errorf("TabbedLines: %q", got)
+	}
+	if From("a\tb").String() != "a\\x09b" {
+		t.Errorf("From changed: %q", From("a\tb"))
 	}
 }

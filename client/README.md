@@ -4,8 +4,10 @@
 command, flag, output and exit code may change until a release's notes
 say otherwise. The human output is never a contract; `--json` prints the
 box's own answer to a read (for `deploys <app>`, the status's `deploys`
-array alone, `[]` when it has none): the same JSON value, and byte for
-byte unless the body holds something a terminal acts on. A server's
+array alone, `[]` when it has none; for `logs <app> --follow`, each line
+of the app's as the box sent it, one JSON object a line): the same JSON
+value, and byte for byte unless the body holds something a terminal acts
+on (a line of `logs --follow` loses the white space between its tokens). A server's
 encoder writes a C1 control, DEL, a bidi control and the line and
 paragraph separators raw in a string: each is printed as JSON's own `\u`
 escape, a byte that is not UTF-8 as `\ufffd` (what a JSON reader makes
@@ -23,7 +25,10 @@ exit code says which of the two stdout is. For a 5, go by the object:
 the client's own has `error` alone, the sentence on stderr; the box's
 access check writes `needs` and `scope` beside its `error` (a plainer
 403 of the box's is `{"error":"forbidden"}`). An interrupted command
-(130) prints nothing on stdout.
+(130) prints nothing on stdout, and nor does a failure of `logs
+--follow --json` once the command runs: its stdout holds the app's
+lines alone (a refusal by the command line's parser, before the command
+runs, still prints its object: the accepted row below).
 
 ```text
 motel version                       the client's release and protocol
@@ -35,6 +40,9 @@ motel status <app> [--range 1h|24h] an app's status
 motel status <app> --follow         the deploy in flight, read until it ends; exits by its outcome
 motel deploys <app>                 its deploys, newest first
 motel deploys <app> <version>       one deploy's whole record
+motel logs <app> [--lines 50|200|1000]
+                                    an app's own lines, the newest, as the box's journal holds them
+motel logs <app> --follow           then the lines after them, read every 2 s until ctrl-c
 motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets,
                                     and whether that Caddyfile is the one that commit installed
 motel backup status                 what the box says of its backups, for a viewer of the box: the box's own claim
@@ -52,14 +60,14 @@ Later than v0.8.0, and not in a client built from v0.8.0's source:
 follow a box at v0.8.0 too; `box status`'s word that the Caddyfile is
 not the one its commit installed, which a box at v0.8.0 never sends,
 so nothing is said either way; and `backup status`, `monitor alerts`,
-`monitor rules` and `metrics`, with the box screen's backups line and
+`monitor rules`, `metrics` and `logs`, with the box screen's backups line and
 the screens' `:backups`, `:alerts`, `:rules` and `:metrics` (`g` on an
 app's screen), whose reads a box has on each release after v0.8.0
 only. A later client asking a box at v0.8.0 for one of those reads is
 answered `404`: the command exits 6, and the screen says the box
 answered 404.
 
-Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps`, `backup status`, `monitor alerts`, `monitor rules` and `metrics` are asked with your own key
+Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps`, `backup status`, `monitor alerts`, `monitor rules`, `metrics` and `logs` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
@@ -209,6 +217,69 @@ oldest first, at a whole second; anything else is not moteld's answer,
 exit 3. The box asks its store at most every 30 s for an app and window,
 so an answer can be that old. The spec's command (motelctl spec row 18,
 `motelctl metrics <app> --range <r>`).
+
+`logs <app> [--lines 50|200|1000]` reads `GET /_motel/apps/<app>/logs`,
+for a person with a `logs` grant on the app or the box (docs/people.md,
+"Reading an app's logs"): the app's newest lines, oldest first, 200
+when `--lines` names no other count (`wire.LogsLines`). Each line is
+printed as its time, UTC to the second, and its text, whole as the box
+sent it (at most 4 KiB, cut by the box), made safe: a tab as spaces to
+the next stop of 8, counted in the text's own columns from its start
+(each character one column, an escape as its characters, not a
+terminal's cells: a wide character before a tab puts what follows it a
+cell past the stop, a combining or zero-width one a cell before; an
+accepted row), and every other
+control character and colour code the app wrote shown as an escape,
+never passed to the terminal (`termtext.Tabbed`, through
+`model.LogsLines`, which a screen of the lines uses too). The release is not on every line:
+a divider before the first line, and wherever the release or the day
+changes, names both (`-- 2026-11-20 UTC, release v42 --`; a line whose
+unit the journal did not keep, `release not kept by the journal`). A
+read sends at most the count or 64 KiB of lines: when lines older than
+the first were left, a divider before them says so (stderr, with
+`--json`), and that `logs` does not page back (`--lines 1000`
+may reach further, when it was not the count asked and the count, not
+the 64 KiB, stopped the read). An answer is held to its grammars: `kept` a word, each
+release a version or empty, the cursor `wire.LogsCursor` (the box's own
+grammar for it, one copy); anything else is not moteld's answer, exit
+3. It exits 0 when it read, and when the box says the app keeps its
+output on the box (`kept: off`: `deploy_log_lines 0`), which stderr
+says, as it says when the journal holds no line of the app (with
+`--json` too, after the box's answer); 3 when the
+box names what it keeps in a word the client does not know. A box
+running as many logs reads as it runs at once (four) answers `503` with
+`Retry-After: 1`: one read is not asked again, exit 3. `--json` prints
+the box's answer, its cursor among it: the box's position in its
+journal, which the box asks a reader to keep in memory only.
+
+`logs <app> --follow` reads the newest lines, then every 2 s
+(`model.LogsEvery`) the lines after the last one read, by the cursor
+the last answer gave, kept in memory and never written anywhere; a read
+that stopped with lines left after the last one sent is followed by
+the next at once. When its first read brings no line, stderr says the
+journal holds none, and it waits for one. An answer with no cursor (no
+line taken) keeps the one sent. When the box did not honour the cursor (`gap`: its line is no
+longer in the journal), a divider says lines since may be missing, and
+the lines are its newest; with no cursor beside the gap, the next read
+is a tail, or every read would be one. A `429` that stands after the
+client's own wait, with a `Retry-After` of at most a minute or none, and
+a `503` whose JSON says why with a `Retry-After` of at most a minute (the
+box's when its four read slots are taken, or while moteld starts, 1 s),
+are waited out (the box's `Retry-After`, or 30 s for a `429` with none),
+stderr saying so once in a run of them, with the read's own sentence and
+the box's words quoted in it, and the follow goes on; any other read
+that fails, a `429` asking for longer among them, ends it, with
+that read's exit and its sentence saying following stopped. The box
+saying the app keeps its output on the box ends it, exit 0. ctrl-c ends
+it, 130. With `--json` stdout is the app's lines alone, each as the box
+sent it, one JSON object a line, as each read brings them (the
+cursor is not printed); what is not a line (a gap, older lines not
+sent, an app that keeps its output on the box) is a sentence on stderr,
+and a failure once it runs prints no object on stdout either: the exit
+says it. A
+follow is 0.5 reads a second, and each read that sends lines is an
+`access: person read logs` line in the box's journal, naming the person
+("The rate", below).
 
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
@@ -420,8 +491,17 @@ only:
    A box-written backtick command inside a quotation is shown as the
    box's words, by design: it is inside the box's quotation.
 3. **A labelled, capped value**: a free-text field (a deploy's error, a
-   note, a log tail line) on a line whose label is the client's, made safe
-   by `termtext.From` and cut at 200 characters (`…[cut]`).
+   note, a log tail or probe body line) on a line whose label is the
+   client's, made safe by `termtext.From` (an app's own output by
+   `termtext.Tabbed`, below) and cut at 200 characters (`…[cut]`; a
+   record's screen cuts a tail line at 2000). An app's own output, a
+   record's log tail and probe body lines and a line of `motel logs`,
+   is made safe by `termtext.Tabbed`:
+   `From`, but a tab as spaces to the next stop of 8, counted in the
+   text's own columns, so that what the app laid out with tabs (a stack
+   frame, a tab-separated log) lines up; a cut is of the text as shown.
+   A line of `motel logs`, after the client's time, is not cut: it is
+   what a logs reader asked for, and the box cuts it at 4 KiB.
 
 No message carries a transport's or a decoder's error text once a byte
 came from the peer: a fixed reason of the client's own is said instead.
@@ -498,6 +578,15 @@ made by hand. Accepted:
 | Following a deploy (#580): a deploy seen only before its first phase (a push's upload) is matched to its outcome by its version and its end alone, so a later deploy of the same version that begins and ends before the next read (5 s on an app's screen and for `status --follow`, 30 s or more for another app) is taken for its outcome: `status --follow` exits by that one, and the app's screen says it; so does a step of the box's clock back between the two. Once the deploy was seen in a phase, its outcome must begin with the phases seen, each at the box's time, which no other deploy's does | 3 | 2 | 3 | 18 | 3 (the box would name each deploy, in `deploying` and `last_deploy`) | accepted: it takes two deploys of one version within one read, the first not yet past its upload |
 | `status --follow` ends at the first read that fails (no answer, a 5xx, a 429 that stood after its wait, a moteld restarting), with that read's exit and its sentence saying the deploy may still run, though it may end well a moment later; it is not asked again | 2 | 3 | 1 | 6 | 2 (a retry at its turn, and a count) | accepted: it ends red and named, and run again it follows the same deploy if it still runs |
 | `status --follow` signs its tokens as every command does, each lasting 300 s, so a follow of more than about 3.5 minutes with a hardware key asks for a touch on the terminal mid-follow, the reads waiting until it is given; the TUI's tokens last 600 s (`TestForTUI` holds the longer life to the TUI's client) | 2 | 3 | 1 | 6 | 1, risk 2 (a captured token then lasts twice as long) | accepted: a deploy's usual length is under a minute |
+| `logs --follow` signs its tokens as every command does, each lasting 300 s, so with a hardware key it asks for a touch on the terminal about every 4 minutes for as long as it follows, its reads waiting until it is given | 2 | 5 | 1 | 10 | 1, risk 2 (the TUI's 600 s: a touch every 9 minutes, and a captured token that lasts twice as long) | accepted: the touch is asked for on the terminal the follow runs in, and nothing is missed while it waits: the next read takes up at the cursor |
+| `logs --follow`, which runs for as long as a person leaves it, ends at the first read that fails other than by a 429 or the box's busy 503: no answer in 30 s, a connection closed while moteld restarts (its upgrade), a gateway's 5xx, the box's own 500 when journalctl could not read the journal in time; with that read's exit and its sentence saying following stopped, and nothing after it is read until it is run again | 2 | 4 | 1 | 8 | 2 (a retry at the next turn, and a count of them) | accepted: red and named, as `status --follow`'s row above; run again, it tails, and the lines between are in the box's journal; found by the self-review of `motel logs` |
+| A 429 during `logs --follow` is waited out twice before the follow says so: the client's own read waits the box's `Retry-After` once, silently, as every command's does, and when the 429 stands the follow says it and waits it again, so the lines stop for twice the box's wait (60 s for two 429s of 30 s), the first half unsaid | 2 | 5 | 1 | 10 | 2, risk 2 (the follow's reads made with the client's own wait off, which `TestForTUI` holds to the TUI's client alone) | accepted: the second wait is said, nothing is lost, the next read taking up at the cursor; found by the self-review of `motel logs` |
+| The plain layout's divider comes wherever a line's release differs from the line before, and the journal keeps no unit for some lines (a child that exited before journald read its line, a crash loop's lines often): lines of one release mixed with lines of none print a divider before nearly every line | 2 | 5 | 1 | 10 | 2 (a line of no known release marked on its own row, the divider left as it was) | accepted: each divider is true, and `--json` has the release on every line; for the owner to confirm with the layout |
+| An answer with lines and no cursor is taken (`hold` asks a cursor only to be of its grammar), so a follow's first read, a tail, is followed by another tail every 2 s, and the same lines print again without end. No moteld sends it: a read that sends lines took them, and gives the last one's cursor | 2 | 1 | 3 | 6 | 2, risk 1 (lines with no cursor refused as not moteld's answer) | accepted: it takes another server, or a box's bug to come, and a new branch for it is what the rule's stop is for; found by the coordinator's review of `motel logs` |
+| `termtext.Tabbed` counts a column a rune, not a terminal's cells, so on a line with a character that is not one cell wide before a tab the columns after it do not line up: a wide one (CJK, an emoji) puts what follows a cell past the stop, a combining or zero-width one a cell before it, and on the TUI's screen a character the door rewrites as an escape further off | 2 | 5 | 1 | 10 | 2, risk 2 (count cells with a width function the caller passes: the door's on the screen) | accepted: the text is whole and every other character as before; only the alignment after such a character is off. Found by the coordinator's review of the tabs change |
+| `motel logs --follow --json` refused by the command line's parser before the command runs (no `<app>`, a flag that does not read, `--lines` with no value) prints its `{"error":…}` on stdout, where the mode's stdout is the app's lines alone; a refusal the command makes itself (a count not the box's) prints none | 2 | 5 | 1 | 10 | 2, risk 1 (Main reads `logs`, `--follow` and `--json` from the arguments, as it reads `--json`) | accepted: exit 2, the sentence on stderr, and nothing was sent; found by the self-review of `motel logs` |
+| A follow of an app that writes more than a read sends every 2 s (200 lines, or 64 KiB) reads again at once after each read (the owner's rule for a follow's `more`), so beside an open TUI it takes a person past the box's 2 requests a second: the box answers 429, the follow waits it out (stderr says so once) and the TUI slows | 2 | 5 | 1 | 10 | 2, risk 2 (a floor between reads, which the owner's rule does not have) | accepted, by the owner's decision that a follow's `more` is read at once: each 429 is waited out and said, and no line is lost, the next read taking up at the cursor |
+| `motel logs` does not say an answer's `redacted_env` (the keys whose values the box's filter replaced) in the plain layout, nor beside the lines of `--follow --json`; one read's `--json` prints it in the box's answer | 2 | 5 | 1 | 10 | 2, risk 1 (a note naming the keys, from the client's grammar for them) | accepted: each replaced value stands in its line as the filter's marker, which names its key but in its last spelling, `[#N]` |
 | A phase a newer box names that this client does not know, in the deploy in flight's phases, makes the whole status "not moteld's answer", exit 3 (on the screens the app is `unknown`), for the rest of that deploy, as one in `last_deploy` already did until the next deploy and one in the status's phase while it lasts: since #580 the phases are printed, and so held to the outcome vocabulary | 2 | 5 | 1 | 10 | 2 (an unknown phase shown in the client's words) | accepted: it is said, and a client of the box's release knows its phases |
 | A TUI left without a key for 10 minutes pauses every read but the alerts the title bar counts (the title bar says PAUSED), so a person waiting on an app's screen for CI to reach its deploy sees nothing of a deploy that begins after that until a key; `status --follow` follows only a deploy already in flight when it starts | 2 | 5 | 1 | 10 | 2 (no pause while an app's screen is open: a new rule for the rate and a hardware key's touches) | accepted: the pause is the owner's rule for an unattended TUI, and says itself |
 | An app's `ended` line puts its key hint last (`· d opens its record`), and its `phases` line the failed phase's `✖`: at 80 columns the line of a failure in soaking with 12-character versions is 85 cells, so the hint is cut (`…`), and a failed phase of 100 s or more cuts its `✖`; the line still says `failed in <phase>`, and help lists `d` | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: what is cut is a hint and a repeated mark |
@@ -541,6 +630,7 @@ their fixes, and of its second part; the others are fixed:
 | Two names over 20 characters that differ only in their middle are shown longer until they differ, which can take the room of VERSION and LAST DEPLOY on every row. Where the width cannot hold both whole beside the widest STATE (with `running · 12s`, from 44 characters at 60 columns, none at 80; with `not deployed · stale`, from 37 at 60, 57 at 80) they are shown alike, and enter on one may open the other (at 80 columns its crumb then names it; at 60 the crumb is cut before the place they differ) | 2 | 5 | 3 | 30 | 3 | the owner's call: over the bar, and no cut within the width tells every such pair apart |
 | The title bar's name, roles and release are whoami's last answer, shown beside the freshness of the newest answer to any read: while whoami answers (every 5 minutes) they can be up to 5 minutes older than that word says, unmarked. While its newest read has failed, the title bar says so and the answer's age before it (below) | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
 | Between reads nothing is waited for, so after a box stops answering the title bar says `live`, its age growing, until 5 s into the first read made after it (from the end of its signature, when it signs a token; then `waiting`, as "The rate" under "## The TUI" below says): for the time to the next read due and 5 s more, as long as between two reads of a box that answers and 5 s. Measured on the fake clock: 7 s on an app's screen (its read every 5 s: at most 10 s), 14 s on the apps screen with one app and refusals that come 10 s late (its app read every 30 s: at most 35 s), at most 65 s on an apps screen with no app (the list every 60 s); with more apps their reads are spread over the cycle and it is shorter | 2 | 4 | 3 | 24 | 3 (a read made only to see that the box answers, when nothing else is due: a new schedule, and requests against the rate) | the owner's call: over the bar, and closing it costs requests, which this change was held not to add; the age beside the word is never more than 5 s past what the same screen shows of a box that answers |
+| `motel logs` prints each line whole after its time, and a terminal wraps a line wider than itself: an app that writes a line padded to the reader's width, with a time and text after the padding (a request it logs, with what a client sent in it), has that text begin a row of its own, where it reads as a line of its own, or as one of the client's dividers (`-- 2026-11-21 UTC, release v43 --`, a gap). The same mechanism as the accepted row on a labelled value's runs of spaces, scored there at occurrence 1; scored here at 5, since an app's line holds what anyone who reaches it may send | 2 | 5 | 3 | 30 | 3 (a layout that knows the terminal's width and indents a line's continuation rows past the time, so that no row of the app's begins at the left edge) | the owner's call: over the bar, and the fix is a new layout; in a pipe or a file no line wraps, and `--json` holds each line whole. Found while building `motel logs` |
 
 ## The TUI
 
@@ -767,7 +857,12 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   app's. `status --follow` reads once in 5 s, 0.2 a second, so one
   beside a TUI keeps a person to 1.7; each person's reads count against
   their own 2, so several people following one deploy cost the box 0.2
-  a second each. Every other app takes its turn in the rest of the
+  a second each. `logs --follow` reads once in 2 s (`LogsEvery`), 0.5 a
+  second, so one beside a TUI brings a person to the box's 2, and the
+  reads it makes at once after a read that stopped with lines left go
+  past it, until a 429 is waited out; and each
+  of its reads that sends lines is an `access: person read logs` line in
+  the box's journal (docs/people.md, "What the box records"). Every other app takes its turn in the rest of the
   budget, every 30 s, or longer with more apps than that covers (about
   55 s for 60 apps, 3 minutes for 200; 57 s and a little over 3
   minutes while an app's screen is open, its alerts read too), each at

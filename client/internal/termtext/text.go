@@ -4,7 +4,8 @@
 // escapes (OSC 52 writes the clipboard, OSC 8 hides a link, CSI moves
 // the cursor over what was printed) or bidi controls that reorder
 // what a reader sees. A Text holds a string with all of those made
-// visible, and only From makes one, so a renderer that takes Text for
+// visible, and only From and Tabbed (From with a tab as spaces) make
+// one, so a renderer that takes Text for
 // what a box sent cannot print it raw: the compiler holds the rule,
 // and the rule is written once.
 package termtext
@@ -62,17 +63,57 @@ func From(s string) Text {
 }
 
 // Lines splits s at each line feed (a CR before one goes with it) and
-// sanitises each line: a log tail, a probe body. Empty s is no lines.
-func Lines(s string) []Text {
+// sanitises each line: a probe body. Empty s is no lines.
+func Lines(s string) []Text { return lines(s, From) }
+
+// TabbedLines is Lines with each line made safe by Tabbed: an app's
+// output, a deploy record's log tail.
+func TabbedLines(s string) []Text { return lines(s, Tabbed) }
+
+func lines(s string, safe func(string) Text) []Text {
 	if s == "" {
 		return nil
 	}
 	parts := strings.Split(strings.TrimSuffix(s, "\n"), "\n")
 	out := make([]Text, len(parts))
 	for i, p := range parts {
-		out[i] = From(strings.TrimSuffix(p, "\r"))
+		out[i] = safe(strings.TrimSuffix(p, "\r"))
 	}
 	return out
+}
+
+// TabStop is the columns between the tab stops of Tabbed, a terminal's.
+const TabStop = 8
+
+// Tabbed is From, but a tab becomes spaces to the next multiple of
+// TabStop columns of s's own (from its start), so that the columns an
+// app laid out with tabs line up as in a terminal; no tab is written.
+// For a line of an app's output: `motel logs`, a deploy record's log
+// tail and probe body. Columns are counted in runes of the text as
+// shown, an escape From writes as its characters, not in a terminal's
+// cells: before a tab, a wide character (CJK, an emoji) puts what
+// follows the tab a cell past its stop, a combining or zero-width one a
+// cell before it, and on the TUI's screen a character the door writes
+// as an escape further off (the cells' width is the door's, which this
+// package does not reach).
+func Tabbed(s string) Text {
+	if !strings.Contains(s, "\t") {
+		return From(s)
+	}
+	var b strings.Builder
+	col := 0
+	segs := strings.Split(s, "\t")
+	for i, seg := range segs {
+		shown := From(seg).s
+		b.WriteString(shown)
+		col += utf8.RuneCountInString(shown)
+		if i < len(segs)-1 {
+			n := TabStop - col%TabStop
+			b.WriteString(strings.Repeat(" ", n))
+			col += n
+		}
+	}
+	return Text{b.String()}
 }
 
 // JSON is a JSON text made safe to print, and still the same value:

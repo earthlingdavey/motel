@@ -3,9 +3,11 @@ package client
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/smallhoursorg/motel/client/internal/termtext"
 	"github.com/smallhoursorg/motel/liveswap/wire"
@@ -127,6 +129,47 @@ func (c *Client) Series(ctx context.Context, app App, rng string) (wire.Series, 
 		err = c.NotMotel(ans, "it is of another window than the one asked")
 	}
 	return s, ans, err
+}
+
+// Logs is `motel logs <app> [--lines] [--follow]`: GET
+// /_motel/apps/<app>/logs, the app's own lines from the box's journal,
+// for a person with a logs grant on the app or the box. lines is one of
+// wire.LogsLines, or "" for the box's default; after is "" for a tail
+// (the newest lines), or a cursor an earlier answer gave, for the lines
+// after it. Both are refused before anything is sent when they are not
+// of the box's grammars (url.Values writes the cursor's ; escaped, as
+// the box requires). A 503 is not waited out here: its Retry-After, the
+// box's when it runs as many logs reads as it runs at once, is on the
+// failure for a follower to wait out (RetryAfter), as a 429's is; only
+// on a 503 that says why in JSON and asks for a wait of at most a
+// minute, as the box's does (1 s), so that a page of another server's,
+// or its maintenance window, is not waited out.
+func (c *Client) Logs(ctx context.Context, app App, lines, after string) (wire.Logs, *Answer, error) {
+	var l wire.Logs
+	q := url.Values{}
+	if lines != "" {
+		if !slices.Contains(wire.LogsLines, lines) {
+			return l, nil, usagef("--lines %q is not one of %s", lines, strings.Join(wire.LogsLines, ", "))
+		}
+		q.Set("lines", lines)
+	}
+	if after != "" {
+		if !wire.LogsCursor.MatchString(after) {
+			return l, nil, usagef("the cursor to read after is not one a box gives")
+		}
+		q.Set("after", after)
+	}
+	ans, err := c.read(ctx, "/_motel/apps/"+app.Name+"/logs", q, &l)
+	var f *Failure
+	var said wire.Error
+	if errors.As(err, &f) && ans != nil && ans.Code == http.StatusServiceUnavailable && decodeObject(ans, &said) == nil && said.Error != "" {
+		if secs, ok := retryAfter(ans.Header, c.Now()); ok && secs <= int64(MaxRetryAfter/time.Second) {
+			g := *f
+			g.RetryAfter = time.Duration(min(max(secs, 1), 3600)) * time.Second
+			err = &g
+		}
+	}
+	return l, ans, err
 }
 
 // BoxAlerts is `motel monitor alerts`: GET /_motel/alerts, what the box's

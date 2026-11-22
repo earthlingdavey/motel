@@ -53,8 +53,8 @@ type Failure struct {
 	// of an {"error"} of the client's.
 	Body []byte
 	// Status is the HTTP status of the answer the failure is about, and
-	// zero when none came; RetryAfter, on a 429, the wait the box asked
-	// for. The TUI's engine reads them: a 401 stops it, a 403 stops one
+	// zero when none came; RetryAfter, on a 429 (and on a logs read's
+	// 503), the wait the box asked for. The TUI's engine reads them: a 401 stops it, a 403 stops one
 	// app's reads, a 429 slows it.
 	Status     int
 	RetryAfter time.Duration

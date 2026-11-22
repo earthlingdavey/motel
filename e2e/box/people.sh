@@ -411,6 +411,11 @@ grep -F '"access: person read logs"' "$work/logsj" | grep -F '"person":"lars@e2e
 	&& pass "the journal says lars read demo's logs, to the cursor he was given" || fail "the read's journal line: $(grep -F 'person read logs' "$work/logsj" | head -c 600)"
 grep -F '"access: person refused logs"' "$work/logsj" | grep -F '"person":"lara@e2e.test"' | grep -qF '"needs":"logs app"' \
 	&& pass "the journal says lara was refused demo's logs" || fail "the refusal's journal line: $(grep -F 'refused logs' "$work/logsj" | head -c 600)"
+# The same lines through the client.
+client logs demo --box "$HOST" --key "$work/lars" --lines 50
+expect "lars: motel logs demo" 0
+has "lars: motel logs prints the child's line" "$work/out" "fatal: cannot start"
+! grep -qF "e2e-secret-value-1234" "$work/out" && pass "lars: motel logs prints no SECRET" || fail "lars: motel logs: $(head -c 800 "$work/out")"
 
 # eve's ECDSA key: the client refuses it before it signs or sends, and
 # `motel key` prints no person line the box would refuse.

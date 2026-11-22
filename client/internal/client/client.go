@@ -148,9 +148,9 @@ func TokenFor(box Box, getenv func(string) string) error {
 const (
 	retryPerson = time.Second
 	retryDeploy = 3 * time.Second
-	// maxRetryAfter is the longest a 429's Retry-After is waited out;
+	// MaxRetryAfter is the longest a 429's Retry-After is waited out;
 	// past it the command says how long the box asked to wait instead.
-	maxRetryAfter = 60 * time.Second
+	MaxRetryAfter = 60 * time.Second
 	// maxBody bounds what is read of an answer. The largest body a
 	// read gets is a deploy record with its 8 KiB log tail.
 	maxBody = 4 << 20
@@ -237,7 +237,7 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (*Answe
 			// A wait past the cap, or none that reads, is not waited
 			// out: the command says what the box asked instead.
 			secs, ok := retryAfter(ans.Header, c.Now())
-			if waited || !ok || secs > int64(maxRetryAfter/time.Second) || c.NoWait {
+			if waited || !ok || secs > int64(MaxRetryAfter/time.Second) || c.NoWait {
 				return nil, c.slowDown(secs, ok, waited)
 			}
 			waited = true
@@ -432,7 +432,7 @@ func (c *Client) slowDown(secs int64, ok, waited bool) error {
 	switch {
 	case !ok:
 		f.Message = fmt.Sprintf("%s asked you to slow down; try again later.", c.Box.Host)
-	case waited || c.NoWait && secs <= int64(maxRetryAfter/time.Second):
+	case waited || c.NoWait && secs <= int64(MaxRetryAfter/time.Second):
 		f.Message = fmt.Sprintf("%s asked you to slow down; try again in %d s.", c.Box.Host, max(secs, 1))
 	default:
 		f.Message = fmt.Sprintf("%s asked you to slow down: the box asks you to wait %d s, longer than motel waits; try again then.", c.Box.Host, secs)
@@ -987,6 +987,24 @@ func hold(v any) string {
 		}
 	case *wire.Series:
 		return holdSeries(a)
+	case *wire.Logs:
+		// What the client prints of an app's lines as a word: kept, which a
+		// client reads as not knowing when it does not know it, and each
+		// line's release, a version or "" (the journal kept no unit). The
+		// cursor is sent back as the next read's after, so it is held to
+		// the box's own grammar (the box keeps it out of its filter); a
+		// line's text is free text, made safe by termtext.
+		if !alertWordRe.MatchString(a.Kept) {
+			return "its kept is not a word"
+		}
+		if a.Cursor != "" && !wire.LogsCursor.MatchString(a.Cursor) {
+			return "its cursor is not a journal cursor"
+		}
+		for i := range a.Lines {
+			if r := &a.Lines[i].Release; *r != "" && !held(r, isVersion) {
+				return "a line's release in it is not a version"
+			}
+		}
 	case *wire.Apps:
 		for _, e := range a.Apps {
 			if !appRe.MatchString(e.Name) {
@@ -1241,6 +1259,8 @@ func identity(v any) shape {
 		return shape{strs: []string{"store"}, lists: []string{"alerts"}}
 	case *wire.Series:
 		return shape{strs: []string{"store", "window"}, lists: []string{"panels"}}
+	case *wire.Logs:
+		return shape{strs: []string{"kept"}, lists: []string{"lines"}}
 	}
 	return shape{}
 }

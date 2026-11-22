@@ -74,7 +74,7 @@ var allows = map[string][]string{
 	"demo": {"context", "embed", "encoding/json", "fmt", "io/fs", "math", "regexp", "strconv", "sync", "time",
 		mod + "internal/tui/model", "github.com/smallhoursorg/motel/liveswap/wire"},
 	"termtext": {"fmt", "strings", "unicode", "unicode/utf8"},
-	"wire":     {"encoding/json", "time"},
+	"wire":     {"encoding/json", "regexp", "time"},
 }
 
 // importBreaks is every import of pkg (a key of allows) that is not on

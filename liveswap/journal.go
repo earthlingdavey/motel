@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // The app's own output goes to the journal (StandardOutput=journal on
@@ -202,24 +204,14 @@ const streamsMaxBytes = 64 * 1024
 // streamIDRe is a stream id as journald prints one.
 var streamIDRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
-// cursorNumber is a number of a journal cursor as journalctl writes
-// it: lower-case hex, no leading zero, at most 64 bits.
-const cursorNumber = `(?:0|[1-9a-f][0-9a-f]{0,15})`
-
-// journalCursor is a journal cursor as journalctl writes one
-// (sd_journal_get_cursor, in systemd's sd-journal.c): the six fields
-// in that order, each id 32 lower-case hex digits, each number as
-// cursorNumber; at most 145 bytes of [0-9a-f;=bimstx], so one argument
-// that never begins with "-". journalctl itself takes far more (a time
-// alone, a sequence number alone, the fields in any order, upper case,
-// unknown fields), and seeks by any time or sequence number a cursor
-// names, one of this form with made-up ids among them: the grammar
-// keeps out what is no cursor, and does not make a cursor one the box
-// gave. The read that takes one must check that against the cursor's
-// own entry: the logs row's read does (logs.go, readLogs).
+// journalCursor is a journal cursor as journalctl writes one: the
+// grammar wire.LogsCursor, which a client holds a cursor to as well, so
+// that there is one copy of it. It keeps out what is no cursor, and does
+// not make a cursor one the box gave: the read that takes one must check
+// that against the cursor's own entry, as the logs row's read does
+// (logs.go, readLogs).
 var journalCursor = &keyGrammar{
-	re: regexp.MustCompile(`^s=[0-9a-f]{32};i=` + cursorNumber + `;b=[0-9a-f]{32};m=` + cursorNumber +
-		`;t=` + cursorNumber + `;x=` + cursorNumber + `$`),
+	re:   wire.LogsCursor,
 	says: "a journal cursor, as an answer gave it",
 }
 

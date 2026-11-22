@@ -189,6 +189,40 @@ func record(t *testing.T, s *model.Session, f *demo.Fake, now *time.Time, app, v
 	return s.RecordView(app, version, *now)
 }
 
+// TestTailTabsAsSpaces: a tab in a record's log tail and probe body is spaces to the
+// next stop of 8 (termtext.Tabbed, as an app's lines), every other
+// control character still an escape, and the cap applied to the text
+// as shown.
+func TestTailTabsAsSpaces(t *testing.T) {
+	s, f, now := session(t)
+	long := strings.Repeat("\\t", 300)
+	f.Body("deploys/blog/v2.json", `{"version":"v2","status":"failed","phase":"starting","started_at":"@-20s","finished_at":"@-10s",
+		"detail":{"exit":"1","probe":{"status":500,"body":"panic: boom\n\t/app/main.go:10 +0x1d\n\u001b[31m\tred"},"log_tail":["panic: boom","\t/app/main.go:10 +0x1d","\u001b[31m\tred","`+long+`x"]}}`)
+	rec := model.Job{Kind: model.KDeploy, App: "blog", Version: "v2"}
+	s.Engine.Focus("blog", *now)
+	s.Engine.Once(rec, *now)
+	for step(t, s, f, now) != rec {
+	}
+	v := s.RecordView("blog", "v2", *now)
+	got := textsOf(v.Tail)
+	want := []string{"panic: boom", "        /app/main.go:10 +0x1d", "\\x1b[31m        red"}
+	if len(got) != 4 || strings.Join(got[:3], "|") != strings.Join(want, "|") {
+		t.Fatalf("the tail is %q, want %q and a capped line", got, want)
+	}
+	if !strings.HasSuffix(got[3], "…[cut]") || len([]rune(got[3])) != model.TailMax+len([]rune("…[cut]")) || strings.ContainsRune(got[3], '\t') {
+		t.Errorf("300 tabs: %d runes", len([]rune(got[3])))
+	}
+	// The probe's body, the app's own output too, by the same rule.
+	var head []string
+	for _, l := range v.Head {
+		head = append(head, l.Text())
+	}
+	all := strings.Join(head, "\n")
+	if !strings.Contains(all, "              "+want[1]+"\n              "+want[2]) || strings.ContainsRune(all, '\t') {
+		t.Errorf("the probe's body:\n%s", all)
+	}
+}
+
 // TestEmptyLogLinesKept: an empty line of a log tail is a line, shown
 // and counted.
 func TestEmptyLogLinesKept(t *testing.T) {

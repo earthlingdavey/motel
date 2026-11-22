@@ -190,10 +190,11 @@ the token and asks:
 `motel whoami --box deploy.example.com`, `motel apps`, `motel status
 <app>`, `motel deploys <app> [<version>]`, `motel box status`; on each
 release after v0.8.0, `motel backup status`, `motel monitor alerts
-[--app <app>]`, `motel monitor rules [--app <app>]` and `motel metrics
-<app> [--range 1h|24h|7d|14d]`, which a box at v0.8.0 answers `404`
-(the client exits 6); and
-`motel` alone, on a terminal, shows the same on screens. Without
+[--app <app>]`, `motel monitor rules [--app <app>]`, `motel metrics
+<app> [--range 1h|24h|7d|14d]` and `motel logs <app> [--follow]`, which
+a box at v0.8.0 answers `404` (the client exits 6); and
+`motel` alone, on a terminal, shows the same on screens, but for the
+logs for now. Without
 it, this makes one by hand and asks who they are (`box` is the box's
 name; the key is theirs; GNU or macOS `base64`):
 
@@ -229,10 +230,12 @@ Who reads what, by the grant that applies from where they are:
 
 ### Reading an app's logs
 
-On each release after v0.8.0, and with no `motel` command yet: by hand,
-as above, or from a program of yours. A logs reader is sent what the
-app printed, which no filter can make safe: read [what a logs reader
-reads](#what-a-logs-reader-reads) before you give the grant.
+On each release after v0.8.0: `motel logs <app>` prints the app's
+newest lines, and `motel logs <app> --follow` reads on every 2 s until
+ctrl-c (client/README.md says what each prints and exits); or by hand,
+as above, or from a program of yours, as below. A logs reader is sent
+what the app printed, which no filter can make safe: read [what a logs
+reader reads](#what-a-logs-reader-reads) before you give the grant.
 
 `GET /_motel/apps/<app>/logs` is the app's newest lines, `lines` of
 them at most (`200`, `50` or `1000`; 200 when none is named), oldest
@@ -275,8 +278,8 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   64 KiB of the lines' text as the journal holds it (what is sent can be
   longer: the filter's markers, JSON's escapes). After a follow the lines left are after
   the last one sent: ask again at once with the cursor. After a tail
-  (no `after`, or `gap`) they are older than the first one sent, and no
-  read reaches them.
+  (no `after`, or `gap`) they are older than the first one sent: no read
+  pages back to them, and a tail of a larger `lines` may reach some.
 - `cursor` is where the read got to, the `after` of the next. It is
   absent when the read took no line: keep the one you sent. Keep it in
   memory only, never on disk: it is the box's position in its journal.
@@ -309,8 +312,10 @@ journalctl --cursor='<first>' -o json --all SYSLOG_IDENTIFIER=motel-<app> _UID=$
 
 A person who follows an app writes one such line for each poll that
 finds new lines: an app that writes at least once a poll, followed at
-a poll every 2 s, makes 1,800 lines an hour (1,200 at 3 s), about 0.5
-to 0.8 MB of journal an hour. They share one message, so `journalctl -u
+a poll every 2 s (as `motel logs --follow` polls), makes 1,800 lines an
+hour (1,200 at 3 s), about 0.5 to 0.8 MB of journal an hour. A follow
+is 0.5 requests a second of the 2 a person is allowed: one beside an
+open `motel` (1.5) takes a person to the box's limit. They share one message, so `journalctl -u
 moteld -o cat | grep -v '"access: person read logs"'` hides them. A
 person who asks for an app's logs and is refused (no `logs` grant on
 it, or one whose `from` list does not hold their address) is a Warn

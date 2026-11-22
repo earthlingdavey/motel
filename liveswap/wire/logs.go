@@ -1,12 +1,36 @@
 package wire
 
-import "time"
+import (
+	"regexp"
+	"time"
+)
 
 // LogsLines are the counts GET /_motel/apps/<app>/logs?lines= takes,
 // the first the default: a closed set, so that a token cannot ask the
 // journal for any count it likes. Any other is refused (422).
 // Experimental, as every route under /_motel/.
 var LogsLines = []string{"200", "50", "1000"}
+
+// cursorNumber is a number of a journal cursor as journalctl writes
+// it: lower-case hex, no leading zero, at most 64 bits.
+const cursorNumber = `(?:0|[1-9a-f][0-9a-f]{0,15})`
+
+// LogsCursor is the grammar of GET /_motel/apps/<app>/logs?after= and
+// of Logs.Cursor: a journal cursor as journalctl writes one
+// (sd_journal_get_cursor, in systemd's sd-journal.c), the six fields in
+// that order, each id 32 lower-case hex digits, each number as
+// cursorNumber; at most 145 bytes of [0-9a-f;=bimstx], so one argument
+// that never begins with "-". journalctl itself takes far more (a time
+// alone, a sequence number alone, the fields in any order, upper case,
+// unknown fields), and seeks by any time or sequence number a cursor
+// names, one of this form with made-up ids among them: the grammar
+// keeps out what is no cursor, and does not make a cursor one the box
+// gave. The box holds an after to it (any other is refused, 422) and
+// checks it against the cursor's own entry (liveswap/logs.go,
+// readLogs); a client holds the cursor an answer gave to it before
+// sending it back.
+var LogsCursor = regexp.MustCompile(`^s=[0-9a-f]{32};i=` + cursorNumber + `;b=[0-9a-f]{32};m=` + cursorNumber +
+	`;t=` + cursorNumber + `;x=` + cursorNumber + `$`)
 
 // The words of Logs.Kept.
 const (
@@ -35,8 +59,9 @@ type Logs struct {
 	// it, was reached. After a
 	// follow (after sent, Gap false) the lines left are after the last
 	// one sent: a follower asks again at once, with Cursor. After a tail
-	// (no after, or Gap true) they are older than the first one sent,
-	// and no read reaches them.
+	// (no after, or Gap true) they are older than the first one sent:
+	// no read pages back to them, and a tail of a larger count may
+	// reach some.
 	More bool `json:"more"`
 	// Gap is true when the after a request sent was not honoured (it is
 	// no entry of this app's that the journal still holds): Lines are
