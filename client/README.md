@@ -192,7 +192,7 @@ named), a point a step (a minute over the hour, 5 minutes over the day,
 prints the box's window, step and end, then a line a panel it knows
 (`memory`, `cpu`, `requests`, `5xx share`, `p95`): its lowest, highest
 and newest value, each with its time (the lowest and highest written
-alike until they differ), and how many of the window's steps have a
+alike until they differ, the newest no coarser), and how many of the window's steps have a
 point; for the 5xx share and the p95, beside a requests panel, how
 many had requests (a rate above 0), since a step with none has no
 point of theirs, and how many have a point when the two differ.

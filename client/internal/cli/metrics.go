@@ -139,7 +139,7 @@ func seriesView(s wire.Series, app, host string) render.Series {
 			maxV, minV := model.SeriesExtremes(p.Name, hi[1], lo[1], false)
 			pn.Min = render.SeriesPoint{V: minV, T: at(lo)}
 			pn.Max = render.SeriesPoint{V: maxV, T: at(hi)}
-			pn.Newest = render.SeriesPoint{V: model.SeriesValue(p.Name, newest[1], false), T: at(newest)}
+			pn.Newest = render.SeriesPoint{V: model.SeriesNewest(p.Name, newest[1], hi[1], lo[1]), T: at(newest)}
 		}
 		v.Panels = append(v.Panels, pn)
 	}

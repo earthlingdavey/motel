@@ -147,25 +147,45 @@ func figures(v float64, most int) string {
 // SeriesExtremes is hi and lo, a panel's highest and lowest, written as
 // a pair, compactly for a plot's axis: in the first of their writings
 // (seriesWritings) in which the two differ, or are one value, and each
-// tells its value: no "<" floor, no zero for a value above it, and
-// compact, no wider than a plot's label. With none, their plain
-// writings.
+// tells its value. With none, their plain writings.
 func SeriesExtremes(name string, hi, lo float64, compact bool) (string, string) {
-	hs, ls := seriesWritings(name, hi, compact), seriesWritings(name, lo, compact)
-	tells := func(s string, v float64) bool {
-		return !strings.HasPrefix(s, "<") && (v == 0 || strings.ContainsAny(s, "123456789")) && (!compact || len([]rune(s)) <= plotLabel)
+	h, l, _ := seriesPair(name, hi, lo, compact)
+	return h, l
+}
+
+// SeriesNewest is v, a panel's newest, written in full as SeriesExtremes
+// writes the panel's highest and lowest, when that tells it; else as
+// SeriesValue does. So the newest is never written coarser than the
+// highest or lowest it may be.
+func SeriesNewest(name string, v, hi, lo float64) string {
+	_, _, i := seriesPair(name, hi, lo, false)
+	if w := seriesWritings(name, v, false)[i]; tells(w, v, false) {
+		return w
 	}
+	return SeriesValue(name, v, false)
+}
+
+// seriesPair is SeriesExtremes, and the index of the writing it took.
+func seriesPair(name string, hi, lo float64, compact bool) (string, string, int) {
+	hs, ls := seriesWritings(name, hi, compact), seriesWritings(name, lo, compact)
 	for i := range hs {
-		if (hs[i] != ls[i] || hi == lo) && tells(hs[i], hi) && tells(ls[i], lo) {
-			return hs[i], ls[i]
+		if (hs[i] != ls[i] || hi == lo) && tells(hs[i], hi, compact) && tells(ls[i], lo, compact) {
+			return hs[i], ls[i], i
 		}
 	}
-	return hs[0], ls[0]
+	return hs[0], ls[0], 0
+}
+
+// tells says s, a writing of v, tells v: it is one (not coarser than
+// v's plain writing), with no "<" floor, no zero for a value above it,
+// and compact, no wider than a plot's label.
+func tells(s string, v float64, compact bool) bool {
+	return s != "" && !strings.HasPrefix(s, "<") && (v == 0 || strings.ContainsAny(s, "123456789")) && (!compact || len([]rune(s)) <= plotLabel)
 }
 
 // seriesWritings is the ways v of the panel named name is written,
 // coarsest first: as SeriesValue writes it, then in its unit to 0 to 6
-// places, then, compact, cores and rates in thousandths (an "m", as
+// places (none, "", to fewer places than the first), then, compact, cores and rates in thousandths (an "m", as
 // "k" is thousands) to 0 to 3 places, the box's six places. Every value
 // of a panel has as many, so the i-th of two values are written alike.
 func seriesWritings(name string, v float64, compact bool) []string {
@@ -212,8 +232,20 @@ func seriesWritings(name string, v float64, compact bool) []string {
 	default:
 		return out
 	}
+	// The first's places: none fewer, or a narrow spread rounds wide
+	// (1.51 % and 1.49 % to 2 % and 1 %).
+	first := 0
+	if _, frac, ok := strings.Cut(out[0], "."); ok {
+		first = len(frac) - len(strings.TrimLeft(frac, "0123456789"))
+	}
+	at := func(v float64, p, least int, suffix string) string {
+		if p < least {
+			return ""
+		}
+		return strconv.FormatFloat(v, 'f', p, 64) + suffix
+	}
 	for p := range 7 {
-		out = append(out, strconv.FormatFloat(v/unit, 'f', p, 64)+suffix)
+		out = append(out, at(v/unit, p, first, suffix))
 	}
 	if compact && (name == wire.PanelCPU || name == wire.PanelRequests) {
 		milli := "m"
@@ -221,7 +253,7 @@ func seriesWritings(name string, v float64, compact bool) []string {
 			milli = "m/s"
 		}
 		for p := range 4 {
-			out = append(out, strconv.FormatFloat(v*1000, 'f', p, 64)+milli)
+			out = append(out, at(v*1000, p, first-3, milli))
 		}
 	}
 	return out
@@ -467,7 +499,7 @@ func panelHead(p seriesPanel, in [][2]float64, now time.Time, width int, cells C
 	lo, hi := extremes(in)
 	newest := in[len(in)-1]
 	at := func(pt [2]float64) string { return clock(time.Unix(int64(pt[0]), 0), now, false) }
-	out := []Line{cutTo(field(p.label, own("newest "+SeriesValue(p.name, newest[1], false)+" at "+at(newest)+" ("+since(time.Unix(int64(newest[0]), 0), now)+")")), width, cells)}
+	out := []Line{cutTo(field(p.label, own("newest "+SeriesNewest(p.name, newest[1], hi[1], lo[1])+" at "+at(newest)+" ("+since(time.Unix(int64(newest[0]), 0), now)+")")), width, cells)}
 	if hi[1] == lo[1] {
 		// One value: said once.
 		v, _ := SeriesExtremes(p.name, hi[1], lo[1], false)
