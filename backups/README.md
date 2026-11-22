@@ -11,9 +11,10 @@ it.
 server: nothing here talks to motel, and `motel-backup` links no
 Caddy. Of the server it takes the declaration format
 (`liveswap/backupdecl`) and the wire types (`liveswap/wire`). The
-server validates a declaration, and beyond that only looks at the
-backups as `status` does (`backups/look`): for the alerts its monitor
-raises, and for a person with the viewer role on the box.
+server validates a declaration, and beyond that only reads: the
+record, with `status`'s verdict on it, for the alerts its monitor
+raises, and the look `status` takes (`backups/look`) for a person who
+may read the box.
 
 **This release carries setup, the engine, restore, the restore drill,
 the repository check, what says how they are doing, and the
