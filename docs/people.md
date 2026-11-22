@@ -263,9 +263,20 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   are as the app wrote them, for your terminal to be kept from.
 - Each line passes the app's filter on its own: the values of its
   `env_file` in the forms the box knows, and some shapes of
-  credential. `redacted_env` names the keys it replaced. Not a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started):
-  changing a value does not hide it in lines already written, so
-  revoke the old credential.
+  credential. `redacted_env` names the keys it replaced. The
+  filter knows the values the running app was launched with for as
+  long as it runs, after a moteld restart too (read back from
+  systemd), though the file was changed since: an old value still in
+  use stays hidden until the app is launched with the new one. Not a value no running instance was
+  launched with and the app's `env_file` no longer holds, in a line
+  written while it did (a logs read reaches lines of any age, and the
+  filter knows the file's values now, those moteld has read since it
+  started, and those of the instance it reattached to): changing a
+  value and launching the app again does not hide the old one in lines
+  already written, so revoke the old credential once the app runs
+  with the new one. Nor, for the moments after a moteld restart before
+  it has reattached to the app (longer while its user manager does not
+  answer), a value the running app holds that the file no longer does.
 - A logs reader who can send the app input (a request to its site, which
   most apps log) can test a guess of an `env_file` value: a line holding
   a whole value of 8 characters or more comes back as the marker that

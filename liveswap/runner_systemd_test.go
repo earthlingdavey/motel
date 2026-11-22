@@ -302,6 +302,11 @@ func TestSystemdRunnerStartBuildsUnit(t *testing.T) {
 	if strings.Join(u.Environment, ",") != "SOCKET=/var/lib/liveswap/demo/run/0a1b2c3d0a1b2c3d.sock" {
 		t.Fatalf("environment must be exactly the caller's env, got %v", u.Environment)
 	}
+	// A unit this process started reports no launch environment: the
+	// launch remembered what it rendered (handle.launchEnv).
+	if env := h.launchEnv(); env != nil {
+		t.Fatalf("a started handle reports a launch environment %q", env)
+	}
 	st := h.state()
 	if st.Unit != u.Name || st.PID != 4242 || st.StartedAt.IsZero() {
 		t.Fatalf("handle state %+v", st)
@@ -794,7 +799,8 @@ func TestSystemdRunnerReattach(t *testing.T) {
 	}
 
 	adopted := []string{"/opt/app/server", "--port=0"}
-	conn.setStatus("live.service", unitStatus{LoadState: "loaded", ActiveState: "active", SubState: "running", MainPID: 77, Sandboxed: true, ExecStart: adopted})
+	launched := []string{"API_TOKEN=launched-value-01", "SOCKET=/run/app.sock"}
+	conn.setStatus("live.service", unitStatus{LoadState: "loaded", ActiveState: "active", SubState: "running", MainPID: 77, Sandboxed: true, ExecStart: adopted, Environment: launched})
 	h, ok, err := r.Reattach(handleState{Unit: "live.service", StartedAt: started})
 	if !ok || err != nil {
 		t.Fatalf("running unit must be adopted: ok=%v err=%v", ok, err)
@@ -807,6 +813,11 @@ func TestSystemdRunnerReattach(t *testing.T) {
 	// status would report nothing for every app across a restart.
 	if st := h.state(); !slices.Equal(st.Command, adopted) {
 		t.Fatalf("a reattached handle must report the unit's command %v, got %v", adopted, st.Command)
+	}
+	// The same for the environment it was launched with: the values the
+	// running app holds, which the response filter must know (#657).
+	if got := h.launchEnv(); !slices.Equal(got, launched) {
+		t.Fatalf("a reattached handle must report the unit's environment %q, got %q", launched, got)
 	}
 	// A running unit WITHOUT the sandbox is never adopted: nothing
 	// this moteld starts lacks it, so it is something else's unit —
@@ -950,6 +961,29 @@ func TestStatusFromPropsAndStopBudget(t *testing.T) {
 	}
 	if (unitStatus{}).stopBudget(0) != defaultStopTimeout {
 		t.Fatal("unknown budget and zero grace must fall back to the default")
+	}
+}
+
+// TestStatusFromPropsEnvironment: the unit's Environment, an "as" that
+// godbus decodes as a []string, is read as the manager gave it, every
+// pair in its order: a repeated key twice, an empty value, a value
+// holding = whole. It is what a reattach hands the response filter
+// (#657), so a pair dropped here is a value sent as written. Any other
+// shape is no environment, never a panic.
+func TestStatusFromPropsEnvironment(t *testing.T) {
+	env := []string{"API_TOKEN=one-value-0001", "EMPTY=", "DSN=user=app password=p=q", "API_TOKEN=two-value-0002", "SOCKET=/run/app.sock"}
+	st := statusFromProps(map[string]any{"Environment": env})
+	if !slices.Equal(st.Environment, env) {
+		t.Fatalf("Environment read as %q, want %q", st.Environment, env)
+	}
+	env[0] = "API_TOKEN=changed"
+	if st.Environment[0] != "API_TOKEN=one-value-0001" {
+		t.Fatal("the environment read must be a copy of the manager's")
+	}
+	for _, v := range []any{nil, "API_TOKEN=x", []any{"API_TOKEN=x"}, [][]string{{"API_TOKEN=x"}}, []string{}} {
+		if got := statusFromProps(map[string]any{"Environment": v}).Environment; got != nil {
+			t.Errorf("%#v read as %q, want nothing", v, got)
+		}
 	}
 }
 

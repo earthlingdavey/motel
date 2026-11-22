@@ -144,6 +144,12 @@ type unitStatus struct {
 	// ExecStart is the argv the manager runs, read back rather than
 	// remembered — which is also what makes it right after a Reattach.
 	ExecStart []string
+	// Environment is the unit's own Environment=, KEY=VALUE pairs as
+	// the manager holds them (not its defaults, which apply at exec):
+	// the environment the caller built for the launch. Reattach hands
+	// it to the app for the response filter (handle.launchEnv). It
+	// holds env_file values: never logged, never in handleState.
+	Environment []string
 	// ExecMainCode/Status describe how the main process ended, with
 	// waitid semantics: code 1 = exited (status is the exit code),
 	// 2 = killed and 3 = dumped (status is the signal number).
@@ -305,7 +311,13 @@ type systemdHandle struct {
 	capsLock    sync.Mutex
 	done        chan struct{}
 	exit        atomic.Pointer[unitStatus] // final status, set before done closes
+	// env is the unit's environment as read at reattach (launchEnv);
+	// nil for a unit this process started. Written once, before the
+	// handle is shared.
+	env []string
 }
+
+func (h *systemdHandle) launchEnv() []string { return h.env }
 
 func (h *systemdHandle) state() handleState {
 	st := handleState{PID: int(h.pid.Load()), StartedAt: h.startedAt, Unit: h.unit}
@@ -1225,7 +1237,10 @@ func (r *systemdRunner) Reattach(st handleState) (handle, bool, error) {
 			}
 			return nil, false, nil
 		}
-		h := &systemdHandle{unit: st.Unit, startedAt: st.StartedAt, stopTimeout: us.StopTimeout, done: make(chan struct{})}
+		// env: what the instance was launched with, which a moteld
+		// that did not launch it knows from nowhere else, and the
+		// env_file may no longer hold (#657).
+		h := &systemdHandle{unit: st.Unit, startedAt: st.StartedAt, stopTimeout: us.StopTimeout, done: make(chan struct{}), env: us.Environment}
 		h.pid.Store(int64(us.MainPID))
 		h.setArgv(us.ExecStart)
 		// The caps the unit was started with, which a config changed

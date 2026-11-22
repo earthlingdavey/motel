@@ -777,6 +777,7 @@ func statusFromProps(props map[string]any) unitStatus {
 		MainPID:        propInt(props, "MainPID"),
 		ExecMainPID:    propInt(props, "ExecMainPID"),
 		ExecStart:      propExecStart(props),
+		Environment:    propStrings(props, "Environment"),
 		Sandboxed:      propYes(props, "PrivateUsers") && propYes(props, "PrivatePIDs"),
 		ExecMainCode:   propInt(props, "ExecMainCode"),
 		ExecMainStatus: propInt(props, "ExecMainStatus"),
@@ -850,6 +851,14 @@ func (c *userManagerClient) ListUnits(ctx context.Context, pattern string) ([]un
 func propString(props map[string]any, key string) string {
 	s, _ := props[key].(string)
 	return s
+}
+
+// propStrings reads an "as" property as godbus decodes it, a []string,
+// as a copy: every entry as the manager gave it, in its order, a
+// repeated key and an empty value included. Any other shape is nothing.
+func propStrings(props map[string]any, key string) []string {
+	s, _ := props[key].([]string)
+	return append([]string(nil), s...)
 }
 
 // propYes reads a namespace property as "in effect". PrivateUsers= is

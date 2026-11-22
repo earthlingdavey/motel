@@ -488,6 +488,10 @@ func pauseJournald(t *testing.T) (resume func()) {
 func TestIntegrationSystemdReattachAdoptsLiveUnit(t *testing.T) {
 	r1 := integrationRunner(t)
 	spec := scriptApp(t, workerTree)
+	// What an env_file can put there: a value (made up), an empty one,
+	// one that holds =. A key twice is no case: the manager refuses
+	// such a block at the start ("Invalid environment block").
+	spec.env = append(spec.env, "API_TOKEN=old-token-0123456789", "EMPTY=", "DSN=user=app password=p=q") // gitleaks:allow
 	h1, err := r1.Start(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -522,6 +526,16 @@ func TestIntegrationSystemdReattachAdoptsLiveUnit(t *testing.T) {
 	// or status would go blank for every app across a moteld restart.
 	if !slices.Equal(h2.state().Command, st.Command) {
 		t.Fatalf("adopted handle reports command %v, want the running unit's %v", h2.state().Command, st.Command)
+	}
+	// And the environment it was launched with, read back from the
+	// manager's Environment property as launched: the values the app
+	// holds, which the response filter knows from nowhere else after a
+	// restart (#657). A shape the decoder does not read would be none.
+	if got := h2.launchEnv(); !slices.Equal(got, spec.env) {
+		t.Fatalf("adopted handle reports environment %q, want the launch's %q", got, spec.env)
+	}
+	if h1.launchEnv() != nil {
+		t.Fatalf("a handle this runner started reports a launch environment %q", h1.launchEnv())
 	}
 	if err := r2.Stop(h2, spec.grace); err != nil {
 		t.Fatalf("Stop via adopter: %v", err)
