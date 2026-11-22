@@ -261,6 +261,10 @@ type engine struct {
 	// heartbeat's hold (channelfailed.go).
 	untold  map[string]*untold
 	metrics func(context.Context) ([]byte, error)
+	// failureCopies is Alertmanager's ChannelFailed copies naming one
+	// channel as their suspect, each by its labels, which a delivered
+	// test resolves (endTestedCopy): amClient's, a test seam.
+	failureCopies func(ctx context.Context, ch string) ([]map[string]string, error)
 
 	failures *failCounter
 
@@ -993,7 +997,7 @@ func (e *engine) point(a *App, post poster, known []string, logger *zap.Logger) 
 	e.active, e.post, e.known, e.logger = a, post, known, logger
 	e.deploySucceeded = a.deploySucceeded()
 	if c, ok := post.(*amClient); ok {
-		e.metrics = c.metrics
+		e.metrics, e.failureCopies = c.metrics, c.failureCopies
 	}
 	e.fail.operator, e.fail.channels = nil, a.receivers
 	e.fail.kinds = map[string]string{}

@@ -343,6 +343,7 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 		}
 		if after.delivered(before) {
 			res.Delivered = true
+			e.endTestedCopy(ctx, req.Channel)
 			return writeJSON(w, res)
 		}
 		if after.failed > before.failed {

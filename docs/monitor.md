@@ -622,7 +622,11 @@ journal says why:
 Mend the channel, then `moteld monitor test ops`: the pings start again
 within a minute (`monitor: heartbeat resumed`), whether or not mending
 the URL reloaded Alertmanager. A reload that takes the channel out, or a
-restart of moteld, resumes them too. A second
+restart of moteld, resumes them too. The test's delivery also ends the
+failure's row in `GET /_motel/alerts` (the TUI), after a restart of
+moteld too; without the test, a row can stay up to 15 minutes after a
+restart. With the metrics package and a second operator channel that
+takes warnings, the row stays its 15 minutes either way. A second
 operator channel that takes warnings is still the better answer: it
 names the failure, where the dead-man check can only say the box is
 down.

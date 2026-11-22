@@ -120,6 +120,32 @@ func (c *amClient) postAlerts(ctx context.Context, alerts []amAlert) error {
 }
 
 // metrics is Alertmanager's own /metrics, which channel_failed reads.
+// failureCopies is every ChannelFailed Alertmanager holds whose
+// suspects are ch alone, each by its labels: the copies addressed to
+// channels whoever they were (a channel a load has since taken out or
+// set to criticals alone too) and the read-only one, whatever its
+// integration.
+func (c *amClient) failureCopies(ctx context.Context, ch string) ([]map[string]string, error) {
+	q := url.Values{"filter": {fmt.Sprintf("alertname=%q", alertChannelFailed), fmt.Sprintf("suspects=%q", ch)}}
+	data, err := c.do(ctx, http.MethodGet, "/api/v2/alerts?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var held []struct {
+		Labels map[string]string `json:"labels"`
+	}
+	if err := json.Unmarshal(data, &held); err != nil {
+		return nil, fmt.Errorf("alertmanager at %s: GET /api/v2/alerts: %w", c.socket, err)
+	}
+	out := make([]map[string]string, 0, len(held))
+	for _, h := range held {
+		if h.Labels["alertname"] == alertChannelFailed && h.Labels["suspects"] == ch {
+			out = append(out, h.Labels)
+		}
+	}
+	return out, nil
+}
+
 func (c *amClient) metrics(ctx context.Context) ([]byte, error) {
 	return c.do(ctx, http.MethodGet, "/metrics", nil)
 }

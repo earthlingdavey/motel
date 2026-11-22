@@ -210,14 +210,7 @@ func (e *engine) scrapeFailed(ctx context.Context, read func(context.Context) ([
 		e.logger.Warn("monitor: channel failed", append(fields, zap.Strings("told", to))...)
 		alerts := make([]amAlert, 0, len(to)+1)
 		for _, ch := range to {
-			alerts = append(alerts, amAlert{
-				Labels: map[string]string{
-					"alertname": alertChannelFailed, labelChannel: ch, "severity": SeverityWarning,
-					"subject": "box", "integration": s.integration, "suspects": strings.Join(sus, ","),
-				},
-				Annotations: map[string]string{"summary": summary},
-				StartsAt:    now, EndsAt: now.Add(channelFailedLife),
-			})
+			alerts = append(alerts, failureCopy(ch, s.integration, sus, summary, now, now))
 		}
 		// A record standing across a load that gave its failure channels
 		// to tell keeps what it told them, to resolve with its copy: the
@@ -247,9 +240,17 @@ func (e *engine) scrapeFailed(ctx context.Context, read func(context.Context) ([
 // integration, so the copy moves none of the counters a rise or a
 // hold's end is read from.
 func readOnlyCopy(integration string, sus []string, summary string, start, now time.Time) amAlert {
+	return failureCopy(readOnlyChannel, integration, sus, summary, start, now)
+}
+
+// failureCopy is one ChannelFailed of a failure: addressed to channel ch
+// (route 2's leaf for it), or to readOnlyChannel, its read-only copy.
+// One builder for both, which vmalert's rules copy the labels of and
+// endTestedCopy resolves by.
+func failureCopy(ch, integration string, sus []string, summary string, start, now time.Time) amAlert {
 	return amAlert{
 		Labels: map[string]string{
-			"alertname": alertChannelFailed, labelChannel: readOnlyChannel, "severity": SeverityWarning,
+			"alertname": alertChannelFailed, labelChannel: ch, "severity": SeverityWarning,
 			"subject": "box", "integration": integration, "suspects": strings.Join(sus, ","),
 		},
 		Annotations: map[string]string{"summary": summary},
@@ -453,6 +454,77 @@ func (e *engine) refreshUntold(key string, u *untold, integration, summary strin
 		e.endCopy(key, u, now)
 	}
 	u.integration, u.summary = integration, summary
+}
+
+// endTestedCopy is a delivered `moteld monitor test <ch>`'s, posted
+// after every one: the copies of a failure whose one suspect is ch are
+// resolved. They are the read-only one and the one addressed to each
+// other operator channel (which the read folds under it, and would show
+// once it is gone), their labels built by failureCopy from the
+// channel's name and its integration as the config being served has
+// it, as the failure's own posts build them; and every such copy
+// Alertmanager holds, by its own labels, so that one addressed to a
+// channel a load has since taken out or set to criticals alone, or a
+// read-only one of the channel's kind before a load, ends too. It needs
+// no record in memory, so a channel mended and tested after a restart
+// of moteld, which drops the records, has its row end too. A copy
+// naming several suspects (a counter that names no receiver) is not one
+// of these, and is left to its record or its 15 minutes. With the
+// metrics package and another operator channel to tell, nothing is
+// resolved: vmalert's rules post the addressed copies again at each
+// evaluation while their window holds the failure, and with the
+// read-only copy gone the read would list each of them, unfolded, and
+// ring. The addressed copies' receivers send no resolved, so no channel
+// hears it; Alertmanager holds a resolve of an alert it does not hold
+// as resolved, which no read lists, and the resolve carries no summary
+// of its own. It goes through the queue, behind any re-post of the copy
+// queued before it.
+func (e *engine) endTestedCopy(ctx context.Context, ch string) {
+	e.mu.Lock()
+	served := e.active
+	integration, ok := e.fail.kinds[ch]
+	others := slices.DeleteFunc(slices.Clone(e.fail.operator), func(c string) bool { return c == ch })
+	skip := served == nil || !ok || len(others) > 0 && served.Metrics != nil
+	held, logger := e.failureCopies, e.logger
+	e.mu.Unlock()
+	if skip {
+		return // no longer a channel of the config served, or vmalert's to post again
+	}
+	labels := map[string]map[string]string{}
+	add := func(l map[string]string) {
+		ks := slices.Sorted(maps.Keys(l))
+		var b strings.Builder
+		for _, k := range ks {
+			b.WriteString(k + "\x00" + l[k] + "\x00")
+		}
+		labels[b.String()] = l
+	}
+	for _, to := range append([]string{readOnlyChannel}, others...) {
+		add(failureCopy(to, integration, []string{ch}, "", time.Time{}, time.Time{}).Labels)
+	}
+	if held != nil {
+		got, err := held(ctx, ch)
+		if err != nil {
+			// The built ones still go: what the served config would post.
+			logger.Debug("monitor: reading the ChannelFailed copies a test ends", zap.String("channel", ch), zap.Error(err))
+		}
+		for _, l := range got {
+			add(l)
+		}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.active != served {
+		// A load or notify's stop during the read: what was checked is
+		// another config's, and a stopped engine's queue is not posted.
+		return
+	}
+	now := e.now()
+	ended := make([]amAlert, 0, len(labels))
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		ended = append(ended, amAlert{Labels: labels[k], StartsAt: now, EndsAt: now})
+	}
+	e.enqueue(&pending{key: "notify/box/channel_failed/" + ch + "/tested", first: now, alerts: ended})
 }
 
 // endCopy posts u's read-only copy resolved. With mu held.
