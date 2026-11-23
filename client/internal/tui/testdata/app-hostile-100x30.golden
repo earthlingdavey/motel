@@ -1,7 +1,7 @@
 ✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the … live · 0s ago
 apps › hostile                                                           as of 14:12:40 UTC · 0s ago
 state       running v6 · pid 41233 · unit motel-hostile.v6.3f9a0c21d4e8b7a6.service
-alerts      2 held · as of 0s ago
+alerts      as of 0s ago · 2 held
             all: motel monitor alerts --box deploy.example.com --app hostile
 alert       x\x1b[2J[red]FAKE[-] · critical\x1b]0;pwned\x07 · active[green]ok[-] · since 1m ago (14…
 summary     start failed: \x1b[2J\x1b[H\x1b]0;motel: all healthy\x07 [:::https://evil.example/tag]m…

@@ -155,8 +155,11 @@ func TestClockStepsBackAges(t *testing.T) {
 			}
 			now = now.Add(10 * time.Minute)
 			ages := func() []string {
+				// The age alone: a step back past WakeAfter is a wake, after
+				// which a crumb says stale beside it.
 				age := func(l model.Line) string {
 					_, a, _ := strings.Cut(l.Text(), " · ")
+					a, _, _ = strings.Cut(a, " · ")
 					return a
 				}
 				return []string{
