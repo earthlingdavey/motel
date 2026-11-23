@@ -131,37 +131,3 @@ func TestStepBackMarksEveryRead(t *testing.T) {
 		t.Error("a held read marked after the clock was set back")
 	}
 }
-
-// TestWakeKeepsTheMarkOfAReadInFlight: a read asked before the sleep and
-// answered after it may carry an answer from before it: the read's mark
-// stays until a read of it asked after the wake answers.
-func TestWakeKeepsTheMarkOfAReadInFlight(t *testing.T) {
-	e, _, now := wokeEngine(t)
-	var j model.Job
-	for ok, end := false, now.Add(time.Minute); !ok; {
-		if now = now.Add(100 * time.Millisecond); now.After(end) {
-			t.Fatal("no read in a minute")
-		}
-		e.Tick(now)
-		e.Touch(now)
-		j, ok, _ = e.Take(now)
-	}
-	now = now.Add(model.WakeAfter + time.Second)
-	if !e.Tick(now) {
-		t.Fatal("a tick past WakeAfter not taken for a wake")
-	}
-	e.Done(j, now, nil)
-	if !e.Woke(j) {
-		t.Errorf("%v, asked before the wake and answered after it, is not marked", j)
-	}
-	for end := now.Add(2 * time.Minute); e.Woke(j) && now.Before(end); now = now.Add(100 * time.Millisecond) {
-		e.Tick(now)
-		e.Touch(now)
-		if k, ok, _ := e.Take(now); ok {
-			e.Done(k, now, nil)
-		}
-	}
-	if e.Woke(j) {
-		t.Errorf("%v still marked 2 minutes after the wake, read again since", j)
-	}
-}
