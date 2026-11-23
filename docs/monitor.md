@@ -1075,7 +1075,9 @@ the store) and missed (the store took no push of motel's for them):
   `p95`; the old release's `previous_responses` when that check read
   it, which it does only when the new one was over a bound and there
   was a release before it, and its `previous_5xx_share` and
-  `previous_p95` when it sent enough to compare.
+  `previous_p95` when it sent enough to compare. Either window line
+  comes within 10 s of the last check, and a deploy before then still
+  gets it.
 - `monitor rules: the post-deploy comparison ended with its window
   having judged no check: none weighed a bound`,
   with the last skipped check's `responses` (and `responses_timed`
@@ -1085,7 +1087,8 @@ the store) and missed (the store took no push of motel's for them):
   check's numbers, beside the event's own `monitor: event` line, which
   says what became of it.
 - `monitor rules: a new deploy, rollback or relaunch ends the
-  post-deploy comparison in flight`, naming the release it ended, the
+  post-deploy comparison in flight`, when checks were still to come,
+  naming the release it ended, the
   `new_release`, and whether it is a `relaunch` (of a release whose
   instance had stopped, the same release among them).
 - `monitor rules: the post-deploy comparison ended: the config it now
