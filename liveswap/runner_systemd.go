@@ -94,7 +94,18 @@ type systemdConn interface {
 	// UnitStatus reads the unit's load/active state and, for a loaded
 	// service, its main PID and exit facts. A unit the manager no
 	// longer knows is reported with LoadState "not-found", not an error.
+	// Never its environment, which holds env_file values: a status is
+	// read on every poll, stop and sweep, and kept (systemdHandle.exit).
 	UnitStatus(ctx context.Context, name string) (unitStatus, error)
+	// UnitStatusAndEnvironment is UnitStatus plus the unit's own
+	// Environment=, KEY=VALUE pairs as the manager holds them (not its
+	// defaults, which apply at exec): the environment the caller built
+	// for the launch, from the same single read, so a read that fails
+	// fails for both. A property missing or of a shape not read is no
+	// environment (nil), on a read that succeeded. Reattach alone calls
+	// it, for the response filter (handle.launchEnv); the pairs hold
+	// env_file values, so they are never logged nor kept elsewhere.
+	UnitStatusAndEnvironment(ctx context.Context, name string) (unitStatus, []string, error)
 	// ResetFailedUnit clears a failed unit so the manager unloads it.
 	ResetFailedUnit(ctx context.Context, name string) error
 	// ListUnits returns the loaded units whose names match the glob.
@@ -305,7 +316,13 @@ type systemdHandle struct {
 	capsLock    sync.Mutex
 	done        chan struct{}
 	exit        atomic.Pointer[unitStatus] // final status, set before done closes
+	// env is the unit's environment as read at reattach (launchEnv),
+	// the one place it is kept; nil for a unit this process started.
+	// Written once, before the handle is shared.
+	env []string
 }
+
+func (h *systemdHandle) launchEnv() []string { return h.env }
 
 func (h *systemdHandle) state() handleState {
 	st := handleState{PID: int(h.pid.Load()), StartedAt: h.startedAt, Unit: h.unit}
@@ -538,11 +555,41 @@ func unitNonce(name string) (string, bool) {
 // missing or non-executable binary into a clear Start error instead of
 // a unit that fails a moment later at the sibling shell's exec (exit
 // status 127, "not found" in the journal).
-func resolveCommand(cmd, dir string) (string, error) {
-	if strings.Contains(cmd, "/") && !filepath.IsAbs(cmd) {
-		cmd = filepath.Join(dir, cmd)
+//
+// A name without a slash is looked up in the PATH the unit's own
+// environment carries (env), whichever layer set it, not in moteld's:
+// the unit execs the path resolved here, so an env_file's PATH must be
+// what chooses it, as it is for the app's own children (#666). With
+// no PATH in env, or moteld's own, exec.LookPath as before.
+func resolveCommand(cmd, dir string, env []string) (string, error) {
+	if strings.Contains(cmd, "/") {
+		if !filepath.IsAbs(cmd) {
+			cmd = filepath.Join(dir, cmd)
+		}
+		return exec.LookPath(cmd)
 	}
-	return exec.LookPath(cmd)
+	path, set := "", false
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			path, set = v, true
+		}
+	}
+	if !set || path == os.Getenv("PATH") {
+		return exec.LookPath(cmd)
+	}
+	for _, d := range filepath.SplitList(path) {
+		// A relative entry is skipped, as exec.LookPath refuses a
+		// result relative to the working directory (exec.ErrDot).
+		if !filepath.IsAbs(d) {
+			continue
+		}
+		if p, err := exec.LookPath(filepath.Join(d, cmd)); err == nil {
+			return p, nil
+		}
+	}
+	// The PATH is not printed: one an env_file sets is a secret like
+	// every value there, and this goes to the journal and the 422.
+	return "", fmt.Errorf("exec: %q: executable file not found in the PATH the app's env_file or inline env sets", cmd)
 }
 
 // resolveInView is the part of a launch that can be checked before a
@@ -557,7 +604,7 @@ func resolveInView(spec startSpec) (argv0, target string, err error) {
 	if spec.sandbox == nil {
 		return "", "", fmt.Errorf("unit for app %s %s has no sandbox spec: every app unit is sandboxed, so this is a caller bug", spec.app, spec.version)
 	}
-	argv0, err = resolveCommand(spec.command[0], spec.dir)
+	argv0, err = resolveCommand(spec.command[0], spec.dir, spec.env)
 	if err != nil {
 		// A command that is not there, or not executable: the release
 		// as shipped, or the command as configured — the deployer's.
@@ -721,12 +768,18 @@ func (r *systemdRunner) unitFor(spec startSpec, oneshot bool) (unitSpec, error) 
 	// env, so an operator may point it elsewhere on purpose. One
 	// pointed outside the view is allowed and reported: it is the
 	// difference between "npm failed" and "npm's HOME was never in
-	// my view".
+	// my view". The value is not printed: one an env_file sets is a
+	// secret like every value there, and moteld's journal is not a
+	// place an env_file value is held (DESIGN-threat-model.md).
 	if home, outside := homeOutsideView(spec.env, spec.sandbox); outside {
-		r.log().Warn("HOME is set to a path the sandbox does not bind; it does not exist inside the unit",
+		msg := "HOME is set to a path the sandbox does not bind: it does not exist inside the unit"
+		effect := "any runtime that touches $HOME (npm, corepack, pip) will fail with ENOENT naming no cause"
+		if home == "" {
+			msg, effect = "HOME is set empty: it names no directory", "what a runtime makes of an empty HOME is that runtime's own"
+		}
+		r.log().Warn(msg,
 			zap.String("app", spec.app),
-			zap.String("home", home),
-			zap.String("effect", "any runtime that touches $HOME (npm, corepack, pip) will fail with ENOENT naming no cause"),
+			zap.String("effect", effect),
 			zap.String("fix", "leave HOME unset to get the app's shared dir, the one writable persistent path in the view"))
 	}
 	desc := "motel app " + spec.app + " " + spec.version
@@ -1178,7 +1231,12 @@ func (r *systemdRunner) Reattach(st handleState) (handle, bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(r.ctx, startJobTimeout)
 	defer cancel()
-	us, err := r.conn.UnitStatus(ctx, st.Unit)
+	// The environment comes with the status, in one read: a read that
+	// fails is the caller's retry, never an adoption whose environment
+	// went unread (#657). One that reads none (a property missing, a
+	// shape not read) adopts with none, and the app's filter says so
+	// and knows the file as it is now (rememberRunningEnv).
+	us, env, err := r.conn.UnitStatusAndEnvironment(ctx, st.Unit)
 	if err != nil {
 		return nil, false, fmt.Errorf("reading recorded unit %s: %w", st.Unit, err)
 	}
@@ -1225,7 +1283,10 @@ func (r *systemdRunner) Reattach(st handleState) (handle, bool, error) {
 			}
 			return nil, false, nil
 		}
-		h := &systemdHandle{unit: st.Unit, startedAt: st.StartedAt, stopTimeout: us.StopTimeout, done: make(chan struct{})}
+		// env: what the instance was launched with, which a moteld
+		// that did not launch it knows from nowhere else, and the
+		// env_file may no longer hold (#657).
+		h := &systemdHandle{unit: st.Unit, startedAt: st.StartedAt, stopTimeout: us.StopTimeout, done: make(chan struct{}), env: env}
 		h.pid.Store(int64(us.MainPID))
 		h.setArgv(us.ExecStart)
 		// The caps the unit was started with, which a config changed

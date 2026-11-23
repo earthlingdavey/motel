@@ -25,11 +25,11 @@ func TestWideSummaryCut(t *testing.T) {
 		}
 		f.Body("apps.json", `{"apps":[`+strings.Join(apps, ",")+`]}`)
 	})
-	// Every row read once, then a wake: every row still being read is
-	// stale until read again.
+	// Every app's read is set to fail, so none is ever answered: after
+	// the walk and ten minutes with none answered, all 200 rows are
+	// stale. (A wake through the screen is TestRunNoticesASleep's.)
 	h.walk(6*time.Minute, model.Job{})
 	h.now = h.now.Add(10 * time.Minute)
-	h.on(func() { h.u.S.Engine.Tick(h.now) })
 	h.press("/", "app", tcell.KeyEnter)
 	crumb := screenRows(h)[1]
 	if !strings.Contains(crumb.text, "200 of 200 apps · 200 need a look · ") || !strings.Contains(crumb.text, " stale · by") || crumb.end > 60 {

@@ -324,12 +324,21 @@ Properties that matter to the model:
   withheld, with the keys still reported; and while an app's
   `env_file` cannot be read, its values are unknown to the filter and
   every body that holds anything of that app's is withheld rather than
-  sent through the heuristics alone. What the filter does **not** promise: an encoding not in
+  sent through the heuristics alone. The values the running instance
+  was launched with are known whatever the file holds now: a launch
+  remembers what it read, and after a moteld restart the reattach
+  reads the unit's environment back from systemd (every pair but those
+  motel puts there itself and the inline `env` lines as the config has
+  them now), in memory only; they stand in for no file that cannot be
+  read, since the journal also holds lines of units the reattach did
+  not read. What the filter does **not** promise: an encoding not in
   the list, a value under 8 characters, a secret split across lines,
   a secret the app fetched at runtime and printed in a low-entropy
   form, an inline `env` value (not a secret by policy: the Caddyfile
   is in a repo), a value the still-running instance was launched
-  with before a moteld restart if the file has changed since, or a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started). Nor that
+  with while moteld, started again, has not yet reattached to it (its
+  user manager not answering: the recovery's backoff) if the file has
+  changed since, or a value no instance running now was launched with and the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows the file's values now, those moteld has read since it started, and those of the instance it reattached to). Nor that
   a deploy source cannot confirm a guess of a value: a deploy's
   refusals echo its version and URL through the app's filter, and a
   version it deploys is named in the status; it can read the app's
@@ -681,20 +690,22 @@ is closed by the unit's limit — enforced by the kernel under a file
   `systemctl --user -M motel@ show -p Environment <unit>` (as that
   uid or as root; a bare `--user` targets the caller's own manager). A
   key that inline `env` or the injected `SOCKET` also sets is not
-  here: `buildEnvFull` (liveswap/app.go) emits both and the manager
-  keeps the last.
+  here, nor the earlier line of a key the file sets twice:
+  `buildEnvFull` (liveswap/app.go) hands the manager only a key's
+  last pair, the highest layer's.
 - **The transient unit file** the manager writes under
-  `/run/user/<uid>/systemd/transient/`, which carries the un-merged
-  `Environment=` line — overridden values included — until the unit
-  is garbage-collected.
+  `/run/user/<uid>/systemd/transient/`, which carries the same
+  `Environment=` pairs until the unit is garbage-collected.
 - **The running app's `/proc/<pid>/environ`.** The user-namespace
   closure measured on the spike ("The shared-UID rule", below) runs
   the other way, app to supervisor; this direction follows from the
   same `ptrace_may_access` rule, since the app's namespace is owned by
   the motel uid, which holds `CAP_SYS_PTRACE` in it. Not measured.
 - **moteld's own memory**, which keeps every value it has read — for
-  a launch, or for the response filter, which reads the file without
-  one (`managedApp.secrets` and `redactorFor`, liveswap/app.go) — for
+  a launch, for the response filter, which reads the file without
+  one (`managedApp.secrets` and `redactorFor`, liveswap/app.go), or
+  from the unit's property above at a reattach after a moteld restart
+  (`rememberRunningEnv`, the same read of the first route) — for
   as long as the app stays configured, behind the non-dumpable floor.
 - **Not a core dump.** App units run with `LimitCORE=0` on both the
   soft and the hard limit (`unitProperties`, liveswap/systemd_dbus.go),
@@ -1659,7 +1670,7 @@ does not isolate the runtime.
   `env_file` values in the forms it knows and some shapes of
   credential, and nothing else (a value escaped as another runtime
   escapes it, one split across two lines, journald's 48 KiB split
-  among them, one under 8 characters, another app's, and a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started)):
+  among them, one under 8 characters, another app's, and a value no instance running now was launched with and the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows the file's values now, those moteld has read since it started, and those of the instance it reattached to)):
   changing a value does not hide it in lines already written, so
   revoke the old credential. Who reads is the
   safeguard: the operator's grant, its `from` list, and the journal

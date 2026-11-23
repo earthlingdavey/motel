@@ -523,22 +523,376 @@ func TestPostDeployANewDeployCancels(t *testing.T) {
 	}
 }
 
-func TestPostDeployWindowEndsSilently(t *testing.T) {
+// noDeployedBy is that no line, at any level, carries who deployed.
+func noDeployedBy(t *testing.T, logs *observer.ObservedLogs) {
+	t.Helper()
+	for _, l := range logs.AllUntimed() {
+		for k, v := range l.ContextMap() {
+			if s, _ := v.(string); k == "deployed_by" || strings.Contains(s, "local:/k.pub") {
+				t.Errorf("%q carries who deployed: %s=%v", l.Message, k, v)
+			}
+		}
+	}
+}
+
+// checkCounts is a line's checks judged, skipped and missed.
+func checkCounts(fields map[string]any) [3]any {
+	return [3]any{fields["checks_judged"], fields["checks_skipped"], fields["checks_missed"]}
+}
+
+// infoLine is the one line at Info with message msg, its fields; and
+// no line, at any level, carries who deployed.
+func infoLine(t *testing.T, logs *observer.ObservedLogs, msg string) map[string]any {
+	t.Helper()
+	noDeployedBy(t, logs)
+	lines := logs.FilterMessage(msg).AllUntimed()
+	if len(lines) != 1 || lines[0].Level != zap.InfoLevel {
+		t.Fatalf("%d lines %q, want one at Info: %+v", len(lines), msg, logs.AllUntimed())
+	}
+	return lines[0].ContextMap()
+}
+
+func wantFields(t *testing.T, got, want map[string]any) {
+	t.Helper()
+	if !maps.Equal(got, want) {
+		t.Errorf("fields =\n%v\nwant\n%v", got, want)
+	}
+}
+
+const (
+	lineStarts     = "monitor rules: the post-deploy comparison starts"
+	lineHeld       = "monitor rules: the post-deploy comparison ended with its window: the release held"
+	lineHeldFailed = "monitor rules: the post-deploy comparison ended with its window: the release held, though its last judged check failed"
+	lineJudgedNone = "monitor rules: the post-deploy comparison ended with its window having judged no check: none weighed a bound"
+	lineReplaced   = "monitor rules: a new deploy, rollback or relaunch ends the post-deploy comparison in flight"
+	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config it now follows has no post_deploy rule for the app"
+	lineRegressed  = "monitor rules: the post-deploy comparison ended: the release failed its checks, reported as post_deploy_regressed"
+)
+
+// A comparison that starts says so at Info, once, with the rule's
+// bounds as it holds them (#511).
+func TestPostDeploySaysItStarts(t *testing.T) {
+	tc := newTestComparator(t, regressRule)
+	tc.deploy("blog", "v2", "v1")
+	wantFields(t, infoLine(t, tc.logs, lineStarts), map[string]any{
+		"app": "blog", "release": "v2", "previous": "v1", "relaunch": false, "rule": "regress",
+		"window": 5 * time.Minute, "max_5xx_share": 0.02, "max_p95": 800 * time.Millisecond,
+		"min_requests": int64(100), "failures": int64(2),
+	})
+	// A first deploy names no release before it; a bound not set is
+	// not said; the defaults are.
+	own := Rule{Name: "shop_regress", Kind: rulePostDeploy, App: "shop", MaxP95: caddyMs(100)}
+	first := newTestComparator(t, own)
+	first.deploy("shop", "s1", "")
+	wantFields(t, infoLine(t, first.logs, lineStarts), map[string]any{
+		"app": "shop", "release": "s1", "relaunch": false, "rule": "shop_regress",
+		"window": defaultWindow, "max_p95": 100 * time.Millisecond,
+		"min_requests": int64(defaultPostDeployMin), "failures": int64(defaultFailures),
+	})
+	// A relaunch after a stop says it is one.
+	re := newTestComparator(t, regressRule)
+	re.relaunch("shop", "s1", "")
+	if got := infoLine(t, re.logs, lineStarts); got["relaunch"] != true {
+		t.Errorf("a relaunch after a stop: %v", got)
+	}
+}
+
+// The window's end says the release held, at Info, with how many checks
+// were judged and the numbers of the last; with the old release's when
+// that check read them. No event, no more queries.
+func TestPostDeployWindowEndsWithNoEvent(t *testing.T) {
 	r := regressRule
 	r.Window, r.Failures = caddyMinutes(3), 3
 	tc := newTestComparator(t, r)
 	tc.deploy("blog", "v2", "v1")
+	tc.store.set("v1 old", 200, 2, 0.1)
 	tc.store.set("v2", 200, 0, 0.1)
-	for range 3 {
-		tc.minute()
-	}
+	tc.minute()
+	tc.minute()
+	tc.store.set("v2", 200, 20, 0.1) // over max_5xx_share: the old release is read
+	tc.minute()
 	if len(tc.runs) != 1 {
 		t.Fatal("ended before its window")
+	}
+	if tc.logs.FilterMessageSnippet("ended").Len() != 0 {
+		t.Fatalf("an end said before the window's: %+v", tc.logs.FilterMessageSnippet("ended").AllUntimed())
 	}
 	n := len(tc.store.queries)
 	tc.minute()
 	if len(tc.runs) != 0 || len(tc.evs) != 0 || len(tc.store.queries) != n {
 		t.Fatalf("after the window: %d in flight, %d events, %d more queries", len(tc.runs), len(tc.evs), len(tc.store.queries)-n)
+	}
+	// Its last check failed, short of failures in a row: said so.
+	wantFields(t, infoLine(t, tc.logs, lineHeldFailed), map[string]any{
+		"app": "blog", "release": "v2", "checks_judged": int64(3), "checks_skipped": int64(0), "checks_missed": int64(0),
+		"failing_in_a_row": int64(1), "last_check": 3 * time.Minute, "responses": int64(200), "5xx_share": 0.1,
+		"p95": 100 * time.Millisecond, "previous_responses": int64(200), "previous_5xx_share": 0.01, "previous_p95": 100 * time.Millisecond,
+	})
+	if tc.logs.FilterMessage(lineJudgedNone).Len() != 0 || tc.logs.FilterMessage(lineHeld).Len() != 0 {
+		t.Error("a window whose last check failed said it judged none, or held with no word of the failure")
+	}
+
+	// A window whose checks all passed, within the bounds: the old
+	// release never read, so not said.
+	pass := newTestComparator(t, r)
+	pass.deploy("blog", "v2", "v1")
+	pass.store.set("v2", 200, 0, 0.1)
+	for range 4 {
+		pass.minute()
+	}
+	got := infoLine(t, pass.logs, lineHeld)
+	if _, ok := got["previous_responses"]; ok || got["checks_judged"] != int64(3) || got["5xx_share"] != 0.0 {
+		t.Errorf("a window within the bounds: %v", got)
+	}
+}
+
+// The held line says the last judged check failed by that check's own
+// verdict, not by the count in a row: a check with no p95 resets the
+// count (DESIGN-metrics.md, "Owed"), and a reload can change failures.
+func TestPostDeployHeldSaysItsLastJudgedCheckFailed(t *testing.T) {
+	p95 := Rule{Name: "shop_regress", Kind: rulePostDeploy, App: "shop", Window: caddyMinutes(3), MaxP95: caddyMs(100), Failures: 2}
+	tc := newTestComparator(t, p95)
+	tc.deploy("shop", "s2", "")
+	tc.store.set("s2", 200, 0, 3) // over max_p95: fails
+	tc.minute()
+	tc.store.set("s2", 200, 0, 0) // timed, and no quantile sample: no p95
+	for range 3 {
+		tc.minute()
+	}
+	if len(tc.evs) != 0 || len(tc.runs) != 0 {
+		t.Fatalf("%d events, %d in flight", len(tc.evs), len(tc.runs))
+	}
+	got := infoLine(t, tc.logs, lineHeldFailed)
+	if got["failing_in_a_row"] != int64(0) || got["p95"] != 3*time.Second || got["last_check"] != time.Minute {
+		t.Errorf("fields = %v", got)
+	}
+
+	// Two failing checks under failures 3, then a reload to failures 2
+	// after the last: no event, and the count is not "fewer than".
+	r := regressRule
+	r.Window, r.Failures = caddyMinutes(3), 3
+	rl := newTestComparator(t, r)
+	rl.deploy("blog", "v2", "v1")
+	rl.store.set("v1 old", 200, 0, 0.1)
+	rl.store.set("v2", 200, 0, 0.1)
+	rl.minute()
+	rl.store.set("v2", 200, 20, 0.1)
+	rl.minute()
+	rl.minute()
+	r.Failures = 2
+	next := &MetricsStore{Rules: []Rule{r}}
+	core, logs := observer.New(zap.DebugLevel)
+	rl.configure(liveRules{m: next, store: rl.store, logger: zap.New(core)})
+	t.Cleanup(func() { rl.release(next) })
+	rl.minute()
+	if len(rl.evs) != 0 {
+		t.Fatalf("an event after the window: %+v", rl.evs)
+	}
+	if got := infoLine(t, logs, lineHeldFailed); got["failing_in_a_row"] != int64(2) {
+		t.Errorf("fields = %v", got)
+	}
+}
+
+// A window that judged no check (each under min_requests) does not read
+// as one that held (#511).
+func TestPostDeployWindowThatJudgedNothingSaysSo(t *testing.T) {
+	r := regressRule
+	r.Window = caddyMinutes(3)
+	tc := newTestComparator(t, r)
+	tc.deploy("blog", "v2", "v1")
+	tc.store.set("v2", 12, 12, 0)
+	for range 4 {
+		tc.minute()
+	}
+	if len(tc.runs) != 0 || len(tc.evs) != 0 {
+		t.Fatalf("after the window: %d in flight, %d events", len(tc.runs), len(tc.evs))
+	}
+	wantFields(t, infoLine(t, tc.logs, lineJudgedNone), map[string]any{
+		"app": "blog", "release": "v2", "checks_judged": int64(0), "checks_skipped": int64(3), "checks_missed": int64(0),
+		"min_requests": int64(100), "responses": int64(12), "responses_timed": int64(12),
+	})
+	if tc.logs.FilterMessage(lineHeld).Len() != 0 {
+		t.Error("a window that judged nothing said the release held")
+	}
+
+	// A rule whose only bound is max_p95, on a cached app: enough sent,
+	// too few timed for a p95, so no bound is weighed.
+	p95 := Rule{Name: "shop_regress", Kind: rulePostDeploy, App: "shop", Window: caddyMinutes(3), MaxP95: caddyMs(100)}
+	cached := newTestComparator(t, p95)
+	cached.deploy("shop", "s2", "s1")
+	cached.store.set("s2", 300, 0, 3)
+	cached.store.setTimed("s2", 6)
+	for range 4 {
+		cached.minute()
+	}
+	wantFields(t, infoLine(t, cached.logs, lineJudgedNone), map[string]any{
+		"app": "shop", "release": "s2", "checks_judged": int64(0), "checks_skipped": int64(3), "checks_missed": int64(0),
+		"min_requests": int64(100), "responses": int64(300), "responses_timed": int64(6),
+	})
+	// Over the floor sent and timed, with no quantile from the store:
+	// nothing was under min_requests, and the line does not say so.
+	noq := newTestComparator(t, p95)
+	noq.deploy("shop", "s2", "s1")
+	noq.store.set("s2", 300, 0, 0)
+	noq.store.setTimed("s2", 150)
+	for range 4 {
+		noq.minute()
+	}
+	if got := infoLine(t, noq.logs, lineJudgedNone); got["responses_timed"] != int64(150) || got["checks_skipped"] != int64(3) {
+		t.Errorf("fields = %v", got)
+	}
+}
+
+// A comparison whose every check is made has ended with its window: at
+// the next tick, not a minute later, and a deploy before that tick says
+// so too, not that it cut the comparison short.
+func TestPostDeployTheWindowEndsWithItsLastCheck(t *testing.T) {
+	r := regressRule
+	r.Window = caddyMinutes(3)
+	tc := newTestComparator(t, r)
+	tc.deploy("blog", "v2", "v1")
+	tc.store.set("v2", 200, 0, 0.1)
+	for range 3 {
+		tc.minute() // the last check made at cutover + 3m11s
+	}
+	tc.at = tc.at.Add(10 * time.Second)
+	tc.tick(context.Background())
+	if len(tc.runs) != 0 {
+		t.Fatalf("in flight after its last check: %+v", tc.runs)
+	}
+	if got := infoLine(t, tc.logs, lineHeld); got["checks_judged"] != int64(3) {
+		t.Errorf("fields = %v", got)
+	}
+
+	// A deploy between the last check and the next tick.
+	dep := newTestComparator(t, r)
+	dep.deploy("blog", "v2", "v1")
+	dep.store.set("v2", 200, 0, 0.1)
+	for range 3 {
+		dep.minute()
+	}
+	dep.deploy("blog", "v3", "v2")
+	if dep.logs.FilterMessage(lineReplaced).Len() != 0 {
+		t.Errorf("a deploy after every check said it ended the comparison: %+v", dep.logs.FilterMessage(lineReplaced).AllUntimed())
+	}
+	if got := infoLine(t, dep.logs, lineHeld); got["release"] != "v2" || got["checks_judged"] != int64(3) {
+		t.Errorf("fields = %v", got)
+	}
+	if run := dep.runs["blog"]; run == nil || run.release != "v3" {
+		t.Fatalf("v3 not compared: %+v", dep.runs)
+	}
+	// A deploy while the last check is still to be counted ends it as
+	// one cut short.
+	cut := newTestComparator(t, r)
+	cut.deploy("blog", "v2", "v1")
+	cut.store.set("v2", 200, 0, 0.1)
+	cut.minute()
+	cut.minute()
+	cut.runs["blog"].next = 4 // the last check made, its verdict not yet back
+	cut.deploy("blog", "v3", "v2")
+	if got := infoLine(t, cut.logs, lineReplaced); got["checks_judged"] != int64(2) {
+		t.Errorf("fields = %v", got)
+	}
+}
+
+// A new deploy ends the comparison in flight at Info, naming both
+// releases.
+func TestPostDeployANewDeploySaysWhatItEnded(t *testing.T) {
+	tc := newTestComparator(t, regressRule)
+	tc.deploy("blog", "v2", "v1")
+	tc.store.set("v2", 200, 0, 0.1)
+	tc.minute()
+	tc.deploy("blog", "v3", "v2")
+	wantFields(t, infoLine(t, tc.logs, lineReplaced), map[string]any{
+		"app": "blog", "release": "v2", "new_release": "v3", "relaunch": false, "checks_judged": int64(1), "checks_skipped": int64(0), "checks_missed": int64(0),
+	})
+	// v3's instance stops and v3 is relaunched in its window: said as
+	// a relaunch, not a deploy.
+	tc.minute()
+	tc.relaunch("blog", "v3", "")
+	lines := tc.logs.FilterMessage(lineReplaced).AllUntimed()
+	if len(lines) != 2 || lines[1].ContextMap()["relaunch"] != true || lines[1].ContextMap()["new_release"] != "v3" {
+		t.Errorf("the relaunch's line: %+v", lines)
+	}
+	if n := tc.logs.FilterMessage(lineStarts).Len(); n != 3 {
+		t.Errorf("%d start lines for two deploys and a relaunch", n)
+	}
+}
+
+// A reload whose config has no post_deploy rule for the app ends the
+// comparison at its next tick, at Info.
+func TestPostDeployARuleTakenAwaySaysSo(t *testing.T) {
+	tc := newTestComparator(t, regressRule)
+	tc.deploy("blog", "v2", "v1")
+	next := &MetricsStore{} // a reload with no post_deploy line
+	core, logs := observer.New(zap.DebugLevel)
+	tc.configure(liveRules{m: next, store: tc.store, logger: zap.New(core)})
+	t.Cleanup(func() { tc.release(next) }) // before tc.m's: the goroutine ends
+	tc.minute()
+	if len(tc.runs) != 0 {
+		t.Fatalf("the rule is gone, the comparison is not: %+v", tc.runs)
+	}
+	wantFields(t, infoLine(t, logs, lineNoRule), map[string]any{
+		"app": "blog", "release": "v2", "checks_judged": int64(0), "checks_skipped": int64(0), "checks_missed": int64(0),
+	})
+}
+
+// A reload whose candidate adds the rule, with a deploy in its gap,
+// fails: the config before it serves on, with no rule, and the line
+// is true of it.
+func TestPostDeployAFailedReloadThatAddedTheRuleSaysSo(t *testing.T) {
+	tc := newTestComparator(t) // no post_deploy rule
+	core, logs := observer.New(zap.DebugLevel)
+	cand := &MetricsStore{Rules: []Rule{regressRule}}
+	tc.configure(liveRules{m: cand, store: tc.store, logger: zap.New(core)})
+	tc.deploy("blog", "v2", "v1")
+	if logs.FilterMessage(lineStarts).Len() != 1 {
+		t.Fatal("the candidate's rule started no comparison")
+	}
+	tc.release(cand) // the reload fails: the config before it serves on
+	tc.minute()
+	if len(tc.runs) != 0 {
+		t.Fatalf("in flight under a config with no rule: %+v", tc.runs)
+	}
+	if got := infoLine(t, tc.logs, lineNoRule); got["release"] != "v2" {
+		t.Errorf("fields = %v", got)
+	}
+}
+
+// A regression says so at Info beside its event, with the failing
+// check's numbers.
+func TestPostDeployARegressionSaysSo(t *testing.T) {
+	tc := newTestComparator(t, regressRule)
+	tc.deploy("blog", "v2", "v1")
+	tc.store.set("v1 old", 200, 1, 0.1)
+	tc.store.set("v2", 200, 20, 0.1)
+	tc.minute()
+	if tc.logs.FilterMessage(lineRegressed).Len() != 0 {
+		t.Fatal("said after one failing check of two")
+	}
+	tc.minute()
+	if len(tc.evs) != 1 {
+		t.Fatalf("%d events, want one", len(tc.evs))
+	}
+	wantFields(t, infoLine(t, tc.logs, lineRegressed), map[string]any{
+		"app": "blog", "release": "v2", "failing_in_a_row": int64(2),
+		"checks_judged": int64(2), "checks_skipped": int64(0), "checks_missed": int64(0),
+		"last_check": 2 * time.Minute, "responses": int64(200), "5xx_share": 0.1, "p95": 100 * time.Millisecond,
+		"previous_responses": int64(200), "previous_5xx_share": 0.005, "previous_p95": 100 * time.Millisecond,
+	})
+	// An old release under min_requests is no baseline: its responses
+	// are said, its share and p95 are not, as in the event.
+	few := newTestComparator(t, regressRule)
+	few.deploy("blog", "v2", "v1")
+	few.store.set("v1 old", 12, 0, 0.1)
+	few.store.set("v2", 200, 20, 0.1)
+	few.minute()
+	few.minute()
+	got := infoLine(t, few.logs, lineRegressed)
+	_, share := got["previous_5xx_share"]
+	_, p95 := got["previous_p95"]
+	if got["previous_responses"] != int64(12) || share || p95 {
+		t.Errorf("an old release under the floor: %v", got)
 	}
 }
 
@@ -886,6 +1240,14 @@ func TestPostDeployAsksAgainWhatTheStoreDidNotAnswer(t *testing.T) {
 	if n := tc.logs.FilterMessageSnippet("ended unfinished").FilterField(zap.String("release", "v3")).Len(); n != 1 {
 		t.Errorf("%d warning lines, want one", n)
 	}
+	// Minute 2, asked three times, and minute 3, twice: each counted once.
+	if got := checkCounts(infoLine(t, tc.logs, lineRegressed)); got != [3]any{int64(3), int64(0), int64(0)} {
+		t.Errorf("v2's judged, skipped, missed = %v, want 3, 0, 0", got)
+	}
+	w := tc.logs.FilterMessageSnippet("ended unfinished").AllUntimed()[0]
+	if got := checkCounts(w.ContextMap()); w.Level != zap.WarnLevel || got != [3]any{int64(0), int64(0), int64(0)} {
+		t.Errorf("v3's warning: level %s, judged, skipped, missed = %v, want 0, 0, 0", w.Level, got)
+	}
 }
 
 // A check counts only on a push the store took in the minute before its
@@ -931,6 +1293,10 @@ func TestPostDeployCountsNoCheckTheStoreTookNoPushFor(t *testing.T) {
 	if len(lines) != 1 || lines[0].ContextMap()["elapsed"] != 3*time.Minute {
 		t.Fatalf("ended as held on the snapshot of 1m30s, unsaid: %+v", lines)
 	}
+	if got := checkCounts(lines[0].ContextMap()); got != [3]any{int64(2), int64(0), int64(1)} {
+		t.Errorf("judged, skipped, missed = %v, want 2, 0, 1", got)
+	}
+	noDeployedBy(t, tc.logs)
 
 	// A store read-only for the whole window (queries answered, pushes
 	// refused) reads as nothing pushed, then or since: no check counts, a
@@ -954,6 +1320,10 @@ func TestPostDeployCountsNoCheckTheStoreTookNoPushFor(t *testing.T) {
 	if got, _ := lines[0].ContextMap()["error"].(string); !strings.Contains(got, want) {
 		t.Errorf("the warning's error = %q, want %q", got, want)
 	}
+	if got := checkCounts(lines[0].ContextMap()); got != [3]any{int64(0), int64(0), int64(0)} {
+		t.Errorf("each try asked again, judged, skipped, missed = %v, want 0, 0, 0", got)
+	}
+	noDeployedBy(t, ro.logs)
 	for _, q := range ro.store.queries {
 		if q != pushedQuery {
 			t.Errorf("a release read with no push in the store: %s", q)
@@ -1041,6 +1411,10 @@ func TestPostDeployGoesOnPastAMinuteTheStoreMissed(t *testing.T) {
 	tc.minute()
 	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "regressed 5m after") || !strings.Contains(tc.evs[0].Summary, "2 failing checks in a row") {
 		t.Fatalf("after the missed minute: %+v", tc.evs)
+	}
+	// Minute 3 counted once, as missed, though it was asked four times.
+	if got := checkCounts(infoLine(t, tc.logs, lineRegressed)); got != [3]any{int64(4), int64(0), int64(1)} {
+		t.Errorf("judged, skipped, missed = %v, want 4, 0, 1", got)
 	}
 }
 

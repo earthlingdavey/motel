@@ -282,12 +282,12 @@ type managedApp struct {
 	wd           watchdogState
 
 	// secrets is every env_file KEY=VALUE pair this process has
-	// rendered for a launch, or read for the filter after a restart,
-	// kept for the life of the process so a value rotated since stays
-	// redacted from responses. What a still-running instance was
-	// launched with before a restart is not known: only the file as it
-	// is now. Under secretsMu; read by the handler's response path,
-	// written by deploys, relaunches and configure.
+	// rendered for a launch, or read for the filter, and every pair of
+	// a reattached instance's environment that motel did not put there
+	// itself (rememberRunningEnv), kept for the life of the process so
+	// a value rotated since stays redacted from responses. Under
+	// secretsMu; read by the handler's response path, written by
+	// deploys, relaunches, reattaches and configure.
 	secretsMu sync.Mutex
 	secrets   []string
 	// secretsFrom is the env_file path whose contents are in secrets
@@ -330,7 +330,13 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 // current spec's file is unread, and the filter reads it here. A file
 // that cannot be read now (a rewrite mid-flight, a mode not yet fixed)
 // is not an error here — the next launch reports that — and the read
-// is retried on the next response until it succeeds.
+// is retried on the next response until it succeeds. The values the
+// reattached instance was launched with, which the file may no longer
+// hold, the reattach read back from the manager (rememberRunningEnv).
+// They stand in for nothing else: the journal holds lines of every
+// unit of the app, a candidate launched from a later file among them,
+// so while the file cannot be read every body is withheld whatever the
+// reattach read.
 func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 	// The spec is read under secretsMu so the "which env_file is
 	// loaded" check and the spec it is checked against are one
@@ -400,6 +406,55 @@ func mergeSecrets(have, add []string) []string {
 		}
 	}
 	return have
+}
+
+// rememberRunningEnv is rememberSecrets for an instance this process
+// did not launch (#657): env is its environment as the manager reports
+// it (handle.launchEnv), read at reattach, and version, socket and
+// releaseDir are the instance's. A launch's environment is built by
+// buildEnvFull; the manager keeps no word of which pairs came from the
+// env_file, so every pair is remembered as a known value except one
+// that is exactly what motel itself puts there — an inherited pair
+// (PATH, LANG, TZ, LC_*) as moteld's environment has it now, HOME=
+// the shared dir, SOCKET= the socket — and an inline env pair of the
+// current spec that expands, for this instance, to the same value
+// (inline env is not secret by policy). So a value changed in the
+// env_file, a key taken out of it, a file now missing or unreadable,
+// and a spec now naming another file all leave the running instance's
+// value known (while the file cannot be read, redactorFor withholds
+// every body all the same). What it costs: an inline env value, or an
+// inherited one, that changed since the launch is a known value for
+// the rest of this moteld's life, as every value it has read is
+// (mergeSecrets only adds): past the app's next launch, until moteld
+// restarts again (DESIGN-liveswap.md, Accepted residuals). Nothing is
+// logged and nothing written: the values stay in memory, as every
+// launch's do.
+//
+// An environment without the instance's own SOCKET pair is not one
+// motel built for this instance (the manager reported none, or a
+// shape not read): nothing is remembered and false is returned, so
+// the filter knows the file as it is now.
+func (ma *managedApp) rememberRunningEnv(spec *appSpec, version, socket, releaseDir string, env []string) bool {
+	if !slices.Contains(env, "SOCKET="+socket) {
+		return false
+	}
+	own := map[string]bool{"HOME=" + spec.dirs.shared: true, "SOCKET=" + socket: true}
+	for _, kv := range inheritedEnv() {
+		own[kv] = true
+	}
+	for k, v := range spec.env {
+		own[k+"="+expandPlaceholders(v, spec, version, socket, releaseDir)] = true
+	}
+	var held []string
+	for _, kv := range env {
+		if !own[kv] {
+			held = append(held, kv)
+		}
+	}
+	ma.secretsMu.Lock()
+	defer ma.secretsMu.Unlock()
+	ma.secrets = mergeSecrets(ma.secrets, held)
+	return true
 }
 
 // configure installs the latest spec and (re)wires collaborators. On
@@ -1404,6 +1459,13 @@ func (ma *managedApp) ensureRunning() error {
 		sock.retire() // pinned above but definitively not adopted; the relaunch gets its own
 	}
 	if attached {
+		// Before the instance is current: from the moment it is, a
+		// response about it is filtered with what it holds, not the
+		// env_file as it is now (#657).
+		if !ma.rememberRunningEnv(spec, st.CurrentVersion, socket, releaseDir, h.launchEnv()) {
+			c.logger.Warn("the reattached unit's environment, as the manager reports it, is not one motel built for this instance (no SOCKET of its own); the response filter knows its env_file only as the file is now",
+				zap.String("unit", st.Handle.Unit))
+		}
 		inst := &instance{version: st.CurrentVersion, nonce: st.Nonce, socket: socket, sock: sock, handle: h}
 		ma.mu.Lock()
 		ma.current = inst
@@ -1613,8 +1675,10 @@ type launch struct {
 	version, nonce, socket, releaseDir string
 	sock                               *socketRef
 	env                                []string
-	// secrets is the env_file subset of env: what the response filter
-	// must never let out (redact.go).
+	// secrets is every pair the env_file holds, in order, those that
+	// are not in env too (withheld, overridden by a higher layer, or an
+	// earlier line of a key set twice): what the response filter must
+	// never let out (redact.go).
 	secrets []string
 	// envFileMode is the mode of the env_file inode secrets came from,
 	// read off the same descriptor; 0 when the spec names none.
@@ -1650,6 +1714,10 @@ func (spec *appSpec) prepareLaunch(logger *zap.Logger, version string) (launch, 
 	if len(withheld) > 0 {
 		logger.Warn("env_file: NOTIFY_ variables withheld from the app: the env file is in /etc/motel/secrets, where the box writes notify's, and no app is given one; name the variable otherwise if the app needs it",
 			zap.String("env_file", spec.envFile), zap.Strings("withheld", withheld))
+	}
+	if twice := keysSetTwice(l.secrets); len(twice) > 0 {
+		logger.Warn("env_file sets a variable on more than one line: every line but its last is ignored",
+			zap.String("env_file", spec.envFile), zap.Strings("keys", twice))
 	}
 	if spec.envFile != "" {
 		warnEnvFileModeBits(logger, spec.name, spec.envFile, l.envFileMode)
@@ -2087,17 +2155,20 @@ func inheritedEnv() []string {
 // shared dir — the one writable, persistent place in the view. Not a
 // nicety: every runtime that touches $HOME would ENOENT, which is the
 // shape a deny-by-default view fails in. Applied before env_file and
-// env, so an operator can still point it elsewhere.
+// env, so an operator can still point it elsewhere. Each key is in the
+// result once, with its highest layer's value (lastPairWins).
 func buildEnv(spec *appSpec, version, socket, releaseDir string) ([]string, error) {
 	env, _, _, _, err := buildEnvFull(spec, version, socket, releaseDir)
 	return env, err
 }
 
 // buildEnvFull is buildEnv plus the env_file pairs on their own: the
-// values the response filter treats as secrets. Inline `env` is not
-// among them — it lives in the Caddyfile, in a repo, and is not secret
-// by policy — and neither are HOME, SOCKET or the inherited PATH,
-// which a diagnostic has to be able to name.
+// values the response filter treats as secrets, a pair a higher layer
+// overrides too. Inline `env` is not among them — it lives in the
+// Caddyfile, in a repo, and is not secret by policy — and neither are
+// the sandbox HOME, motel's SOCKET or the inherited PATH, LANG, TZ and
+// LC_*, which a diagnostic has to be able to name; a HOME or PATH the
+// env_file sets is, like every value there.
 func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secrets, withheld []string, envFileMode os.FileMode, err error) {
 	env = append(inheritedEnv(), "HOME="+spec.dirs.shared)
 	if spec.envFile != "" {
@@ -2122,7 +2193,49 @@ func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secre
 		env = append(env, k+"="+expandPlaceholders(v, spec, version, socket, releaseDir))
 	}
 	env = append(env, "SOCKET="+socket)
-	return env, secrets, withheld, envFileMode, nil
+	return lastPairWins(env), secrets, withheld, envFileMode, nil
+}
+
+// keysSetTwice names, once each and in the order of each key's second
+// line, the keys that more than one of an env_file's pairs set (secrets is those pairs, every
+// line in order). lastPairWins ignores every line of a key but its
+// last (which a withheld key or one a higher layer sets does not use
+// either), and the operator who wrote the first may expect that one;
+// a launch names them instead.
+func keysSetTwice(pairs []string) []string {
+	seen := make(map[string]bool, len(pairs))
+	var twice []string
+	for _, kv := range pairs {
+		key, _, _ := strings.Cut(kv, "=")
+		if seen[key] && !slices.Contains(twice, key) {
+			twice = append(twice, key)
+		}
+		seen[key] = true
+	}
+	return twice
+}
+
+// lastPairWins returns env with each key once, holding the value of
+// its last pair; a key keeps the place of its first. buildEnvFull
+// appends its layers lowest first, so the last pair is the highest
+// layer's, and of two lines of one env_file the later. Needed because
+// the manager refuses a unit whose Environment= names a key twice
+// ("Invalid environment block.", #666): an env_file's HOME or PATH,
+// or an inline env key the file also sets, would otherwise stop the
+// app from starting.
+func lastPairWins(env []string) []string {
+	out := make([]string, 0, len(env))
+	at := make(map[string]int, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if i, ok := at[key]; ok {
+			out[i] = kv
+			continue
+		}
+		at[key] = len(out)
+		out = append(out, kv)
+	}
+	return out
 }
 
 // envKeyRe is what systemd accepts in Environment=; the exec runner
