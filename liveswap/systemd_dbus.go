@@ -735,21 +735,40 @@ func (c *userManagerClient) ResetFailedUnit(ctx context.Context, name string) er
 // trip (GetAll with an empty interface spans Unit and Service). A unit
 // the manager does not know comes back as not-found, never an error.
 func (c *userManagerClient) UnitStatus(ctx context.Context, name string) (unitStatus, error) {
+	st, _, err := c.unitProps(ctx, name)
+	return st, err
+}
+
+// UnitStatusAndEnvironment is UnitStatus's one read, with the unit's
+// Environment taken out of it as well (envStrings): Reattach's alone.
+// A not-found unit has none.
+func (c *userManagerClient) UnitStatusAndEnvironment(ctx context.Context, name string) (unitStatus, []string, error) {
+	st, props, err := c.unitProps(ctx, name)
+	if err != nil {
+		return st, nil, err
+	}
+	return st, envStrings(props["Environment"]), nil
+}
+
+// unitProps is the one GetAll both make: the status, and the raw map
+// for the caller that also wants the environment. A unit the manager
+// does not know is not-found with no map.
+func (c *userManagerClient) unitProps(ctx context.Context, name string) (unitStatus, map[string]any, error) {
 	conn, err := c.get()
 	if err != nil {
-		return unitStatus{}, err
+		return unitStatus{}, nil, err
 	}
 	props, err := conn.GetAllPropertiesContext(ctx, name)
 	if err != nil {
 		if isNoSuchUnit(err) {
-			return unitStatus{Name: name, LoadState: "not-found"}, nil
+			return unitStatus{Name: name, LoadState: "not-found"}, nil, nil
 		}
 		c.dropIfDisconnected(conn, err)
-		return unitStatus{}, err
+		return unitStatus{}, nil, err
 	}
 	st := statusFromProps(props)
 	st.Name = name
-	return st, nil
+	return st, props, nil
 }
 
 // isNoSuchUnit reports the manager saying it does not know the unit —
@@ -768,6 +787,9 @@ func isNoSuchUnit(err error) bool {
 
 // statusFromProps reads the fields the runner needs out of a unit's
 // full property map (Unit + Service interfaces).
+// Not the unit's Environment, which the map holds too: that holds
+// env_file values, and a status is read and kept everywhere
+// (UnitStatusAndEnvironment hands it to Reattach alone).
 func statusFromProps(props map[string]any) unitStatus {
 	return unitStatus{
 		LoadState:      propString(props, "LoadState"),
@@ -850,6 +872,14 @@ func (c *userManagerClient) ListUnits(ctx context.Context, pattern string) ([]un
 func propString(props map[string]any, key string) string {
 	s, _ := props[key].(string)
 	return s
+}
+
+// envStrings reads an "as" value as godbus decodes it, a []string, as a
+// copy: every entry as the manager gave it, in its order, an empty
+// value included. Any other shape is nothing.
+func envStrings(v any) []string {
+	s, _ := v.([]string)
+	return append([]string(nil), s...)
 }
 
 // propYes reads a namespace property as "in effect". PrivateUsers= is

@@ -1043,7 +1043,7 @@ monitor {
   until the new release has sent `min_requests` (100) responses, and
   its p95 is judged only once it has timed that many (a cache hit is
   not timed), so on a quiet or well-cached app the window can end
-  having judged nothing, which looks the same as a release that held.
+  having judged nothing, which its journal line says.
   A deploy or rollback to the release already serving starts no
   comparison; a relaunch of a release whose instance had stopped (a
   rollback to one that crashed) is held to the bound alone, from 40 s
@@ -1054,15 +1054,54 @@ monitor {
   (`ended unfinished` in the journal). A deploy or rollback to another
   release ends it and starts its own.
 
-A `post_deploy` comparison that holds logs nothing at the default
-level, Info, and no command shows that one ran. A regression's
-`post_deploy_regressed` is sent and journaled (`monitor: event`);
-`ended unfinished` is a journal warning, never sent. At Debug the
-`monitor` logger says `monitor rules: the post-deploy comparison
-ended with its window`, with the app and the release, when the
-window ends (a window that judged nothing says it too), and
-`monitor rules: a new deploy ends the post-deploy comparison in
-flight` when a deploy does; its other ends log no such line. In the
+No command shows that a `post_deploy` comparison ran; the journal
+does, at the default level, Info, on the `monitor` logger. Each
+comparison that starts says `monitor rules: the post-deploy comparison
+starts`, with the app, the release, the release before it (when there
+is one), whether it is judged as a relaunch, the rule's name, its
+`window`, the `max_5xx_share` and `max_p95` it sets, `min_requests`
+and `failures`. A deploy to the release already serving says
+nothing; one whose app no rule covers starts none, and says only the
+end of one in flight. Each end says so once, with how many
+checks it counted: judged (a bound weighed), skipped (under
+`min_requests` responses sent, or, for a rule whose only bound is
+`max_p95`, with no p95: under `min_requests` timed, or no quantile from
+the store) and missed (the store took no push of motel's for them):
+
+- `monitor rules: the post-deploy comparison ended with its window:
+  the release held` (`…, though its last judged check failed` when it
+  did; `failing_in_a_row` says how many in a row), with the numbers of the
+  last check judged: the new release's responses, `5xx_share` and
+  `p95`; the old release's `previous_responses` when that check read
+  it, which it does only when the new one was over a bound and there
+  was a release before it, and its `previous_5xx_share` and
+  `previous_p95` when it sent enough to compare. Either window line
+  comes within 10 s of the last check, and a deploy before then still
+  gets it.
+- `monitor rules: the post-deploy comparison ended with its window
+  having judged no check: none weighed a bound`,
+  with the last skipped check's `responses` (and `responses_timed`
+  when the rule sets `max_p95`): no verdict, not a pass.
+- `monitor rules: the post-deploy comparison ended: the release failed
+  its checks, reported as post_deploy_regressed`, with the failing
+  check's numbers, beside the event's own `monitor: event` line, which
+  says what became of it.
+- `monitor rules: a new deploy, rollback or relaunch ends the
+  post-deploy comparison in flight`, when checks were still to come,
+  naming the release it ended, the
+  `new_release`, and whether it is a `relaunch` (of a release whose
+  instance had stopped, the same release among them).
+- `monitor rules: the post-deploy comparison ended: the config it now
+  follows has no post_deploy rule for the app`, after a reload, or a
+  failed reload's return to the config before it.
+- `ended unfinished`, a warning, when the store had not answered 10
+  minutes past the window's end, or took no push for its last check;
+  never sent.
+
+A restart of moteld, or a reload to a config with no metrics line,
+ends a comparison with no line. Debug adds a line for each try of a
+check the store did not answer (it is asked again at every tick, 10 s
+apart) and one for each check it took no push for; in the
 Caddyfile's global options, this writes the `monitor` logger's lines
 to the journal from Debug up:
 
