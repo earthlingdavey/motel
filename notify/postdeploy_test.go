@@ -553,7 +553,7 @@ const (
 	lineHeld       = "monitor rules: the post-deploy comparison ended with its window: the release held"
 	lineJudgedNone = "monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed"
 	lineReplaced   = "monitor rules: a new deploy ends the post-deploy comparison in flight"
-	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config serving has no post_deploy rule for the app any more"
+	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config loaded last has no post_deploy rule for the app"
 	lineRegressed  = "monitor rules: the post-deploy comparison ended: the release failed its checks, told as post_deploy_regressed"
 )
 
@@ -680,6 +680,7 @@ func TestPostDeployARuleTakenAwaySaysSo(t *testing.T) {
 	next := &MetricsStore{} // a reload with no post_deploy line
 	core, logs := observer.New(zap.DebugLevel)
 	tc.configure(liveRules{m: next, store: tc.store, logger: zap.New(core)})
+	t.Cleanup(func() { tc.release(next) }) // before tc.m's: the goroutine ends
 	tc.minute()
 	if len(tc.runs) != 0 {
 		t.Fatalf("the rule is gone, the comparison is not: %+v", tc.runs)
@@ -710,6 +711,20 @@ func TestPostDeployARegressionSaysSo(t *testing.T) {
 		"last_check": 2 * time.Minute, "responses": int64(200), "5xx_share": 0.1, "p95": 100 * time.Millisecond,
 		"previous_responses": int64(200), "previous_5xx_share": 0.005, "previous_p95": 100 * time.Millisecond,
 	})
+	// An old release under min_requests is no baseline: its responses
+	// are said, its share and p95 are not, as in the event.
+	few := newTestComparator(t, regressRule)
+	few.deploy("blog", "v2", "v1")
+	few.store.set("v1 old", 12, 0, 0.1)
+	few.store.set("v2", 200, 20, 0.1)
+	few.minute()
+	few.minute()
+	got := infoLine(t, few.logs, lineRegressed)
+	_, share := got["previous_5xx_share"]
+	_, p95 := got["previous_p95"]
+	if got["previous_responses"] != int64(12) || share || p95 {
+		t.Errorf("an old release under the floor: %v", got)
+	}
 }
 
 // One rule per app: the app's replaces the every-app one; an app with

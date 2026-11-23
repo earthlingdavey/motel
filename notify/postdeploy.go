@@ -142,7 +142,9 @@ type comparison struct {
 type checkNumbers struct {
 	elapsed    time.Duration
 	newer, old releaseNumbers
-	oldRead    bool
+	// oldRead is whether the check read the old release, hasOld
+	// whether that was a baseline (verdict).
+	oldRead, hasOld bool
 }
 
 // countFields are a comparison's checks so far, for a line at its end.
@@ -151,16 +153,20 @@ func (r *comparison) countFields() []zap.Field {
 }
 
 // numberFields are a judged check's numbers: the new release's
-// responses, 5xx share and p95, and the old release's when the check
-// read them (only when the new one was over a bound). A share to
-// 1/10 000, a p95 to the millisecond, as in the event.
+// responses, 5xx share and p95; the old release's responses when the
+// check read them (only when the new one was over a bound), and its
+// share and p95 only when they were a baseline, as in the event. A
+// share to 1/10 000, a p95 to the millisecond.
 func numberFields(n checkNumbers) []zap.Field {
 	f := []zap.Field{zap.Duration("last_check", n.elapsed), zap.Int("responses", int(n.newer.sent)), zap.Float64("5xx_share", roundShare(n.newer.share()))}
 	if n.newer.hasP95 {
 		f = append(f, zap.Duration("p95", roundMs(n.newer.p95)))
 	}
 	if n.oldRead {
-		f = append(f, zap.Int("previous_responses", int(n.old.sent)), zap.Float64("previous_5xx_share", roundShare(n.old.share())))
+		f = append(f, zap.Int("previous_responses", int(n.old.sent)))
+	}
+	if n.hasOld {
+		f = append(f, zap.Float64("previous_5xx_share", roundShare(n.old.share())))
 		if n.old.hasP95 {
 			f = append(f, zap.Duration("previous_p95", roundMs(n.old.p95)))
 		}
@@ -314,7 +320,7 @@ func (c *comparator) tick(ctx context.Context) {
 		rule, ok := c.ruleFor(app)
 		if !ok {
 			delete(c.runs, app)
-			c.logger.Info("monitor rules: the post-deploy comparison ended: the config serving has no post_deploy rule for the app any more",
+			c.logger.Info("monitor rules: the post-deploy comparison ended: the config loaded last has no post_deploy rule for the app",
 				append([]zap.Field{zap.String("app", app), zap.String("release", r.release)}, r.countFields()...)...)
 			continue
 		}
@@ -402,7 +408,7 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 			d.run.skippedSent = v.newer.sent
 		default:
 			d.run.judged++
-			d.run.last = checkNumbers{elapsed: d.elapsed, newer: v.newer, old: v.old, oldRead: v.oldRead}
+			d.run.last = checkNumbers{elapsed: d.elapsed, newer: v.newer, old: v.old, oldRead: v.oldRead, hasOld: v.hasOld}
 			if !v.failed {
 				d.run.failed = 0
 				break
