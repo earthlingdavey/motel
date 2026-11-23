@@ -70,15 +70,96 @@ func TestWakeMarksEveryCrumb(t *testing.T) {
 }
 
 // TestWakeLeavesARecordUnmarked: a deploy's record is read once, on
-// opening it, and held: a wake does not mark it, and its crumb says its
-// age alone.
+// opening it, and held. A wake marks its entry, and once ctrl-r lifts the
+// hold the mark is there (Engine.Woke) until the read answers; its crumb
+// still says its age alone (RecordAsOf).
 func TestWakeLeavesARecordUnmarked(t *testing.T) {
 	h := start(t, 100, 30, nil)
-	h.open(record("blog", "e9a0b3f2c118"))
+	rec := model.Job{Kind: model.KDeploy, App: "blog", Version: "e9a0b3f2c118"}
+	h.open(record(rec.App, rec.Version))
 	h.walk(5*time.Second, model.Job{})
 	h.sleep(t)
+	// The bucket is empty at a wake: ctrl-r lifts the hold, and no read is
+	// made yet.
+	h.press(tcell.KeyCtrlR)
+	if !h.s.Engine.Woke(rec) {
+		t.Fatal("the record's hold lifted after a wake, and its read not marked: not the state this test is for")
+	}
 	if crumb := screenRows(h)[1].text; !strings.Contains(crumb, " ago") || strings.Contains(crumb, "stale") {
-		t.Errorf("after a wake a record's crumb is %q", crumb)
+		t.Errorf("after a wake, the record asked again, its crumb is %q", crumb)
+	}
+}
+
+// TestWakeMarkIsEachReadsOwn: after a wake, the word beside an age goes
+// only with an answer to the read behind it: with that read refused and
+// every other answered, it stays, and the lines of the reads answered
+// lose it. A crumb says it before "the last read failed".
+func TestWakeMarkIsEachReadsOwn(t *testing.T) {
+	for _, c := range []struct {
+		name, cmd, fails string
+		// still says stale; gone no longer does: "" is the crumb, else a
+		// row's label.
+		still, gone []string
+	}{
+		{"the box refused", "box", "box", []string{""}, []string{"backups", "alerts"}},
+		{"the box's alerts refused", "box", "box-alerts", []string{"alerts"}, []string{"", "backups"}},
+		{"the box's backups refused", "box", "backups", []string{"backups"}, []string{"", "alerts"}},
+		{"an app's alerts refused", "status blog", "alerts:blog", []string{"alerts"}, []string{""}},
+		{"an app's status refused", "status blog", "blog", []string{""}, []string{"alerts"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := start(t, 100, 30, nil)
+			h.press(":", c.cmd, tcell.KeyEnter)
+			h.walk(5*time.Second, model.Job{})
+			h.sleep(t)
+			h.fake.Set(c.fails, &model.Failure{Kind: model.FailThis, Message: "no"})
+			h.walk(10*time.Second, model.Job{})
+			line := func(label string) string {
+				if label == "" {
+					return screenRows(h)[1].text
+				}
+				return labelled(h, label)
+			}
+			for _, l := range c.still {
+				if got := line(l); !strings.Contains(got, "stale") {
+					t.Errorf("its read refused since the wake, line %q is %q", l, got)
+				}
+			}
+			for _, l := range c.gone {
+				if got := line(l); strings.Contains(got, "stale") || !strings.Contains(got, " ago") {
+					t.Errorf("its read answered since the wake, line %q is %q", l, got)
+				}
+			}
+		})
+	}
+}
+
+// TestWakeCrumbOrder: a crumb whose read failed since a wake says stale
+// after the age and before the failure.
+func TestWakeCrumbOrder(t *testing.T) {
+	for _, c := range [][2]string{{"backups", "backups"}, {"status blog", "blog"}, {"alerts", "box-alerts"}, {"rules", "box-rules"}, {"rules blog", "rules:blog"}, {"metrics blog 1h", "series:blog"}} {
+		t.Run(c[0], func(t *testing.T) {
+			h := start(t, 100, 30, nil)
+			h.press(":", c[0], tcell.KeyEnter)
+			h.walk(5*time.Second, model.Job{})
+			h.sleep(t)
+			h.fake.Set(c[1], &model.Failure{Kind: model.FailThis, Message: "no"})
+			h.walk(10*time.Second, model.Job{})
+			if crumb := screenRows(h)[1].text; !strings.Contains(crumb, " ago · stale · the last read failed") {
+				t.Errorf("its read failed since a wake, the crumb is %q", crumb)
+			}
+		})
+	}
+}
+
+// TestHelpSaysWhatStaleIs: the help's AGE line says what a crumb's stale
+// means as well as a row's.
+func TestHelpSaysWhatStaleIs(t *testing.T) {
+	h := start(t, 100, 30, nil)
+	var help string
+	h.on(func() { help = h.u.help() })
+	if !strings.Contains(help, `"stale" until it is read again after the machine slept, and on a row after three missed reads`) {
+		t.Errorf("the help says of stale: %q", help)
 	}
 }
 
