@@ -436,7 +436,7 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 				delete(c.runs, d.cmp.app)
 				e := regressedEvent(d.cmp, d.rule, d.elapsed, v, d.run.failed)
 				ev = &e
-				logger.Info("monitor rules: the post-deploy comparison ended: the release failed its checks, told as post_deploy_regressed",
+				logger.Info("monitor rules: the post-deploy comparison ended: the release failed its checks, reported as post_deploy_regressed",
 					append(append([]zap.Field{zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed)}, d.run.countFields()...), numberFields(d.run.last)...)...)
 			}
 		}

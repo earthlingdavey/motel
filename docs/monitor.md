@@ -1081,9 +1081,9 @@ motel's for them):
   with the last skipped check's `responses` (and `responses_timed`
   when the rule sets `max_p95`): no verdict, not a pass.
 - `monitor rules: the post-deploy comparison ended: the release failed
-  its checks, told as post_deploy_regressed`, with the failing check's
-  numbers, beside the event's own `monitor: event` line; the event is
-  sent.
+  its checks, reported as post_deploy_regressed`, with the failing
+  check's numbers, beside the event's own `monitor: event` line, which
+  says what became of it.
 - `monitor rules: a new deploy ends the post-deploy comparison in
   flight`, naming the release it ended and the `new_release`.
 - `monitor rules: the post-deploy comparison ended: the config loaded

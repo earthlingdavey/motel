@@ -555,7 +555,7 @@ const (
 	lineJudgedNone = "monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed"
 	lineReplaced   = "monitor rules: a new deploy ends the post-deploy comparison in flight"
 	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config loaded last has no post_deploy rule for the app"
-	lineRegressed  = "monitor rules: the post-deploy comparison ended: the release failed its checks, told as post_deploy_regressed"
+	lineRegressed  = "monitor rules: the post-deploy comparison ended: the release failed its checks, reported as post_deploy_regressed"
 )
 
 // A comparison that starts says so at Info, once, with the rule's
