@@ -1613,8 +1613,10 @@ type launch struct {
 	version, nonce, socket, releaseDir string
 	sock                               *socketRef
 	env                                []string
-	// secrets is the env_file subset of env: what the response filter
-	// must never let out (redact.go).
+	// secrets is every pair the env_file holds, in order, those that
+	// are not in env too (withheld, overridden by a higher layer, or an
+	// earlier line of a key set twice): what the response filter must
+	// never let out (redact.go).
 	secrets []string
 	// envFileMode is the mode of the env_file inode secrets came from,
 	// read off the same descriptor; 0 when the spec names none.
@@ -1652,7 +1654,7 @@ func (spec *appSpec) prepareLaunch(logger *zap.Logger, version string) (launch, 
 			zap.String("env_file", spec.envFile), zap.Strings("withheld", withheld))
 	}
 	if twice := keysSetTwice(l.secrets); len(twice) > 0 {
-		logger.Warn("env_file sets a variable on more than one line: only its last line can reach the app",
+		logger.Warn("env_file sets a variable on more than one line: every line but its last is ignored",
 			zap.String("env_file", spec.envFile), zap.Strings("keys", twice))
 	}
 	if spec.envFile != "" {
@@ -2133,10 +2135,10 @@ func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secre
 
 // keysSetTwice names, once each and in file order, the keys that more
 // than one of an env_file's pairs set (secrets is those pairs, every
-// line in order). Of those lines only the last can reach the app
-// (lastPairWins; a withheld key or one a higher layer sets reaches it
-// from none), and the operator who wrote the first may expect that
-// one; a launch names them instead.
+// line in order). lastPairWins ignores every line of a key but its
+// last (which a withheld key or one a higher layer sets does not use
+// either), and the operator who wrote the first may expect that one;
+// a launch names them instead.
 func keysSetTwice(pairs []string) []string {
 	seen := make(map[string]bool, len(pairs))
 	var twice []string

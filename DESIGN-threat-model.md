@@ -681,8 +681,9 @@ is closed by the unit's limit — enforced by the kernel under a file
   `systemctl --user -M motel@ show -p Environment <unit>` (as that
   uid or as root; a bare `--user` targets the caller's own manager). A
   key that inline `env` or the injected `SOCKET` also sets is not
-  here: `buildEnvFull` (liveswap/app.go) hands the manager only the
-  higher layer's pair of a key.
+  here, nor the earlier line of a key the file sets twice:
+  `buildEnvFull` (liveswap/app.go) hands the manager only a key's
+  last pair, the highest layer's.
 - **The transient unit file** the manager writes under
   `/run/user/<uid>/systemd/transient/`, which carries the same
   `Environment=` pairs until the unit is garbage-collected.
