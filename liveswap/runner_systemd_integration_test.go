@@ -1463,7 +1463,7 @@ func TestIntegrationSystemdEnvFileHomeWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(shared, "env.txt")
-	if err := os.WriteFile(filepath.Join(release, "server"), []byte("#!/bin/sh\ntrap 'exit 0' TERM\nenv > "+out+"\nsleep 300 & wait\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(release, "server"), []byte("#!/bin/sh\ntrap 'exit 0' TERM\nenv > "+out+".tmp && mv "+out+".tmp "+out+"\nsleep 300 & wait\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	spec := &appSpec{name: "itest", command: []string{"./server"}, envFile: envFile, grace: 2 * time.Second, dirs: newAppDirs(root, "itest")}
@@ -1476,20 +1476,12 @@ func TestIntegrationSystemdEnvFileHomeWins(t *testing.T) {
 		t.Fatalf("start of an app whose env_file sets HOME: %v", err)
 	}
 	t.Cleanup(func() { _ = r.Stop(h, spec.grace) })
-	waitForFile(t, out, 5*time.Second)
-	var got []string // what the app's process was given
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		b, err := os.ReadFile(out)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.HasSuffix(string(b), "\n") || time.Now().After(deadline) {
-			got = strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	waitForFile(t, out, 5*time.Second) // renamed into place whole
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
 	}
+	got := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") // what the app's process was given
 	if !slices.Contains(got, "HOME="+home) {
 		t.Errorf("the app's environment has no HOME=%s, the env_file's:\n%s", home, strings.Join(got, "\n"))
 	}

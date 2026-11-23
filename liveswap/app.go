@@ -1651,6 +1651,10 @@ func (spec *appSpec) prepareLaunch(logger *zap.Logger, version string) (launch, 
 		logger.Warn("env_file: NOTIFY_ variables withheld from the app: the env file is in /etc/motel/secrets, where the box writes notify's, and no app is given one; name the variable otherwise if the app needs it",
 			zap.String("env_file", spec.envFile), zap.Strings("withheld", withheld))
 	}
+	if twice := keysSetTwice(l.secrets); len(twice) > 0 {
+		logger.Warn("env_file sets a variable on more than one line: the app is given the last line's value",
+			zap.String("env_file", spec.envFile), zap.Strings("keys", twice))
+	}
 	if spec.envFile != "" {
 		warnEnvFileModeBits(logger, spec.name, spec.envFile, l.envFileMode)
 	}
@@ -2125,6 +2129,24 @@ func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secre
 	}
 	env = append(env, "SOCKET="+socket)
 	return lastPairWins(env), secrets, withheld, envFileMode, nil
+}
+
+// keysSetTwice names, once each and in file order, the keys that more
+// than one of an env_file's pairs set (secrets is those pairs, every
+// line in order). lastPairWins gives the app the last line's value
+// without a word, and the operator who wrote the first may expect that
+// one; a launch names them instead.
+func keysSetTwice(pairs []string) []string {
+	seen := make(map[string]bool, len(pairs))
+	var twice []string
+	for _, kv := range pairs {
+		key, _, _ := strings.Cut(kv, "=")
+		if seen[key] && !slices.Contains(twice, key) {
+			twice = append(twice, key)
+		}
+		seen[key] = true
+	}
+	return twice
 }
 
 // lastPairWins returns env with each key once, holding the value of

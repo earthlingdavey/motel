@@ -1345,6 +1345,30 @@ func TestBuildEnvSetsEachKeyOnce(t *testing.T) {
 	}
 }
 
+// A key an env_file sets on more than one line is named at each launch:
+// the app is given the last line's value, which the operator who wrote
+// the first may not expect.
+func TestLaunchNamesAKeyAnEnvFileSetsTwice(t *testing.T) {
+	for _, tc := range []struct{ file, want string }{
+		{"A=1\nB=1\nA=2\nB=2\nA=3\nC=1\n", "[A B]"},
+		{"A=1\nB=2\n", ""},
+	} {
+		rig := newTestRig(t)
+		rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
+		must(t, os.WriteFile(rig.spec.envFile, []byte(tc.file), 0o600))
+		core, logs := observer.New(zap.WarnLevel)
+		_, err := rig.spec.prepareLaunch(zap.New(core), "v1")
+		must(t, err)
+		got := logs.FilterMessageSnippet("more than one line").All()
+		switch {
+		case tc.want == "" && len(got) != 0:
+			t.Errorf("%q: warned %v, want no warning", tc.file, got)
+		case tc.want != "" && (len(got) != 1 || fmt.Sprint(got[0].ContextMap()["keys"]) != tc.want):
+			t.Errorf("%q: warned %v, want one warning naming %s", tc.file, got, tc.want)
+		}
+	}
+}
+
 // A NOTIFY_ variable in an env file the box wrote is a notify channel's
 // URL, from secrets/<app>/NOTIFY_*.age: withheld from the unit's
 // environment, named, and still a value the filter knows. In an env file
