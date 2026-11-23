@@ -1538,8 +1538,8 @@ What liveswap does for you:
   or taken out of it, while the app was not launched again stays
   known for as long as the instance that holds it runs; of that
   environment, only what motel puts there
-  itself (the inherited `PATH`, `LANG`, `TZ` and `LC_*`, `HOME`,
-  `SOCKET`) and the inline `env` lines as the config has them now are
+  itself (the inherited `PATH`, `LANG`, `TZ` and `LC_*`, `HOME` as
+  the shared dir, `SOCKET`) and the inline `env` lines as the config has them now are
   not known values. Until that reattach (moteld just started, or its
   user manager not answering), or when the environment the manager
   gives back is not one motel built for that unit (a warning names the
