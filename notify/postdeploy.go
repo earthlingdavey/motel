@@ -128,6 +128,44 @@ type comparison struct {
 	// cutover, where the old release's window ends (oldWindow): zero
 	// until a check first reads that window.
 	oldEnd time.Time
+	// judged, skipped and missed count the checks made: judged over
+	// min_requests, skipped under it, missed for a push the store never
+	// took; last is the last judged one's, and skippedSent the
+	// responses of the last skipped one. Read by the line at its end.
+	judged, skipped, missed int
+	last                    checkNumbers
+	skippedSent             float64
+}
+
+// checkNumbers are one judged check's, for the line at a comparison's
+// end.
+type checkNumbers struct {
+	elapsed    time.Duration
+	newer, old releaseNumbers
+	oldRead    bool
+}
+
+// countFields are a comparison's checks so far, for a line at its end.
+func (r *comparison) countFields() []zap.Field {
+	return []zap.Field{zap.Int("checks_judged", r.judged), zap.Int("checks_skipped", r.skipped), zap.Int("checks_missed", r.missed)}
+}
+
+// numberFields are a judged check's numbers: the new release's
+// responses, 5xx share and p95, and the old release's when the check
+// read them (only when the new one was over a bound). A share to
+// 1/10 000, a p95 to the millisecond, as in the event.
+func numberFields(n checkNumbers) []zap.Field {
+	f := []zap.Field{zap.Duration("last_check", n.elapsed), zap.Int("responses", int(n.newer.sent)), zap.Float64("5xx_share", roundShare(n.newer.share()))}
+	if n.newer.hasP95 {
+		f = append(f, zap.Duration("p95", roundMs(n.newer.p95)))
+	}
+	if n.oldRead {
+		f = append(f, zap.Int("previous_responses", int(n.old.sent)), zap.Float64("previous_5xx_share", roundShare(n.old.share())))
+		if n.old.hasP95 {
+			f = append(f, zap.Duration("previous_p95", roundMs(n.old.p95)))
+		}
+	}
+	return f
 }
 
 // liveRules is a config's part of the comparator.
@@ -220,18 +258,36 @@ func (c *comparator) deployed(ev liveswap.LifecycleEvent) {
 		// (the operator's decision of 2026-11-12).
 		return
 	}
-	if _, ok := c.runs[ev.App]; ok {
+	if r, ok := c.runs[ev.App]; ok {
 		delete(c.runs, ev.App)
-		c.logger.Debug("monitor rules: a new deploy ends the post-deploy comparison in flight", zap.String("app", ev.App), zap.String("release", ev.Release))
+		c.logger.Info("monitor rules: a new deploy ends the post-deploy comparison in flight",
+			append([]zap.Field{zap.String("app", ev.App), zap.String("release", r.release), zap.String("new_release", ev.Release)}, r.countFields()...)...)
 	}
-	if _, ok := c.ruleFor(ev.App); !ok {
+	rule, ok := c.ruleFor(ev.App)
+	if !ok {
 		return
 	}
 	cut := ev.Cutover
 	if cut.IsZero() {
 		cut = c.now()
 	}
-	c.runs[ev.App] = &comparison{app: ev.App, release: ev.Release, previous: ev.Previous, deployedBy: ev.DeployedBy, cutover: cut, next: 1, relaunch: ev.Relaunch && ev.Previous == ""}
+	r := &comparison{app: ev.App, release: ev.Release, previous: ev.Previous, deployedBy: ev.DeployedBy, cutover: cut, next: 1, relaunch: ev.Relaunch && ev.Previous == ""}
+	c.runs[ev.App] = r
+	// Said once, so that a comparison that holds is seen to have run:
+	// the line at its end says how (#511).
+	f := []zap.Field{zap.String("app", r.app), zap.String("release", r.release)}
+	if r.previous != "" {
+		f = append(f, zap.String("previous", r.previous))
+	}
+	f = append(f, zap.Bool("relaunch", r.relaunch), zap.String("rule", rule.Name), zap.Duration("window", rule.window()))
+	if rule.Max5xxShare != nil {
+		f = append(f, zap.Float64("max_5xx_share", *rule.Max5xxShare))
+	}
+	if rule.MaxP95 != 0 {
+		f = append(f, zap.Duration("max_p95", time.Duration(rule.MaxP95)))
+	}
+	f = append(f, zap.Int("min_requests", rule.minRequests()), zap.Int("failures", rule.failures()))
+	c.logger.Info("monitor rules: the post-deploy comparison starts", f...)
 }
 
 // due is one check to make: over elapsed from the cutover, read at
@@ -257,7 +313,9 @@ func (c *comparator) tick(ctx context.Context) {
 		r := c.runs[app]
 		rule, ok := c.ruleFor(app)
 		if !ok {
-			delete(c.runs, app) // the config serving has no rule for it any more
+			delete(c.runs, app)
+			c.logger.Info("monitor rules: the post-deploy comparison ended: the config serving has no post_deploy rule for the app any more",
+				append([]zap.Field{zap.String("app", app), zap.String("release", r.release)}, r.countFields()...)...)
 			continue
 		}
 		// The next minute owed, once the store can answer for it: one a
@@ -270,8 +328,17 @@ func (c *comparator) tick(ctx context.Context) {
 			continue
 		}
 		if last := int(rule.window() / postDeployEvery); r.next > last {
-			delete(c.runs, app) // the window is over: the release held
-			c.logger.Debug("monitor rules: the post-deploy comparison ended with its window", zap.String("app", app), zap.String("release", r.release))
+			delete(c.runs, app) // the window is over
+			f := append([]zap.Field{zap.String("app", app), zap.String("release", r.release)}, r.countFields()...)
+			if r.judged == 0 {
+				// Not a release that held: every check was under
+				// min_requests, or missed.
+				c.logger.Info("monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed",
+					append(f, zap.Int("min_requests", rule.minRequests()), zap.Int("responses", int(r.skippedSent)))...)
+				continue
+			}
+			c.logger.Info("monitor rules: the post-deploy comparison ended with its window: the release held",
+				append(append(f, zap.Int("failing_in_a_row", r.failed)), numberFields(r.last)...)...)
 			continue
 		}
 		k := r.next
@@ -315,7 +382,7 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 			if c.now().Sub(d.cmp.cutover.Add(d.rule.window()+storeLag)) > postDeployGrace {
 				delete(c.runs, d.cmp.app)
 				logger.Warn("monitor rules: the post-deploy comparison ended unfinished: the metrics store did not answer its checks, or held no push of motel's for them",
-					zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed), zap.Error(v.err))
+					append([]zap.Field{zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed), zap.Error(v.err)}, d.run.countFields()...)...)
 				break
 			}
 			d.run.next = int(d.elapsed / postDeployEvery)
@@ -323,20 +390,30 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 				zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Error(v.err))
 		case v.missed && d.elapsed >= d.rule.window():
 			delete(c.runs, d.cmp.app)
+			d.run.missed++
 			logger.Warn("monitor rules: the post-deploy comparison ended unfinished: the metrics store took no push of motel's for its last check",
-				zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed), zap.Duration("elapsed", d.elapsed))
+				append([]zap.Field{zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed), zap.Duration("elapsed", d.elapsed)}, d.run.countFields()...)...)
 		case v.missed:
+			d.run.missed++
 			logger.Debug("monitor rules: the post-deploy check is skipped: the metrics store took no push of motel's for it",
 				zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Duration("elapsed", d.elapsed))
 		case v.skipped:
-		case !v.failed:
-			d.run.failed = 0
+			d.run.skipped++
+			d.run.skippedSent = v.newer.sent
 		default:
+			d.run.judged++
+			d.run.last = checkNumbers{elapsed: d.elapsed, newer: v.newer, old: v.old, oldRead: v.oldRead}
+			if !v.failed {
+				d.run.failed = 0
+				break
+			}
 			d.run.failed++
 			if d.run.failed >= d.rule.failures() {
 				delete(c.runs, d.cmp.app)
 				e := regressedEvent(d.cmp, d.rule, d.elapsed, v, d.run.failed)
 				ev = &e
+				logger.Info("monitor rules: the post-deploy comparison ended: the release failed its checks, told as post_deploy_regressed",
+					append(append([]zap.Field{zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed)}, d.run.countFields()...), numberFields(d.run.last)...)...)
 			}
 		}
 	}
@@ -377,6 +454,9 @@ type verdict struct {
 	// oldEnd is the end of the old release's window, when this check
 	// asked for it (comparison.oldEnd).
 	oldEnd time.Time
+	// oldRead is whether the check read the old release (old): only
+	// when the new one was over a bound.
+	oldRead bool
 }
 
 // checkRelease is one check: the new release over elapsed since the
@@ -438,6 +518,7 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 		if v.old, v.err = queryRelease(ctx, store, r.app, r.previous, at, win, off, wantP95, floor); v.err != nil {
 			return v
 		}
+		v.oldRead = true
 		// An old release with fewer responses than the floor is no
 		// baseline: only the bounds count.
 		v.hasOld = v.old.sent >= floor
@@ -695,11 +776,17 @@ func regressedEvent(r comparison, rule Rule, elapsed time.Duration, v verdict, f
 // shareText is a share to three significant digits, at most four
 // decimals: 0.0833.
 func shareText(v float64) string {
-	return strconv.FormatFloat(math.Round(v*1e4)/1e4, 'f', -1, 64)
+	return strconv.FormatFloat(roundShare(v), 'f', -1, 64)
 }
+
+// roundShare is a share to 1/10 000.
+func roundShare(v float64) float64 { return math.Round(v*1e4) / 1e4 }
 
 // msText is seconds in whole milliseconds: 1200ms.
 func msText(v float64) string { return strconv.Itoa(int(math.Round(v*1e3))) + "ms" }
+
+// roundMs is seconds as a duration in whole milliseconds.
+func roundMs(v float64) time.Duration { return time.Duration(math.Round(v*1e3)) * time.Millisecond }
 
 // run is the comparator's goroutine.
 func (c *comparator) run(ctx context.Context, every time.Duration) {

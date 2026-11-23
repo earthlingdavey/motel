@@ -1176,10 +1176,20 @@ before it to compare`. The release before is not named:
 the filter keeps the event's own release whole, and would mask another
 git sha. It never acts: no refusal, no rollback (requirement 4). A new
 deploy or rollback of the app ends the comparison in flight and starts
-its own; the window's end ends it silently; a reload follows the config
+its own; the window's end ends it with no event; a reload follows the config
 serving at each check (a rule taken away ends it, a changed one applies
 from the next check), and the last config's Stop drops what is in
 flight. A moteld restart mid-window loses it ("Accepted residuals").
+Each comparison says at Info that it starts (the app, both releases,
+the rule's bounds) and, once, how it ended: the window's end, saying
+`the release held` with the last judged check's numbers, or
+`having judged no check` when every check was under the floor or
+missed, so silence is never read as a pass (#511); a regression, beside
+its event; a new deploy; the rule taken away; or unfinished, a warning.
+Each end carries the checks judged, skipped and missed. The last
+config's Stop (moteld stopping, or a reload to a config with no metrics
+line) drops what is in flight with no line. docs/monitor.md quotes the
+lines.
 
 ## How close each alert is
 
