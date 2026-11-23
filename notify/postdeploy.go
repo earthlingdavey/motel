@@ -128,13 +128,16 @@ type comparison struct {
 	// cutover, where the old release's window ends (oldWindow): zero
 	// until a check first reads that window.
 	oldEnd time.Time
-	// judged, skipped and missed count the checks made: judged over
-	// min_requests, skipped under it, missed for a push the store never
-	// took; last is the last judged one's, and skippedSent the
-	// responses of the last skipped one. Read by the line at its end.
+	// judged, skipped and missed count the checks made: judged when a
+	// bound was weighed, skipped under min_requests (responses sent, or
+	// timed for a rule whose only bound is max_p95), missed for a push
+	// the store never took; last is the last judged one's, and
+	// skippedLast the new release's numbers at the last skipped one.
+	// Read by the line at its end, which counts the checks finished by
+	// then.
 	judged, skipped, missed int
 	last                    checkNumbers
-	skippedSent             float64
+	skippedLast             releaseNumbers
 }
 
 // checkNumbers are one judged check's, for the line at a comparison's
@@ -154,7 +157,8 @@ func (r *comparison) countFields() []zap.Field {
 
 // numberFields are a judged check's numbers: the new release's
 // responses, 5xx share and p95; the old release's responses when the
-// check read them (only when the new one was over a bound), and its
+// check read them (only when the new one was over a bound and there was
+// a release before it), and its
 // share and p95 only when they were a baseline, as in the event. A
 // share to 1/10 000, a p95 to the millisecond.
 func numberFields(n checkNumbers) []zap.Field {
@@ -339,12 +343,18 @@ func (c *comparator) tick(ctx context.Context) {
 			if r.judged == 0 {
 				// Not a release that held: every check was under
 				// min_requests, or missed.
-				c.logger.Info("monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed",
-					append(f, zap.Int("min_requests", rule.minRequests()), zap.Int("responses", int(r.skippedSent)))...)
+				f = append(f, zap.Int("min_requests", rule.minRequests()), zap.Int("responses", int(r.skippedLast.sent)))
+				if rule.MaxP95 != 0 {
+					f = append(f, zap.Int("responses_timed", int(r.skippedLast.timed)))
+				}
+				c.logger.Info("monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed", f...)
 				continue
 			}
-			c.logger.Info("monitor rules: the post-deploy comparison ended with its window: the release held",
-				append(append(f, zap.Int("failing_in_a_row", r.failed)), numberFields(r.last)...)...)
+			msg := "monitor rules: the post-deploy comparison ended with its window: the release held"
+			if r.failed > 0 {
+				msg = "monitor rules: the post-deploy comparison ended with its window: the release held, its last checks failing, fewer in a row than failures"
+			}
+			c.logger.Info(msg, append(append(f, zap.Int("failing_in_a_row", r.failed)), numberFields(r.last)...)...)
 			continue
 		}
 		k := r.next
@@ -405,10 +415,18 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 				zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Duration("elapsed", d.elapsed))
 		case v.skipped:
 			d.run.skipped++
-			d.run.skippedSent = v.newer.sent
+			d.run.skippedLast = v.newer
 		default:
-			d.run.judged++
-			d.run.last = checkNumbers{elapsed: d.elapsed, newer: v.newer, old: v.old, oldRead: v.oldRead, hasOld: v.hasOld}
+			if d.rule.Max5xxShare != nil || v.newer.hasP95 {
+				d.run.judged++
+				d.run.last = checkNumbers{elapsed: d.elapsed, newer: v.newer, old: v.old, oldRead: v.oldRead, hasOld: v.hasOld}
+			} else {
+				// Sent enough, timed too few for a p95, and no 5xx bound:
+				// no bound weighed, so not judged, though it passes as
+				// before.
+				d.run.skipped++
+				d.run.skippedLast = v.newer
+			}
 			if !v.failed {
 				d.run.failed = 0
 				break

@@ -1063,18 +1063,23 @@ is one), whether it is judged as a relaunch, the rule's name, its
 and `failures`. A deploy to the release already serving says
 nothing; one whose app no rule covers starts none, and says only the
 end of one in flight. Each end says so once, with how many
-checks were judged, skipped under `min_requests` and missed (the store
-took no push of motel's for them):
+checks it counted: judged (a bound weighed), skipped under
+`min_requests` (responses sent, or for a rule whose only bound is
+`max_p95`, responses timed) and missed (the store took no push of
+motel's for them):
 
 - `monitor rules: the post-deploy comparison ended with its window:
-  the release held`, with the numbers of the last check judged: the new
-  release's responses, `5xx_share` and `p95`; the old release's
-  `previous_responses` when that check read it, which it does only
-  when the new one was over a bound, and its `previous_5xx_share` and
+  the release held` (`…, its last checks failing, fewer in a row than
+  failures` when `failing_in_a_row` is not 0), with the numbers of the
+  last check judged: the new release's responses, `5xx_share` and
+  `p95`; the old release's `previous_responses` when that check read
+  it, which it does only when the new one was over a bound and there
+  was a release before it, and its `previous_5xx_share` and
   `previous_p95` when it sent enough to compare.
 - `monitor rules: the post-deploy comparison ended with its window
   having judged no check: each was under min_requests, or missed`,
-  with the last skipped check's responses: no verdict, not a pass.
+  with the last skipped check's `responses` (and `responses_timed`
+  when the rule sets `max_p95`): no verdict, not a pass.
 - `monitor rules: the post-deploy comparison ended: the release failed
   its checks, told as post_deploy_regressed`, with the failing check's
   numbers, beside the event's own `monitor: event` line; the event is

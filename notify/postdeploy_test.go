@@ -551,6 +551,7 @@ func wantFields(t *testing.T, got, want map[string]any) {
 const (
 	lineStarts     = "monitor rules: the post-deploy comparison starts"
 	lineHeld       = "monitor rules: the post-deploy comparison ended with its window: the release held"
+	lineHeldFailed = "monitor rules: the post-deploy comparison ended with its window: the release held, its last checks failing, fewer in a row than failures"
 	lineJudgedNone = "monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed"
 	lineReplaced   = "monitor rules: a new deploy ends the post-deploy comparison in flight"
 	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config loaded last has no post_deploy rule for the app"
@@ -610,13 +611,14 @@ func TestPostDeployWindowEndsWithNoEvent(t *testing.T) {
 	if len(tc.runs) != 0 || len(tc.evs) != 0 || len(tc.store.queries) != n {
 		t.Fatalf("after the window: %d in flight, %d events, %d more queries", len(tc.runs), len(tc.evs), len(tc.store.queries)-n)
 	}
-	wantFields(t, infoLine(t, tc.logs, lineHeld), map[string]any{
+	// Its last check failed, short of failures in a row: said so.
+	wantFields(t, infoLine(t, tc.logs, lineHeldFailed), map[string]any{
 		"app": "blog", "release": "v2", "checks_judged": int64(3), "checks_skipped": int64(0), "checks_missed": int64(0),
 		"failing_in_a_row": int64(1), "last_check": 3 * time.Minute, "responses": int64(200), "5xx_share": 0.1,
 		"p95": 100 * time.Millisecond, "previous_responses": int64(200), "previous_5xx_share": 0.01, "previous_p95": 100 * time.Millisecond,
 	})
-	if tc.logs.FilterMessage(lineJudgedNone).Len() != 0 {
-		t.Error("a window that judged three checks said it judged none")
+	if tc.logs.FilterMessage(lineJudgedNone).Len() != 0 || tc.logs.FilterMessage(lineHeld).Len() != 0 {
+		t.Error("a window whose last check failed said it judged none, or held with no word of the failure")
 	}
 
 	// A window whose checks all passed, within the bounds: the old
@@ -649,11 +651,26 @@ func TestPostDeployWindowThatJudgedNothingSaysSo(t *testing.T) {
 	}
 	wantFields(t, infoLine(t, tc.logs, lineJudgedNone), map[string]any{
 		"app": "blog", "release": "v2", "checks_judged": int64(0), "checks_skipped": int64(3), "checks_missed": int64(0),
-		"min_requests": int64(100), "responses": int64(12),
+		"min_requests": int64(100), "responses": int64(12), "responses_timed": int64(12),
 	})
 	if tc.logs.FilterMessage(lineHeld).Len() != 0 {
 		t.Error("a window that judged nothing said the release held")
 	}
+
+	// A rule whose only bound is max_p95, on a cached app: enough sent,
+	// too few timed for a p95, so no bound is weighed.
+	p95 := Rule{Name: "shop_regress", Kind: rulePostDeploy, App: "shop", Window: caddyMinutes(3), MaxP95: caddyMs(100)}
+	cached := newTestComparator(t, p95)
+	cached.deploy("shop", "s2", "s1")
+	cached.store.set("s2", 300, 0, 3)
+	cached.store.setTimed("s2", 6)
+	for range 4 {
+		cached.minute()
+	}
+	wantFields(t, infoLine(t, cached.logs, lineJudgedNone), map[string]any{
+		"app": "shop", "release": "s2", "checks_judged": int64(0), "checks_skipped": int64(3), "checks_missed": int64(0),
+		"min_requests": int64(100), "responses": int64(300), "responses_timed": int64(6),
+	})
 }
 
 // A new deploy ends the comparison in flight at Info, naming both
