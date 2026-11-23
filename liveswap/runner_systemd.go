@@ -723,7 +723,7 @@ func (r *systemdRunner) unitFor(spec startSpec, oneshot bool) (unitSpec, error) 
 	// difference between "npm failed" and "npm's HOME was never in
 	// my view".
 	if home, outside := homeOutsideView(spec.env, spec.sandbox); outside {
-		r.log().Warn("HOME is set to a path the sandbox does not bind; it does not exist inside the unit",
+		r.log().Warn("HOME is set to a path the sandbox does not bind, or to nothing: the app has no HOME inside the unit",
 			zap.String("app", spec.app),
 			zap.String("home", home),
 			zap.String("effect", "any runtime that touches $HOME (npm, corepack, pip) will fail with ENOENT naming no cause"),
