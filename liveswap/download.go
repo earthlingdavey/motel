@@ -168,9 +168,6 @@ func (d digestMismatch) Error() string {
 // Unwrap makes errors.As find the validationError the webhook maps to 422.
 func (d digestMismatch) Unwrap() error { return validationError{msg: d.Error()} }
 
-// names is what the filter must let through: both digests, or nothing
-// for the zero value.
-
 // The per-stage bounds of the artifact fetch. Connect and handshake
 // match net/http's DefaultTransport; the header wait is the one this
 // client always had.

@@ -470,9 +470,8 @@ func TestDeployRecordTimesMustBeStrings(t *testing.T) {
 }
 
 // A record larger than a reader accepts is written as an envelope,
-// readable, rather than as a file every reader refuses. The pipeline
-// carries at most errTextMax of an error and 8 KiB of a tail, so the
-// result is made large here by hand.
+// readable, rather than as a file every reader refuses: an error's text
+// is not cut, and a long one makes such a result.
 func TestDeployRecordTooLargeIsAnEnvelope(t *testing.T) {
 	t.Parallel()
 	rig := newTestRig(t)

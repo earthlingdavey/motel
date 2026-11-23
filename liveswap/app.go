@@ -412,8 +412,8 @@ func mergeSecrets(have, add []string) []string {
 // (inline env is not secret by policy). So a value changed in the
 // env_file, a key taken out of it, a file now missing or unreadable,
 // and a spec now naming another file all leave the running instance's
-// value known (while the file cannot be read, redactorFor withholds
-// every body all the same). What it costs: an inline env value, or an
+// value known (while the file cannot be read, the door withholds the
+// app's text all the same). What it costs: an inline env value, or an
 // inherited one, that changed since the launch is a known value for
 // the rest of this moteld's life, as every value it has read is
 // (mergeSecrets only adds): past the app's next launch, until moteld
