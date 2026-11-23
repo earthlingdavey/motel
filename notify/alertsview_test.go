@@ -247,6 +247,28 @@ func TestHeldAlertsOverTheLimit(t *testing.T) {
 	}
 }
 
+// TestAlertsViewSlowAnswer (#638): Alertmanager builds its whole
+// answer before its first byte, so far past the limit it answers too
+// late for the budget: the fetch's error is the deadline's, and the
+// journal line says it may hold so many alerts, and where to look.
+func TestAlertsViewSlowAnswer(t *testing.T) {
+	sock := unixServer(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, slow := newAMClient(sock).heldAlerts(ctx)
+	if !errors.Is(slow, context.DeadlineExceeded) {
+		t.Fatalf("a late answer: %v, want the deadline's", slow)
+	}
+	core, logs := observer.New(zap.WarnLevel)
+	v := &alertsView{now: time.Now, fetch: func(context.Context) (liveswap.HeldAlerts, error) { return liveswap.HeldAlerts{}, slow }}
+	if _, ok := v.get(context.Background(), zap.New(core)); ok {
+		t.Error("a late answer was answered")
+	}
+	if all := logs.All(); len(all) != 1 || !strings.HasSuffix(all[0].Message, `Alertmanager did not answer within 2 s, as when it starts, or when it holds so many alerts that its answer takes that long; docs/monitor.md, "More alerts than motel reads", says how to see them`) {
+		t.Errorf("journal %+v", all)
+	}
+}
+
 // TestAlertsView: one fetch per alertsEvery for every caller, a failure
 // kept as long, a clock set back fetching again; one fetch at a time,
 // the others waiting on it; a waiter that gives up told it did not

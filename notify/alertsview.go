@@ -214,8 +214,8 @@ var theAlerts = &alertsView{now: time.Now}
 
 // get answers from the entry under alertsEvery old, or waits for the
 // fetch in flight, or makes it. A request that gives up first is told
-// Alertmanager did not answer; the fetch it waited for still fills the
-// entry for the next.
+// no answer (ok false: unanswered); the fetch it waited for still fills
+// the entry for the next.
 func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.HeldAlerts, bool) {
 	v.mu.Lock()
 	now := v.now()
@@ -244,7 +244,8 @@ func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.Held
 			// cause is the operator's, at most one line per alertsEvery, as
 			// kept.
 			var over *amOverLimitError
-			if errors.As(err, &over) {
+			switch {
+			case errors.As(err, &over):
 				// The silence list holds expired silences too, until
 				// Alertmanager's retention drops them: no producer to stop.
 				what := "alerts than motel reads (4 MiB of its answer); docs/monitor.md, \"More alerts than motel reads\", says how to see them"
@@ -252,7 +253,13 @@ func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.Held
 					what = "silences than motel reads (4 MiB of its answer, expired ones counting until its retention drops them); docs/monitor.md, \"Silence an alert\", says how to list them"
 				}
 				logger.Warn("monitor: every person's read of alerts (an app's, or the box's) is answered \"monitor\":\"unanswered\": Alertmanager holds more "+what, zap.Error(err))
-			} else {
+			case errors.Is(err, context.DeadlineExceeded):
+				// Alertmanager builds its whole answer before its first
+				// byte: far past the limit that outlasts alertsBudget
+				// (80,000 alerts took about 2 s on one CPU, measured for
+				// #638), as a start by the read's connection can.
+				logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": Alertmanager did not answer within 2 s, as when it starts, or when it holds so many alerts that its answer takes that long; docs/monitor.md, \"More alerts than motel reads\", says how to see them", zap.Error(err))
+			default:
 				logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": motel could not read what Alertmanager holds", zap.Error(err))
 			}
 			held = liveswap.HeldAlerts{}

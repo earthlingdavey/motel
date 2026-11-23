@@ -897,7 +897,8 @@ without `--app`, and the TUI), motel reads at most 4 MiB of what
 Alertmanager holds, and of its silence list: 5,500 to 7,500 alerts the
 size of motel's own, which take 550 to 760 bytes each in Alertmanager's
 answer (measured by marshalling them as `GET /api/v2/alerts` gives
-them). From 500 alerts up to that, the box's read sends the newest 500
+them, and against Alertmanager 0.28.1: 5,000 alerts with 100-character
+summaries came to 3.3 MB). From 500 alerts up to that, the box's read sends the newest 500
 and says it holds more. Past it, every one of those reads, the box's
 and each app's, answers `"monitor":"unanswered"`: the TUI says `not
 known: the box could not read its Alertmanager`, and `motel monitor
@@ -913,6 +914,13 @@ read, the journal then says, at most once every 5 seconds:
 ```
 monitor: every person's read of alerts (an app's, or the box's) is answered "monitor":"unanswered": Alertmanager holds more alerts than motel reads (4 MiB of its answer); docs/monitor.md, "More alerts than motel reads", says how to see them
 ```
+
+Far past the limit Alertmanager can take longer to answer than the 2
+seconds motel waits: it builds the whole answer before it sends any of
+it, and 80,000 alerts took about 2 seconds on one CPU (measured with
+Alertmanager 0.28.1). The line then says Alertmanager did not answer
+within 2 s, as when it starts, or holds so many alerts that its answer
+takes that long.
 
 Ask Alertmanager itself, which has no such limit. On every box, over
 its socket, count what it holds by name:
