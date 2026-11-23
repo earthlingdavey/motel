@@ -814,9 +814,9 @@ func (s *Session) MeAsOf(now time.Time) Line {
 func (s *Session) RecordAsOf(app, version string, now time.Time) Line {
 	s.seen(now)
 	if g, err, ok := s.Record(app, version); ok && g != nil && !Forbidden(err) && !NotFound(err) {
-		// No word for a wake (stale): a record is read once and held, so
-		// it is never marked (Engine.Woke). It is read again only when the
-		// person opens it again or asks (ctrl-r).
+		// No word for a wake (stale): a record is read once, on opening
+		// it, and held after, which Engine.Woke does not mark; it is read
+		// again only when the person opens it again or asks (ctrl-r).
 		l := s.asOf(g.At, now)
 		if err != nil {
 			l = append(l, ownC(" · the last read failed", Warn))

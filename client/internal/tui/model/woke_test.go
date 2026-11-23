@@ -1,9 +1,11 @@
 package model_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -129,5 +131,27 @@ func TestStepBackMarksEveryRead(t *testing.T) {
 	}
 	if e.Woke(heldStatus) || e.Woke(heldRecord) {
 		t.Error("a held read marked after the clock was set back")
+	}
+}
+
+// TestWakeMarksTheListFailed: the apps screen's line of a list kept beside
+// a failed read says its age, and stale after a wake, before the failure.
+func TestWakeMarksTheListFailed(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	for range 20 {
+		step(t, s, f, &now)
+	}
+	s.Engine.Tick(now)
+	now = now.Add(model.WakeAfter + time.Second)
+	if !s.Engine.Tick(now) {
+		t.Fatal("a tick past WakeAfter not taken for a wake")
+	}
+	f.Set("apps", fail(model.FailThis))
+	for step(t, s, f, &now).Kind != model.KApps {
+	}
+	if l := s.AppsView(now, "", 0, 0).ListFailed.Text(); !strings.Contains(l, " ago · stale · the last read failed: ") {
+		t.Errorf("after a wake, the list's read failed: %q", l)
 	}
 }

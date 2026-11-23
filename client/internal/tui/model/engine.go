@@ -1424,10 +1424,12 @@ func (e *Engine) Row(app string) (misses int, held bool, every time.Duration, wo
 }
 
 // Woke says whether the answer j's read last gave is from before a wake
-// from sleep, not read again since: the screen says it is stale. A held
-// read (a 403, a 404, a record, which is read once) is not being asked
-// again, so it is never marked, as the apps table's rows are not (Row);
-// a read with no entry is not either.
+// from sleep, not read again since: the screen says it is stale. A read
+// held (a 403, a 404, a record, which is read once) is not being asked
+// again, so it is not marked while it is held, as the apps table's rows
+// say none (Row); once ctrl-r lifts the hold it is, until the read
+// answers. A record's crumb never says it (RecordAsOf). A read with no
+// entry is not marked.
 func (e *Engine) Woke(j Job) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
