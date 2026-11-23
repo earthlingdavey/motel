@@ -232,7 +232,9 @@ Properties that matter to the model:
   PEM private key, a JWT, a bearer, basic or token credential of 20
   characters or more, a URL's userinfo, an AWS key id, the two GitHub
   token forms, a Slack token, a Stripe key, and a Basic credential that
-  decodes to user:password, each replaced by its name. A secret that
+  decodes to user:password, each replaced by its name where it stands
+  at a word's start (all but the PEM rule open at a word boundary, so
+  one straight after a letter, a digit or `_` is not). A secret that
   is in no `env_file` is hidden only when it has one of those shapes:
   a URL's query, a `password=` assignment and a generated-looking token
   pass as written (the owner's decision of 2026-11-22: of 4,032

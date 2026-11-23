@@ -1508,7 +1508,9 @@ What liveswap does for you:
   on its own), becomes `[redacted:KEY]`, and the response's
   `"redacted_env": ["KEY", …]` names what it contained. Then ten
   credential shapes an ordinary log line does not hold are replaced by
-  name: a PEM private key, a JWT, a bearer, basic or token credential,
+  name where the shape stands at a word's start (one straight after a
+  letter, a digit or `_`, as after JSON's `\n` or a colour code, is
+  not): a PEM private key, a JWT, a bearer, basic or token credential,
   a URL's userinfo, an AWS key id, GitHub, Slack and Stripe tokens, and
   a Basic credential. A URL's query, a `password=` assignment, a
   request id, a hash and any other generated-looking token pass as
@@ -1518,7 +1520,8 @@ What liveswap does for you:
   so a cut never leaves a fragment of one (a value with a space in it,
   cut by the read bound, is the one exception). A git SHA used as a
   version is read as written, unless it equals an `env_file` value,
-  which is replaced in the app's text like any value. Everything else in a response is motel's
+  which is replaced in the app's text like any value, or follows the
+  word `token`, `bearer` or `basic`, where the bearer rule replaces it. Everything else in a response is motel's
   own, or the deployer's, the operator's or another program's text,
   and passes as written: an error's text too, which can quote an
   `env_file` value only where the app named a file after one, answered
