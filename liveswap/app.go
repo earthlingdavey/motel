@@ -379,7 +379,10 @@ func (ma *managedApp) doorKnowing(also []string, read bool, names ...string) *do
 	}
 	d := &door{r: NewRedactor(kvs, safe), seen: map[string]bool{}}
 	if unread != nil {
-		d.unread = "the app's env_file could not be read, so its values are unknown to the filter"
+		// The reason names the file and why, as main's sentence did: a
+		// line that is no assignment is quoted, as its parse error is in
+		// a deploy's answer.
+		d.unread = "the app's env_file could not be read, so its values are unknown to the filter (" + unread.Error() + ")"
 	}
 	return d
 }
@@ -670,8 +673,10 @@ func preflightResult(what string, err error) error {
 // the fact: the exit the runner recorded (the pre_start's from its
 // error; the app's as read before motel stopped it, and only when
 // it died on its own), the last probe's answer, and the last lines the
-// launch's units wrote. Nil when a launch left nothing to say.
-func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, version string, err error, appExit string, appPID int, l launch, since time.Time) (*deployDetail, []string) {
+// launch's units wrote. Nil when a launch left nothing to say. own is
+// the deploy's version and pin, names its text may hold that no record
+// on disk holds yet (this deploy's is written after).
+func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, own []string, err error, appExit string, appPID int, l launch, since time.Time) (*deployDetail, []string) {
 	raw := rawDetail{withBody: spec.deployLogLines > 0, maxLines: spec.deployLogLines}
 	var ee *exitError
 	// With the exit, the pid of the process that failed — the pre_start's
@@ -719,7 +724,7 @@ func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, version stri
 	// env_file rendered) and those every launch remembered, so no file
 	// is read and nothing is withheld on a file that went unreadable
 	// since: the record keeps its detail.
-	known := ma.doorKnowing(l.secrets, false, append([]string{version}, ma.namesOnDisk()...)...)
+	known := ma.doorKnowing(l.secrets, false, append(own, ma.namesOnDisk()...)...)
 	return raw.through(known), known.keys()
 }
 
@@ -1105,7 +1110,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	// joins its own lines onto it.
 	defer func() {
 		if err != nil && launched {
-			detail, redacted = ma.failureDetail(c, spec, req.version, err, appExit, appPID, l, started)
+			detail, redacted = ma.failureDetail(c, spec, []string{req.version, pin}, err, appExit, appPID, l, started)
 		}
 	}()
 	// A launch that never becomes the instance leaves nothing behind:

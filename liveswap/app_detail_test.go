@@ -240,7 +240,7 @@ func TestFailureDetailHoldsTheLaunchsOwnValues(t *testing.T) {
 	rig.ma.journal = &fakeJournal{lines: []string{"token hunter2hunter2hunter2 refused"}}
 	err := fmt.Errorf("not healthy within deadline 5m: %w", &probeError{status: 500, body: "bad token hunter2hunter2hunter2"})
 	l := launch{secrets: []string{"API_TOKEN=hunter2hunter2hunter2"}} // gitleaks:allow
-	d, keys := rig.ma.failureDetail(rig.ma.snapshot(), rig.spec, "v1", err, "exit status 3", 0, l, time.Now())
+	d, keys := rig.ma.failureDetail(rig.ma.snapshot(), rig.spec, []string{"v1"}, err, "exit status 3", 0, l, time.Now())
 	if d == nil || d.Probe == nil || d.Probe.Body != "bad token [redacted:API_TOKEN]" || d.Exit != "exit status 3" || d.LogTailError != "" {
 		t.Fatalf("detail = %+v, want the launch's value replaced and nothing withheld", d)
 	}

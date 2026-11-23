@@ -1,6 +1,9 @@
 package liveswap
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -431,5 +434,46 @@ func TestRedactedEnvSpellsNoValue(t *testing.T) {
 	keys := d.keys()
 	if len(keys) != 1 || keys[0] == "STRIPE_LIVE_KEY" || !strings.HasPrefix(keys[0], "[") {
 		t.Errorf("redacted_env: %q", keys)
+	}
+}
+
+// A failed deploy's own version and pin are names its text may hold,
+// which no record on disk holds yet: an app that prints the git sha it
+// was deployed as and its artifact's digest, in its journal and in its
+// probe's answer, has both read as written in the deploy's detail and
+// its record, as on main (failureDetail's names).
+func TestFailedDeploysOwnNamesStandInItsDetail(t *testing.T) {
+	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
+	version := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b"
+	sum := sha256.Sum256([]byte("the artifact of " + version))
+	pin := hex.EncodeToString(sum[:])
+	said := "built " + version + " artifact sha256 " + pin
+	b.rig.ma.journal = &fakeJournal{lines: []string{said}}
+	b.rig.prober.err = fmt.Errorf("not healthy within deadline 5m0s: %w", &probeError{status: 503, body: said})
+	if err := b.rig.ma.Deploy(context.Background(), deployRequest{url: "https://example.test/x.tgz", version: version, sha256: pin, by: "test"}); err == nil {
+		t.Fatal("the deploy should have failed its health gate")
+	}
+	last := b.rig.ma.status().LastDeploy
+	if last == nil || last.Detail == nil || last.Detail.Probe == nil || len(last.Detail.LogTail) != 1 ||
+		string(last.Detail.LogTail[0]) != said || string(last.Detail.Probe.Body) != said {
+		t.Fatalf("last_deploy: %+v", last)
+	}
+	if rec := b.sinks(t)["record of "+version]; !strings.Contains(rec, `"log_tail":["`+said+`"]`) {
+		t.Errorf("the record: %s", rec)
+	}
+}
+
+// A logs line from a release no longer on disk and named by no record
+// holds the git sha it was deployed as: the release the line's unit
+// names is a name the logs door leaves to the known values alone, so
+// the sha is read as written (appLogs' names).
+func TestLogsLinesReleaseStandsInItsText(t *testing.T) {
+	version := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b"
+	j := demoJournal(1, func(int) string { return "booted " + version })
+	j[0].userUnit = "motel-demo." + version + ".0a1b2c3d0a1b2c3d.service"
+	h, people, _, _ := logsRig(t, j)
+	w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
+	if got := decodeLogs(t, w); len(got.Lines) != 1 || got.Lines[0].Release != version || string(got.Lines[0].Text) != "booted "+version {
+		t.Errorf("%d %s", w.Code, w.Body)
 	}
 }

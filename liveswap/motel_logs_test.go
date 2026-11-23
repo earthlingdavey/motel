@@ -280,7 +280,8 @@ func TestLogsBodyTimesAndCursorPassNoFilter(t *testing.T) {
 
 // TestLogsUnreadableEnvFile: with the app's env_file unreadable the
 // filter knows no value, so no line's text is sent: each is the
-// filter's sentence (an empty line empty), and the rest of the answer
+// filter's sentence, which names why the file did not read (an empty
+// line empty), and the rest of the answer
 // (each line's time and release, the cursor) is moteld's own and sent;
 // the journal gets no read's line, since no line's text was sent. A
 // command reading it exits 0.
@@ -296,7 +297,7 @@ func TestLogsUnreadableEnvFile(t *testing.T) {
 	if w.Code != http.StatusOK || len(got.Lines) != 3 || got.Cursor != cursorOf(2) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
-	const withheld = "[withheld: the app's env_file could not be read, so its values are unknown to the filter]"
+	withheld := wire.AppText("[withheld: the app's env_file could not be read, so its values are unknown to the filter (read " + ma.spec.envFile + ": is a directory)]")
 	for i, want := range []wire.AppText{withheld, "", withheld} {
 		if got.Lines[i].Text != want || !got.Lines[i].At.Equal(j[i].at) || got.Lines[i].Release != "v1" {
 			t.Errorf("line %d: %+v", i, got.Lines[i])
