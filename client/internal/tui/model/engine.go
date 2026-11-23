@@ -234,7 +234,8 @@ type entry struct {
 	// left after the last it sent (logsMore): it takes its turn among the
 	// other apps' reads, not ahead of them.
 	again bool
-	// woke is a row not re-read since the machine slept: stale.
+	// woke is an answer not read again since the machine slept: stale,
+	// whatever its kind (Woke).
 	woke bool
 	// every is the interval the read after the last answer was due by,
 	// against which the row's age is judged; answered is when that
@@ -1422,15 +1423,29 @@ func (e *Engine) Row(app string) (misses int, held bool, every time.Duration, wo
 	return en.misses, en.held, en.every, en.woke
 }
 
+// Woke says whether the answer j's read last gave is from before a wake
+// from sleep, not read again since: the screen says it is stale. A read
+// held (a 403, a 404, a record, which is read once) is not being asked
+// again, so it is not marked while it is held, as the apps table's rows
+// say none (Row); once ctrl-r lifts the hold it is, until the read
+// answers. A record's crumb never says it (RecordAsOf). A read with no
+// entry is not marked.
+func (e *Engine) Woke(j Job) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	en, ok := e.jobs[j]
+	return ok && en.woke && !en.held
+}
+
 // WakeAfter is a gap between two ticks of the clock that only a
 // machine asleep makes: the TUI's clock ticks every second.
 const WakeAfter = 30 * time.Second
 
 // Tick is the clock's tick, every second while the screen is up. A gap
-// past WakeAfter is a laptop that slept: every row is stale until read
-// again, the reads are spread over the cycle again rather than all due
-// at once, whoami is asked again (the box may have changed meanwhile),
-// and the bucket starts empty. now is wall-clock time: a monotonic
+// past WakeAfter is a laptop that slept: every answer kept, of any kind,
+// is stale until read again (Woke), the reads are spread over the cycle
+// again rather than all due at once, whoami is asked again (the box may
+// have changed meanwhile), and the bucket starts empty. now is wall-clock time: a monotonic
 // reading stops while the machine sleeps. A step of the clock back is
 // seen at whatever call gives the first time after it (seen); the tick
 // only makes sure one comes within a second.
@@ -1475,10 +1490,15 @@ func (e *Engine) seen(now time.Time) bool {
 	return false
 }
 
-// wakeLocked is a wake from sleep at now (Tick).
+// wakeLocked is a wake from sleep at now (Tick): every read's answer is
+// marked stale until it is read again (Woke); the statuses, and the
+// watch's reads of the apps' alerts, are spread over their cycle again,
+// the open app's status, the list and whoami are due at once, and every
+// other read keeps the due time it had.
 func (e *Engine) wakeLocked(now time.Time) {
 	every := e.background()
 	for j, en := range e.jobs {
+		en.woke = true
 		if j.Kind == KAlerts && j.App != e.alertsApp && e.watch == WatchApps {
 			// Spread over the cycle again, as the statuses are.
 			en.due = now.Add(en.phase % e.appAlertsEvery())
@@ -1487,7 +1507,6 @@ func (e *Engine) wakeLocked(now time.Time) {
 		if j.Kind != KStatus {
 			continue
 		}
-		en.woke = true
 		if j.App == e.focus {
 			en.due = now
 		} else {

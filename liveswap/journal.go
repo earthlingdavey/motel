@@ -26,8 +26,9 @@ import (
 // deploy_log_lines); a journalctl that is missing or fails leaves the
 // tail out and says why.
 //
-// Everything read here passes the response filter (redact.go) like
-// any other body, and deploy_log_lines 0 keeps app output on the box
+// Everything read here is the app's text, and passes the app's filter
+// where it enters a detail (failureDetail, app.go; redact.go), and
+// deploy_log_lines 0 keeps app output on the box
 // entirely: no journal tail, and no health probe body either
 // (failureDetail, app.go) — the exit status and the probe's status
 // code are motel's observations, not the app's bytes, and stay.
@@ -127,7 +128,7 @@ func boundedTail(out []byte, limit int) string {
 // the first token of s (atStart: a kept suffix) or its last (a kept
 // prefix), up to or from the nearest whitespace, and puts an ellipsis
 // where it was. A bound that fell inside an env_file value left a
-// fragment the response filter cannot match and no heuristic can see
+// fragment the app's filter cannot match and no heuristic can see
 // (redact.go); without a whitespace to cut at, the whole of s goes. A
 // value with a space in it can still be cut (DESIGN-liveswap.md,
 // "Accepted residuals").
@@ -292,7 +293,7 @@ const journalTailTimeout = 5 * time.Second
 // anything was dropped. A last line that alone exceeds the byte cap —
 // a one-line JSON stack trace — is kept as its tail with a marker,
 // not dropped whole.
-func capTail(lines []string, maxLines, maxBytes int) ([]string, bool) {
+func capTail[T ~string](lines []T, maxLines, maxBytes int) ([]T, bool) {
 	truncated := false
 	if maxLines > 0 && len(lines) > maxLines {
 		lines = lines[len(lines)-maxLines:]
@@ -314,7 +315,7 @@ func capTail(lines []string, maxLines, maxBytes int) ([]string, bool) {
 				for start < len(lines[i]) && !utf8.RuneStart(lines[i][start]) {
 					start++
 				}
-				lines = []string{marker + lines[i][start:]}
+				lines = []T{marker + lines[i][start:]}
 			} else {
 				lines = lines[i+1:]
 			}

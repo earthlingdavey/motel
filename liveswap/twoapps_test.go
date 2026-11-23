@@ -510,8 +510,9 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 // rowsKeepToTheirApp holds GET /_motel/apps's body, row by row: the
 // rows are the apps the caller may view, each holds nothing of the
 // other app (its name, canary or socket directory), and its own app's
-// canary, which its summary carries, comes out as that app's filter's
-// marker and never as itself.
+// newest deploy is named as the deployer named it: the version is
+// moteld's own data, which no filter changes, though it holds an
+// env_file value (an older moteld replaced it with the value's marker).
 func (r *twoAppsRig) rowsKeepToTheirApp(t *testing.T, caller string, body []byte, views []string) {
 	t.Helper()
 	var list struct {
@@ -540,9 +541,8 @@ func (r *twoAppsRig) rowsKeepToTheirApp(t *testing.T, caller string, body []byte
 				}
 			}
 		}
-		if strings.Contains(row, r.canary[app]) || !strings.Contains(row, `"version":"z-[redacted:SECRET_TOKEN]"`) ||
-			!strings.Contains(row, `"redacted_env":["SECRET_TOKEN"]`) || strings.Contains(row, r.sockets[app]) {
-			t.Errorf("%s, GET /_motel/apps: %s's row does not hold its canary as the marker: %s", caller, app, row)
+		if !strings.Contains(row, `"version":"z-`+r.canary[app]+`"`) || strings.Contains(row, "redacted") || strings.Contains(row, r.sockets[app]) {
+			t.Errorf("%s, GET /_motel/apps: %s's row does not name its newest deploy as it was named: %s", caller, app, row)
 		}
 	}
 }

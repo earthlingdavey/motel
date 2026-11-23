@@ -73,7 +73,7 @@ func loadDeployMarker(d appDirs) (deployMarker, error) {
 		return m, fmt.Errorf("%w: %w", errNotAMarker, err)
 	}
 	// The version becomes a path: one that is not a version is used
-	// for nothing (redact.go, rule 4, as for state.json's).
+	// for nothing (validVersion, as for state.json's).
 	if !validVersion(m.Version) {
 		return m, fmt.Errorf("%w: it names %q, which is not a version", errNotAMarker, m.Version)
 	}

@@ -78,7 +78,7 @@ func TestWireStatusEveryField(t *testing.T) {
 			Detail: &deployDetail{
 				Exit:    "exit status 3",
 				Probe:   &probeDetail{Status: 500, Location: "/login", Body: "no such table"},
-				LogTail: []string{"line one"}, LogTailTruncated: true, LogTailError: "journal unreadable",
+				LogTail: []wire.AppText{"line one"}, LogTailTruncated: true, LogTailError: "journal unreadable",
 			},
 			RedactedEnv: []string{"SECRET"},
 		},

@@ -45,7 +45,7 @@ func logsCalls(f *demo.Fake) []string {
 func logsBody(at time.Time, from, n int, more, gap bool, cursor string) string {
 	l := wire.Logs{Kept: wire.KeptOn, Lines: []wire.LogLine{}, More: more, Gap: gap, Cursor: cursor}
 	for i := range n {
-		l.Lines = append(l.Lines, wire.LogLine{At: at.Add(time.Duration(from+i) * time.Second), Release: "7c1e55d0a913", Text: fmt.Sprintf("line %d", from+i)})
+		l.Lines = append(l.Lines, wire.LogLine{At: at.Add(time.Duration(from+i) * time.Second), Release: "7c1e55d0a913", Text: wire.AppText(fmt.Sprintf("line %d", from+i))})
 	}
 	b, _ := json.Marshal(l)
 	return string(b)

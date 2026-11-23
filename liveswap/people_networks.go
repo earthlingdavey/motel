@@ -152,7 +152,7 @@ func (a Announcement) shownKey() string {
 	return deploytrust.CutRunes(a.Key, summaryKeyRunes) + "…"
 }
 
-// Safe are the strings of the summary a response filter must leave as
+// Safe are the strings of the summary notify's filter must leave as
 // written: the name and the fingerprint as it shows them (a
 // fingerprint looks generated).
 func (a Announcement) Safe() []string { return []string{a.shownPerson(), a.shownKey()} }

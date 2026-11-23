@@ -3,16 +3,16 @@ package liveswap
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
@@ -105,15 +105,14 @@ func TestBoxAlertsRoute(t *testing.T) {
 }
 
 // TestBoxAlertsBody: every alert and every silence that has not ended,
-// newest first (the active silences first), each alert row's keys
-// sorted; an app's alert through that app's filter, so its
-// env_file value is masked and a version its status names stands; a box
-// event, an alert of an app this config does not run, and every silence
-// through a filter with no app's values, a generated token masked and
-// the silence ids, app names and release names standing; an alert the
-// deploy mute holds is there, inhibited; an expired silence is left out;
-// no source is "off", and a source that did not answer "unanswered",
-// both with empty lists.
+// newest first (the active silences first), each in its wire type's
+// order and as Alertmanager holds it: no filter runs over an alert or a
+// silence (an app's alert motel told passed the app's filter when it
+// was told, lifecycle.go; the rest is the operator's and Alertmanager's
+// text, which an older moteld filtered here); an alert the deploy mute
+// holds is there, inhibited; an expired silence is left out; no source
+// is "off", and a source that did not answer "unanswered", both with
+// empty lists.
 func TestBoxAlertsBody(t *testing.T) {
 	h, people := alertsRig(t)
 	carol := token(people.carol)
@@ -152,12 +151,12 @@ func TestBoxAlertsBody(t *testing.T) {
 	}})
 	code, body := read()
 	const want = `{"monitor":"on","alerts":[` +
-		`{"instance":"/var/lib/liveswap","name":"disk_low","severity":"warning","starts_at":"2026-11-19T14:03:00Z","state":"active","summary":"the disk said [masked, 32 chars] and hunter2-of-demo"},` +
-		`{"app":"demo","name":"deploy_failed","redacted_env":["DB_PASSWORD"],"severity":"warning","silenced_until":"2026-11-19T16:00:00Z","starts_at":"2026-11-19T14:02:00Z","state":"suppressed","summary":"deploy of 4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e failed; the env said [redacted:DB_PASSWORD]"},` +
-		`{"app":"gone","name":"errors_high","severity":"warning","starts_at":"2026-11-19T14:01:00Z","state":"active","summary":"gone: hunter2-of-demo"},` +
-		`{"app":"demo","inhibited":true,"name":"watchdog_throttled","severity":"critical","starts_at":"2026-11-19T14:00:00Z","state":"suppressed","summary":"demo: throttled"}],` +
+		`{"name":"disk_low","severity":"warning","summary":"the disk said ` + generated + ` and hunter2-of-demo","starts_at":"2026-11-19T14:03:00Z","state":"active","instance":"/var/lib/liveswap"},` +
+		`{"name":"deploy_failed","severity":"warning","summary":"deploy of 4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e failed; the env said hunter2-of-demo","starts_at":"2026-11-19T14:02:00Z","state":"suppressed","silenced_until":"2026-11-19T16:00:00Z","app":"demo"},` +
+		`{"name":"errors_high","severity":"warning","summary":"gone: hunter2-of-demo","starts_at":"2026-11-19T14:01:00Z","state":"active","app":"gone"},` +
+		`{"name":"watchdog_throttled","severity":"critical","summary":"demo: throttled","starts_at":"2026-11-19T14:00:00Z","state":"suppressed","inhibited":true,"app":"demo"}],` +
 		`"silences":[` +
-		`{"id":"11111111-1111-4111-8111-111111111111","state":"active","matchers":[{"name":"app","op":"=","value":"demo"},{"name":"release","op":"=","value":"4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e"}],"starts_at":"2026-11-19T14:00:00Z","ends_at":"2026-11-19T16:00:00Z","created_by":"moteld monitor: root","comment":"known [masked, 32 chars]"},` +
+		`{"id":"11111111-1111-4111-8111-111111111111","state":"active","matchers":[{"name":"app","op":"=","value":"demo"},{"name":"release","op":"=","value":"4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e"}],"starts_at":"2026-11-19T14:00:00Z","ends_at":"2026-11-19T16:00:00Z","created_by":"moteld monitor: root","comment":"known ` + generated + `"},` +
 		`{"id":"33333333-3333-4333-8333-333333333333","state":"pending","matchers":[{"name":"alertname","op":"=~","value":"cert_.*"},{"name":"instance","op":"!=","value":"b.example"}],"starts_at":"2026-11-19T16:00:00Z","ends_at":"2026-11-19T17:00:00Z","created_by":"root","comment":"later"}]}` + "\n"
 	if code != http.StatusOK || body != want {
 		t.Errorf("the box's alerts:\n got %d %s\nwant %s", code, body, want)
@@ -169,9 +168,10 @@ func TestBoxAlertsBody(t *testing.T) {
 }
 
 // TestBoxAlertsTimesPassNoFilter: an env_file value that is a piece of
-// an alert's time (a date) is masked in the summary and leaves the
-// times whole, so the list still reads; the silences come active first,
-// newest first, then pending, soonest first.
+// an alert's time (a date) changes nothing of the row, its summary
+// included, which is Alertmanager's text and passes as it holds it; the
+// silences come active first, newest first, then pending, soonest
+// first.
 func TestBoxAlertsTimesPassNoFilter(t *testing.T) {
 	h, people := alertsRig(t)
 	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("API_VERSION=2026-11-19\n"), 0o600))
@@ -192,7 +192,7 @@ func TestBoxAlertsTimesPassNoFilter(t *testing.T) {
 		t.Fatalf("%v: %d %s", err, w.Code, w.Body)
 	}
 	a := got.Alerts[0]
-	if a.Summary != "on [redacted:API_VERSION]" || !a.StartsAt.Equal(t0) || a.SilencedUntil == nil || !a.SilencedUntil.Equal(until) {
+	if a.Summary != "on 2026-11-19" || !a.StartsAt.Equal(t0) || a.SilencedUntil == nil || !a.SilencedUntil.Equal(until) {
 		t.Errorf("the row: %s", w.Body)
 	}
 	var ids []string
@@ -244,91 +244,32 @@ func TestBoxAlertsCaps(t *testing.T) {
 	}
 }
 
-// TestBoxAlertsRowWithheld: a row the filter withholds keeps what holds
-// the alert, says the filter's sentence in its summary, and loses its
-// name and instance, which a value may be part of; it keeps its app
-// only when the filter was that app's, an app this config runs, since
-// another label's value passed no filter. A silence the filter
-// withholds keeps its state, its times and an id Alertmanager made, the
-// filter's sentence its comment, and loses its matchers and maker.
-func TestBoxAlertsRowWithheld(t *testing.T) {
-	t0 := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
-	until := t0.Add(time.Hour)
-	a := wire.BoxAlert{App: "demo", Instance: "x", Alert: wire.Alert{Name: "n", Severity: "warning", Summary: "s", StartsAt: t0, State: "suppressed", SilencedUntil: &until}}
-	withholds := &Redactor{withhold: "the app's env_file could not be read"}
-	row := alertRow(a, withholds, true)
-	const want = `{"name":"","severity":"warning","summary":"response withheld: the app's env_file could not be read","starts_at":"2026-11-19T14:00:00Z","state":"suppressed","silenced_until":"2026-11-19T15:00:00Z","app":"demo"}`
-	if row != want {
-		t.Errorf("withheld:\n got %s\nwant %s", row, want)
-	}
-	a.Severity = "page"
-	if row := alertRow(a, withholds, true); !strings.Contains(row, `"severity":""`) {
-		t.Errorf("a severity not motel's, withheld: %s", row)
-	}
-	a.App = "Xk29fQa7Lm3Zp8Rt5Wn1Yc6Vb4Hd0Jg2" // gitleaks:allow — made up for this test
-	if row := alertRow(a, withholds, false); strings.Contains(row, a.App) || strings.Contains(row, `"app"`) {
-		t.Errorf("a label of no app here, withheld: %s", row)
-	}
-
-	s := wire.Silence{ID: "11111111-1111-4111-8111-111111111111", State: wire.SilencePending, StartsAt: t0, EndsAt: until, CreatedBy: "root",
-		Comment: "c", Matchers: []wire.Matcher{{Name: "app", Op: wire.MatchEqual, Value: "demo"}}}
-	const wantSilence = `{"id":"11111111-1111-4111-8111-111111111111","state":"pending","matchers":[],"starts_at":"2026-11-19T14:00:00Z","ends_at":"2026-11-19T15:00:00Z","created_by":"","comment":"response withheld: the app's env_file could not be read"}`
-	if row := silenceRow(s, withholds); row != wantSilence {
-		t.Errorf("a silence withheld:\n got %s\nwant %s", row, wantSilence)
-	}
-	s.ID = "not-an-id " + generated
-	if row := silenceRow(s, withholds); strings.Contains(row, generated) || !strings.Contains(row, `"id":""`) {
-		t.Errorf("a silence withheld, its id not Alertmanager's: %s", row)
-	}
-	// Not withheld: the row as marshalled, through the filter.
-	if row := silenceRow(wire.Silence{ID: "i", State: wire.SilenceActive, Matchers: []wire.Matcher{}, StartsAt: t0, EndsAt: until}, NewRedactor(nil, nil)); !strings.HasPrefix(row, `{"id":"i","state":"active"`) {
-		t.Errorf("a silence not withheld: %s", row)
-	}
-}
-
-// TestBoxAlertsEachAppItsFilter: with two apps, each alert of an app is
-// filtered by that app's filter alone: each app's env_file value is
-// masked in its own alert, and an alert of one app carrying the other's
-// value keeps it (the filter of one app never sees the other's values),
-// as GET /_motel/apps/<app>/alerts would send each.
-func TestBoxAlertsEachAppItsFilter(t *testing.T) {
-	r := newTwoAppsRig(t)
-	alpha, bravo := r.canary["appalpha"], r.canary["appbravo"]
-	r.h.app.SetAlertsSource(&fakeHeld{ok: true, held: HeldAlerts{Alerts: []AppAlert{
-		{App: "appalpha", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "alpha said " + alpha, State: "active"}},
-		{App: "appbravo", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "bravo said " + bravo + " and " + alpha, State: "active"}},
-	}}})
-	req := httptest.NewRequest(http.MethodGet, "http://"+personBox+"/_motel/alerts", nil)
-	req.Header.Set("Authorization", r.authorization(t, "viewer of the box"))
-	w := httptest.NewRecorder()
-	if err := r.h.ServeHTTP(w, req, nil); err != nil {
-		t.Fatal(err)
-	}
-	var got wire.BoxAlerts
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || len(got.Alerts) != 2 {
-		t.Fatalf("%d %s", w.Code, w.Body)
-	}
-	byApp := map[string]string{}
-	for _, a := range got.Alerts {
-		byApp[a.App] = a.Summary
-	}
-	if byApp["appalpha"] != "alpha said [redacted:SECRET_TOKEN]" || byApp["appbravo"] != "bravo said [redacted:SECRET_TOKEN] and "+alpha {
-		t.Errorf("each app's alert: %s", w.Body)
-	}
-}
-
-// TestBoxAlertsBodyIsTheWireType: the body the route writes, rows as
-// raw bytes, has wire.BoxAlerts's keys in its order.
-func TestBoxAlertsBodyIsTheWireType(t *testing.T) {
-	tags := func(v any) []string {
-		var out []string
-		ty := reflect.TypeOf(v)
-		for i := range ty.NumField() {
-			out = append(out, ty.Field(i).Tag.Get("json"))
+// TestBoxAlertsRowOfAnAppTheBoxDidNotAllow: an alert of an app the box
+// viewer's grant covers but Decide refused (the table and the grants
+// falling apart) is the row's state, severity and times and a summary
+// that opens "response withheld", which the client reads as a withheld
+// answer; nothing of the alert's own summary, name or instance.
+func TestBoxAlertsRowOfAnAppTheBoxDidNotAllow(t *testing.T) {
+	h, people := alertsRig(t)
+	saved := decide
+	t.Cleanup(func() { decide = saved })
+	decide = func(p access.Principal, a access.Action, resource string) error {
+		if a == access.AppAlerts && resource == "demo" {
+			return errors.New("refused")
 		}
-		return out
+		return saved(p, a, resource)
 	}
-	if a, b := tags(boxAlertsBody{}), tags(wire.BoxAlerts{}); !reflect.DeepEqual(a, b) {
-		t.Errorf("the route's body %v, the wire type %v", a, b)
+	t0 := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
+	h.app.SetAlertsSource(&fakeHeld{ok: true, held: HeldAlerts{Alerts: []AppAlert{
+		{App: "demo", Alert: wire.Alert{Name: "deploy_failed", Severity: "warning", Summary: "deploy of v2 failed: a secret", StartsAt: t0, State: "active"}},
+	}}})
+	w := sendTo(t, h, "GET", "/_motel/alerts", token(people.carol))
+	var got wire.BoxAlerts
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || len(got.Alerts) != 1 {
+		t.Fatalf("%v: %d %s", err, w.Code, w.Body)
+	}
+	a := got.Alerts[0]
+	if a.Summary != "response withheld: the box did not allow this app's alerts to be read" || a.Name != "" || a.State != "active" || a.Severity != "warning" || !a.StartsAt.Equal(t0) || a.App != "demo" {
+		t.Errorf("the row: %s", w.Body)
 	}
 }

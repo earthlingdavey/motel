@@ -1035,8 +1035,8 @@ func hold(v any) string {
 
 // holdOutcome holds a deploy's version, status, phase and phases to
 // the outcome vocabulary. The words are never the filter's to change:
-// the box keeps an outcome word standing or withholds the body
-// (liveswap/redact.go, rule 3).
+// no filter meets them on a box at this version, and an older moteld
+// kept an outcome word standing or withheld the body.
 func holdOutcome(version *string, status, phase string, phases []wire.PhaseTiming) string {
 	switch {
 	case !held(version, wireVersionRe.MatchString):
@@ -1065,8 +1065,8 @@ func scopeOK(s string) bool {
 }
 
 // replacedKeys says which env_file keys the answer's redacted_env
-// names: the keys whose values the box's response filter replaced
-// anywhere in it (liveswap's redactJSON). A key is named when it holds
+// names: the keys whose values the box's filter replaced in the app's
+// text the answer holds (an older moteld: anywhere in it). A key is named when it holds
 // to a key's grammar (liveswap's envKeyRe) within 128 characters, ten
 // at most; the others are counted. A key the filter replaced in the
 // list (one equal to another key's value) arrives as its marker, and is

@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -107,7 +108,7 @@ func TestAlertLines(t *testing.T) {
 	readAll()
 	got := "\n" + strings.Join(lines(), "\n") + "\n"
 	for _, want := range []string{
-		"alerts      2 held · as of 0s ago",
+		"alerts      as of 0s ago · 2 held",
 		"            all: motel monitor alerts --box deploy.example.com --app blog",
 		"alert       deploy_failed · warning · silenced until 15:00 UTC · since 3m ago (13:57 UTC)",
 		"summary     deploy of e9a0b3f2c118 failed at starting",
@@ -118,10 +119,10 @@ func TestAlertLines(t *testing.T) {
 		}
 	}
 	for _, c := range []struct{ body, want string }{
-		{`{"monitor":"off","alerts":[]}`, "alerts      none: the box has no monitor, so nothing is raised"},
-		{`{"monitor":"unanswered","alerts":[]}`, "alerts      not known: the box could not read its Alertmanager"},
-		{`{"monitor":"later","alerts":[]}`, "alerts      not known: the box says later of its monitor"},
-		{`{"monitor":"on","alerts":[]}`, "alerts      none held · as of "},
+		{`{"monitor":"off","alerts":[]}`, "alerts      as of … · none: the box has no monitor, so nothing is raised"},
+		{`{"monitor":"unanswered","alerts":[]}`, "alerts      as of … · not known: the box could not read its Alertmanager"},
+		{`{"monitor":"later","alerts":[]}`, "alerts      as of … · not known: the box says later of its monitor"},
+		{`{"monitor":"on","alerts":[]}`, "alerts      as of … · none held"},
 		{`{"monitor":"on","alerts":[` + strings.Repeat(`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"},`, 4) +
 			`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"}]}`, "            and 2 more"},
 		{`{"monitor":"on","alerts":[{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"}]}`, "alert       a · info · unprocessed · since 1m ago"},
@@ -129,7 +130,8 @@ func TestAlertLines(t *testing.T) {
 		f.Body("alerts/blog.json", c.body)
 		now = now.Add(model.AlertsEvery)
 		readAll()
-		got := strings.Join(lines(), "\n")
+		// The age, which moves with each read, said as …
+		got := ageOf.ReplaceAllString(strings.Join(lines(), "\n"), "as of … · ")
 		if !strings.Contains("\n"+got+"\n", "\n"+c.want) || strings.Contains(got, "more: ") {
 			t.Errorf("%s:\n%s\nwant a line holding %q", c.body, got, c.want)
 		}
@@ -141,7 +143,7 @@ func TestAlertLines(t *testing.T) {
 	f.Set("alerts:blog", fail(model.FailNoAnswer))
 	now = now.Add(model.AlertsEvery)
 	readAll()
-	if got := lines(); len(got) < 2 || !strings.HasSuffix(got[0], " · the last read failed") || got[1] != "            the last read failed: no" {
+	if got := lines(); len(got) < 2 || !strings.HasSuffix(got[0], " ago · the last read failed · 1 held") || got[1] != "            the last read failed: no" {
 		t.Errorf("a failed read beside an answer: %q", got)
 	}
 	f.Set("alerts:blog", &model.Failure{Kind: model.FailNotFound, Message: "deploy.example.com answered 404"})
@@ -495,7 +497,7 @@ func TestAlertsBesideAStatusThatFailed(t *testing.T) {
 		for _, l := range s.Overview("blog", now).Note {
 			got = append(got, l.Text())
 		}
-		if shown := strings.Contains(strings.Join(got, "\n"), "alerts      2 held"); shown != c.shown {
+		if shown := strings.Contains(strings.Join(got, "\n"), " · 2 held"); shown != c.shown {
 			t.Errorf("%s: the alerts shown %v, want %v: %q", c.name, shown, c.shown, got)
 		}
 	}
@@ -518,7 +520,7 @@ func TestStatusRefusedDropsTheAlerts(t *testing.T) {
 		for _, l := range append(s.Overview("blog", now).Note, s.Overview("blog", now).Fields...) {
 			got = append(got, l.Text())
 		}
-		return strings.Contains(strings.Join(got, "\n"), "alerts      2 held")
+		return strings.Contains(strings.Join(got, "\n"), " · 2 held")
 	}
 	if !shown() {
 		t.Fatal("the alerts are not shown to begin with")
@@ -540,3 +542,6 @@ func TestStatusRefusedDropsTheAlerts(t *testing.T) {
 		t.Error("alerts read before the status was refused are shown beside its later failure")
 	}
 }
+
+// ageOf is the age at the head of an app's alerts line.
+var ageOf = regexp.MustCompile(`as of [^·]* ago · `)

@@ -66,8 +66,8 @@ func hostileDeploy() wire.DeployResult {
 		Phases: []wire.PhaseTiming{{Name: "downloading", Seconds: 2.1}, {Name: "soaking", Seconds: 65.4}},
 		Detail: &wire.DeployDetail{
 			Exit:    "exit status 3 " + hostile[5],
-			Probe:   &wire.ProbeDetail{Status: 500, Location: hostile[2], Body: "{\"db\":\"connection refused\"}\n" + hostile[7]},
-			LogTail: append([]string{"pg: connection refused (127.0.0.1:5432)", "two\nlines " + hostile[6], strings.Repeat("L", 500)}, hostile...),
+			Probe:   &wire.ProbeDetail{Status: 500, Location: wire.AppText(hostile[2]), Body: wire.AppText("{\"db\":\"connection refused\"}\n" + hostile[7])},
+			LogTail: appTexts(append([]string{"pg: connection refused (127.0.0.1:5432)", "two\nlines " + hostile[6], strings.Repeat("L", 500)}, hostile...)),
 		},
 	}
 }
@@ -733,4 +733,14 @@ func TestRoots(t *testing.T) {
 	if len(got) != 1 || got[0] != "SSL_CERT_DIR=/etc/x" {
 		t.Fatalf("roots = %q", got)
 	}
+}
+
+// appTexts is lines as the wire type carries them (the spike's option
+// "doors": a tail line is a wire.AppText).
+func appTexts(lines []string) []wire.AppText {
+	out := make([]wire.AppText, len(lines))
+	for i, l := range lines {
+		out[i] = wire.AppText(l)
+	}
+	return out
 }

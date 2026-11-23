@@ -57,10 +57,15 @@ func (s *Session) alertLines(app string, now time.Time) []Line {
 	default:
 		head = append(head, ownC("not known: the box says ", Warn), boxT(g.V.Monitor), own(" of its monitor"))
 	}
-	head = append(head, own(" · as of "+Ago(now.Sub(g.At))+" ago"))
+	// The age first, then stale and a failure, then what the box said: the
+	// row is cut at the window's edge, and the box's words of its monitor
+	// may be long, so the cut takes them, not the words of the answer's
+	// age (as the box screen's lines lay theirs).
+	lead := append(Line{own("as of " + Ago(now.Sub(g.At)) + " ago")}, s.stale(Job{Kind: KAlerts, App: app})...)
 	if a.alertsErr != nil {
-		head = append(head, ownC(" · the last read failed", Warn))
+		lead = append(lead, ownC(" · the last read failed", Warn))
 	}
+	head = append(append(lead, own(" · ")), head...)
 	out := []Line{field("alerts", head...)}
 	if a.alertsErr != nil {
 		// Why, beside the answer kept: it may be older than an alert

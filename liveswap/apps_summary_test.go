@@ -157,27 +157,24 @@ func sameSummary(a, b wire.DeploySummary) bool {
 		bytes.Equal(a.SHA256, b.SHA256) && bytes.Equal(a.StartedAt, b.StartedAt) && bytes.Equal(a.FinishedAt, b.FinishedAt)
 }
 
-// TestAppsRowWithheld: an app whose filter withholds (its env_file
-// unreadable) is a row of its name and the filter's sentence; the list
-// is a 200 and the other app's row is whole.
-func TestAppsRowWithheld(t *testing.T) {
-	r := newAppsRig(t, "whole", "withheld")
+// TestAppsRowWithAnUnreadableEnvFile: a row's summary is moteld's own
+// (a phase, a version, outcome words, times), which no filter changes,
+// so an app whose env_file does not read is listed whole, as the other
+// is. An older moteld withheld that row.
+func TestAppsRowWithAnUnreadableEnvFile(t *testing.T) {
+	r := newAppsRig(t, "whole", "unread")
 	for name, ma := range r.apps {
 		must(t, ma.Deploy(context.Background(), deployRequest{url: "https://x/" + name + ".tgz", version: "v1"}))
 	}
-	r.apps["withheld"].spec.envFile = filepath.Join(t.TempDir(), "missing.env")
+	r.apps["unread"].spec.envFile = filepath.Join(t.TempDir(), "missing.env")
+	r.apps["unread"].secretsLoaded = false
 	rows := r.list(t)
-	var whole, withheld wire.AppEntry
-	must(t, json.Unmarshal(rows["whole"], &whole))
-	must(t, json.Unmarshal(rows["withheld"], &withheld))
-	if whole.Summary == nil || whole.Error != "" || whole.Summary.CurrentVersion != "v1" {
-		t.Errorf("the other app's row: %s", rows["whole"])
-	}
-	if withheld.Summary != nil || !strings.HasPrefix(withheld.Error, "response withheld: the app's env_file could not be read") {
-		t.Errorf("the withheld row: %s", rows["withheld"])
-	}
-	if strings.Contains(string(rows["withheld"]), "v1") {
-		t.Errorf("the withheld row holds its status: %s", rows["withheld"])
+	for _, name := range []string{"whole", "unread"} {
+		var e wire.AppEntry
+		must(t, json.Unmarshal(rows[name], &e))
+		if e.Summary == nil || e.Error != "" || e.Summary.CurrentVersion != "v1" || e.Summary.NewestDeploy == nil || e.Summary.NewestDeploy.Version != "v1" {
+			t.Errorf("%s's row: %s", name, rows[name])
+		}
 	}
 }
 
@@ -207,101 +204,6 @@ func TestAppsRowAsksDecide(t *testing.T) {
 	}
 	if !strings.Contains(string(rows["one"]), `"summary":`) {
 		t.Errorf("the allowed row: %s", rows["one"])
-	}
-}
-
-// TestAppOwnNameInClear: an app whose env_file holds its own name
-// (DB_NAME=<app>) is named in clear where a body names the app, in
-// GET /<app>, a failed deploy's body and the list's row, which is whole
-// and not withheld; the name is still replaced in text, and the app's
-// other values, one holding the name inside it among them, stay
-// redacted everywhere, ?deploy= included.
-func TestAppOwnNameInClear(t *testing.T) {
-	const app = "billingapp"
-	r := newAppsRig(t, app)
-	ma := r.apps[app]
-	must(t, os.WriteFile(ma.spec.envFile, []byte("DB_NAME="+app+"\nOTHER_SECRET=s3cr3t-other-91ab\nNAMED_TOKEN=tok-"+app+"-7c41e0\n"), 0o600)) // gitleaks:allow — made up for this test
-	must(t, ma.Deploy(context.Background(), deployRequest{url: "https://x/1.tgz", version: "v1", by: "github:example/" + app + "@refs/heads/main"}))
-	ma.runner.(*fakeRunner).setStartErr(errors.New("boom s3cr3t-other-91ab tok-" + app + "-7c41e0 in " + app))
-	// Its deployer holds a value too, so the list row, which carries no
-	// error, carries one.
-	failed := ma.Deploy(context.Background(), deployRequest{url: "https://x/2.tgz", version: "v2", by: "local:tok-" + app + "-7c41e0"})
-	if failed == nil {
-		t.Fatal("the failing deploy succeeded")
-	}
-	_, body, rd := deployOutcome(ma, failed)
-	raw, err := json.Marshal(body)
-	must(t, err)
-	failure := rd.redactJSON(raw)
-
-	get := func(target string) string {
-		t.Helper()
-		w := sendTo(t, r.h, http.MethodGet, target, token(r.people.carol))
-		if w.Code != http.StatusOK {
-			t.Fatalf("GET %s: %d %s", target, w.Code, w.Body)
-		}
-		return w.Body.String()
-	}
-	row := string(r.list(t)[app])
-	for what, b := range map[string]string{
-		"GET /" + app:  get("/" + app),
-		"?deploy=v2":   get("/" + app + "?deploy=v2"),
-		"failure body": failure,
-		"list row":     row,
-	} {
-		for _, secret := range []string{"s3cr3t-other-91ab", "tok-" + app + "-7c41e0"} {
-			if strings.Contains(b, secret) {
-				t.Errorf("%s holds %q: %s", what, secret, b)
-			}
-		}
-		if !strings.Contains(b, "[redacted:NAMED_TOKEN]") {
-			t.Errorf("%s: the value holding the name is not replaced whole: %s", what, b)
-		}
-	}
-	for what, b := range map[string]string{"GET /" + app: get("/" + app), "failure body": failure} {
-		if !strings.Contains(b, `"app":"`+app+`"`) || !strings.Contains(b, "in [redacted:DB_NAME]") || !strings.Contains(b, "github:example/[redacted:DB_NAME]@") {
-			t.Errorf("%s: the app is not named in clear, or its name is not replaced in text: %s", what, b)
-		}
-	}
-	if !strings.HasPrefix(row, `{"name":"`+app+`",`) || !strings.Contains(row, `"summary":{`) || strings.Contains(row, `"error"`) {
-		t.Errorf("the list row: %s", row)
-	}
-}
-
-// TestHoldOwnName: rule 5 leaves the app's name standing in a JSON
-// body's own "app" pair alone: not under another key, not one that
-// ends in "app", not a longer string the name begins, not in a string
-// that spells the pair; with a name that is also an outcome word, its
-// outcome pairs too. Only the value as written: another value's
-// encoding equal to the name is replaced in the pair. And plain text
-// has no such rule.
-func TestHoldOwnName(t *testing.T) {
-	for _, tc := range []struct{ env, name, body, want string }{
-		{"DB_NAME=billingapp", "billingapp",
-			`{"app":"billingapp","error":"billingapp: \"app\":\"billingapp\"","path":"/srv/billingapp/run"}`,
-			`{"app":"billingapp","error":"[redacted:DB_NAME]: \"app\":\"[redacted:DB_NAME]\"","path":"/srv/[redacted:DB_NAME]/run","redacted_env":["DB_NAME"]}`},
-		{"DB_NAME=starting", "starting", `{"app":"starting","phase":"starting","error":"starting"}`,
-			`{"app":"starting","error":"[redacted:DB_NAME]","phase":"starting","redacted_env":["DB_NAME"]}`},
-		{"DB_NAME=billingapp", "billingapp", `{"app":"billingapp"}`, `{"app":"billingapp"}`}, // only the pair: nothing was replaced
-		{"DB_NAME=billingapp", "billingapp", `{"webapp":"billingapp"}`, `{"redacted_env":["DB_NAME"],"webapp":"[redacted:DB_NAME]"}`},
-		{"DB_NAME=billingapp", "billingapp", `{"app":"billingappsuffix"}`, `{"app":"[redacted:DB_NAME]suffix","redacted_env":["DB_NAME"]}`},
-		{"DB_NAME=billingapp", "billingapp", `{"name":"billingapp"}`, `{"name":"[redacted:DB_NAME]","redacted_env":["DB_NAME"]}`},
-		// The app is named by the hex of another value: that is an
-		// encoding of a secret, not the name as a value holds it.
-		{"TOKEN=abcdefgh", "6162636465666768", `{"app":"6162636465666768"}`, `{"app":"[redacted:TOKEN]","redacted_env":["TOKEN"]}`},
-		{"TOKEN=abcdefgh\nDB_NAME=6162636465666768", "6162636465666768", `{"app":"6162636465666768"}`,
-			`{"app":"[redacted:DB_NAME,TOKEN]","redacted_env":["DB_NAME","TOKEN"]}`},
-	} {
-		rd := NewRedactor(strings.Split(tc.env, "\n"), nil)
-		rd.holdOwnName(tc.name)
-		if got := rd.redactJSON([]byte(tc.body)); got != tc.want {
-			t.Errorf("%s, %s:\n got %s\nwant %s", tc.env, tc.body, got, tc.want)
-		}
-	}
-	rd := NewRedactor([]string{"DB_NAME=billingapp"}, nil)
-	rd.holdOwnName("billingapp")
-	if got, keys := rd.Redact(`"app":"billingapp" and billingapp`); got != `"app":"[redacted:DB_NAME]" and [redacted:DB_NAME]` || len(keys) != 1 {
-		t.Errorf("plain text: %s %v", got, keys)
 	}
 }
 

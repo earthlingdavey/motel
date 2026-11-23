@@ -52,6 +52,19 @@ func (s *Session) asOf(at time.Time, now time.Time) Line {
 	return Line{own("as of " + hms(at) + " UTC · " + Ago(now.Sub(at)) + " ago")}
 }
 
+// stale is said after an answer's age while the read j behind it is
+// marked by a wake from sleep (Engine.Woke), until it answers again; nil
+// otherwise. The lines that say a kept answer's age say it so, before
+// "the last read failed" when both are said; a record's crumb
+// (RecordAsOf), the logs screen's and the title bar's whoami words (both
+// owed, client/README.md) do not.
+func (s *Session) stale(j Job) Line {
+	if !s.Engine.Woke(j) {
+		return nil
+	}
+	return Line{ownC(" · stale", Warn)}
+}
+
 // Overview is app's screen at now.
 func (s *Session) Overview(app string, now time.Time) OverviewView {
 	s.seen(now)
@@ -77,7 +90,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		return v
 	}
 	st := a.st.V
-	v.AsOf = s.asOf(a.st.At, now)
+	v.AsOf = append(s.asOf(a.st.At, now), s.stale(Job{Kind: KStatus, App: app})...)
 	if a.err != nil {
 		v.AsOf = append(v.AsOf, ownC(" · the last read failed", Warn))
 		v.Failed = Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(a.err), 2*LineMax)}}
@@ -445,13 +458,13 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 			if p.Location != "" {
 				// The app's own header, inside the client's sentence: a
 				// quotation, so ", body:" after it is the client's.
-				l = append(l, own(" from "), quoted(p.Location))
+				l = append(l, own(" from "), quoted(string(p.Location)))
 			}
 			if p.Body != "" {
 				l = append(l, own(", body:"))
 			}
 			v.Head = append(v.Head, field("probe", l...))
-			for _, b := range termtext.TabbedLines(p.Body) {
+			for _, b := range termtext.TabbedLines(string(p.Body)) {
 				v.Head = append(v.Head, Line{own("              "), Seg{T: Capped(b.String(), LineMax)}})
 			}
 		}
@@ -473,7 +486,7 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 		v.TailTitle = Line{own("no log tail: this app may keep its output on the box (deploy_log_lines 0)")}
 	case len(dt.LogTail) > 0:
 		for _, l := range dt.LogTail {
-			ts := termtext.TabbedLines(l)
+			ts := termtext.TabbedLines(string(l))
 			if l == "" {
 				// TabbedLines makes no line of nothing; an empty line of the
 				// tail is a line.

@@ -235,7 +235,7 @@ func listReleases(d appDirs) (versions, byMtime []string) {
 	for _, e := range entries {
 		// A directory whose name is not a version is not a release:
 		// nothing could deploy it, roll back to it, or record it
-		// (redact.go, rule 4). Dotfiles and staging dirs are among
+		// (validVersion). Dotfiles and staging dirs are among
 		// what the alphabet refuses.
 		if !e.IsDir() || !validVersion(e.Name()) {
 			continue

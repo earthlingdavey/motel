@@ -58,13 +58,7 @@ func (p *pushing) admit(b *proof.Bundle, body []byte) (done bool, err error) {
 	if what, age, pending, err := h.pending(); err != nil {
 		return true, p.fail(err)
 	} else if pending {
-		// The pending id is held out of the filter as the push's own is;
-		// any other name in in/ is not an id and gets no exemption.
-		safe := []string{p.id, p.commit}
-		if isRequestID(what) {
-			safe = append(safe, what)
-		}
-		return true, respond(p.w, http.StatusConflict, errorBody(msgPending(what, age)), safe...)
+		return true, respond(p.w, http.StatusConflict, errorBody(msgPending(what, age)))
 	}
 
 	base, installed, done, err := p.state()

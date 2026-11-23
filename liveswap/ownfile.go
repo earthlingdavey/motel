@@ -20,7 +20,7 @@ import (
 // what stands at one of them or where a link there was meant to
 // point: an operator's (`<root>/blog -> <root>/shop` by mistake)
 // looks like any other, so following one could write or read a file
-// that is not this app's (deploys.go, rule 4):
+// that is not this app's (deploys.go, rule 3):
 //
 //   - A write goes to a fresh temp file under a random name in the
 //     same directory (os.CreateTemp: O_EXCL, mode 0600 — never a fixed

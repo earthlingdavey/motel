@@ -360,9 +360,9 @@ func quantileMs(ss []series) *float64 {
 // roundTo keeps v to 1/per; every fraction in the object is rounded (a
 // CPU average to a millionth of a core; the memory values are bytes). An unrounded one marshals as a run
 // of twenty or more digits (5.740305648246404e-05 is
-// 0.00005740305648246404 in JSON), which the app's response filter
-// reads as a generated secret and masks inside the number; the body is
-// then no JSON, and the whole status is withheld.
+// 0.00005740305648246404 in JSON), which says nothing a person reads,
+// and which an older moteld's filter, run over the whole status, read
+// as a generated secret.
 func roundTo(v, per float64) float64 { return math.Round(v*per) / per }
 
 // lastPush is a last_over_time answer's value (memory's or the cap's

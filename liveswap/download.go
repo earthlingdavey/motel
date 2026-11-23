@@ -157,11 +157,8 @@ func pinArtifactURL(rawURL string, allowInsecure bool, allowlist []artifactAllow
 }
 
 // digestMismatch refuses a pinned pull whose body hashed to something
-// else. It is a validationError — the webhook answers 422 with the
-// message — that also carries the two digests as values: the response
-// filter masks a token of a digest's shape unless it is told the
-// token is a name (redactorFor), and the message is no use to the
-// deployer with both digests masked. deployOutcome passes names() on.
+// else. It is a validationError: the webhook answers 422 with the
+// message, which names both digests.
 type digestMismatch struct{ pinned, got string }
 
 func (d digestMismatch) Error() string {
@@ -170,10 +167,6 @@ func (d digestMismatch) Error() string {
 
 // Unwrap makes errors.As find the validationError the webhook maps to 422.
 func (d digestMismatch) Unwrap() error { return validationError{msg: d.Error()} }
-
-// names is what the filter must let through: both digests, or nothing
-// for the zero value.
-func (d digestMismatch) names() []string { return []string{d.pinned, d.got} }
 
 // The per-stage bounds of the artifact fetch. Connect and handshake
 // match net/http's DefaultTransport; the header wait is the one this

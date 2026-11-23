@@ -261,9 +261,10 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   `…`; journald itself stores a line over 48 KiB as several), each run
   of bytes that are not UTF-8 is one `U+FFFD`, and control characters
   are as the app wrote them, for your terminal to be kept from.
-- Each line passes the app's filter on its own: the values of its
-  `env_file` in the forms the box knows, and some shapes of
-  credential. `redacted_env` names the keys it replaced. The
+- Each line's text passes the app's filter on its own, where it
+  enters the answer: the values of its `env_file` in the forms the box
+  knows, and some shapes of credential. `redacted_env` names the keys
+  it replaced. The
   filter knows the values the running app was launched with for as
   long as it runs, after a moteld restart too (read back from
   systemd), though the file was changed since: an old value still in
@@ -276,7 +277,13 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   already written, so revoke the old credential once the app runs
   with the new one. Nor, for the moments after a moteld restart before
   it has reattached to the app (longer while its user manager does not
-  answer), a value the running app holds that the file no longer does.
+  answer), a value the running app holds that the file no longer does. A line's time and release, the cursor and the other
+  fields are the box's own and pass no filter. While the app's
+  `env_file` cannot be read, each line's text is the filter's sentence
+  (`[withheld: …]`) and the rest is sent. Of a line longer than 4 KiB
+  the filter reads 4 KiB and a margin, 8 KiB or the longest form of a
+  value it knows if that is longer: more than is sent. Not a value the
+  app prints across two lines, which are two lines here.
 - A logs reader who can send the app input (a request to its site, which
   most apps log) can test a guess of an `env_file` value: a line holding
   a whole value of 8 characters or more comes back as the marker that

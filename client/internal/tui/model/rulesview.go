@@ -31,7 +31,11 @@ func (s *Session) RulesAsOf(app string, now time.Time) Line {
 	if st == nil {
 		return nil
 	}
-	l := s.asOf(st.At, now)
+	j := Job{Kind: KBoxRules}
+	if app != "" {
+		j = Job{Kind: KRules, App: app}
+	}
+	l := append(s.asOf(st.At, now), s.stale(j)...)
 	if err != nil {
 		l = append(l, ownC(" · the last read failed", Warn))
 	}
