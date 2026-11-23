@@ -430,15 +430,18 @@ type LogsKeysOn struct {
 // LogsKeys is which of the logs screen's own keys act, asked of the
 // session as it is now, on the screen of app laid to width cells and
 // height rows (the page's, as LogsViewFit is given them): nothing is
-// kept of an answer, so the footer of a frame and the keys pressed after
-// it go by that frame's layout, and by the app in front.
+// kept of an answer, so the footer goes by its frame's layout and a key
+// by the layout when it is pressed, both of the app in front (a head
+// that changed between the two, by the clock, is the accepted row in
+// client/README.md).
 //
 // The lines are live when the screen shows them, or would with room:
 // the scroll keys act when they are and have a row, and at least one
-// item is held; End when they are, or a view held is to be let go (one
-// held where the screen no longer shows it too: the grant gone, the head
-// filling the page); w when they are, or while the first read is asked,
-// so the lines arrive as it says.
+// item is held; End when they are followed (not a follow the box
+// stopped), or a view held is to be let go (one held where the screen
+// no longer shows it too: the grant gone, the head filling the page); w
+// when they are live, or while the first read is asked, so the lines
+// arrive as it says.
 func (s *Session) LogsKeys(app string, now time.Time, width, height int, cells Cells) LogsKeysOn {
 	s.seen(now)
 	_, d, rows := s.logsFit(app, now, width, height, cells)
@@ -448,7 +451,7 @@ func (s *Session) LogsKeys(app string, now time.Time, width, height int, cells C
 	asking := s.LogsGrant(app) == Granted && (!mine || s.logs.got == nil && s.logs.err == nil)
 	return LogsKeysOn{
 		Scroll: live && rows > 0 && len(d.items) > 0,
-		Follow: live || held,
+		Follow: live && !d.stopped || held,
 		Wrap:   live || asking,
 	}
 }

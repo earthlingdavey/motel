@@ -121,3 +121,26 @@ func TestLogsKeysHeld(t *testing.T) {
 		t.Errorf("held, the grant gone: %+v, want %+v", got, want)
 	}
 }
+
+// TestLogsKeysStopped: a follow the box stopped after lines (kept off)
+// still scrolls and wraps its lines, but End follows nothing there:
+// it is offered only to let a view held go.
+func TestLogsKeysStopped(t *testing.T) {
+	s, f, now := logsOpen(t, "blog", nil)
+	f.Body("logs/blog.json", `{"kept":"off","lines":[],"more":false,"gap":false}`)
+	*now = now.Add(model.LogsEvery)
+	drive(s, f, *now, 5)
+	if v := logsText(s, *now, 80, 12); !strings.Contains(v, "── not following") {
+		t.Fatalf("not stopped:\n%s", v)
+	}
+	if got, want := s.LogsKeys("blog", *now, 80, 12, runes), (model.LogsKeysOn{Scroll: true, Wrap: true}); got != want {
+		t.Errorf("stopped, lines shown: %+v, want %+v", got, want)
+	}
+	s.LogsScroll("blog", -3, 80, runes, false)
+	if v := logsText(s, *now, 80, 12); !strings.Contains(v, "── held") {
+		t.Fatalf("not held:\n%s", v)
+	}
+	if got, want := s.LogsKeys("blog", *now, 80, 12, runes), (model.LogsKeysOn{Scroll: true, Follow: true, Wrap: true}); got != want {
+		t.Errorf("stopped and held: %+v, want %+v", got, want)
+	}
+}
