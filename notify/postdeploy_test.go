@@ -591,7 +591,7 @@ func TestPostDeploySaysItStarts(t *testing.T) {
 	})
 	// A relaunch after a stop says it is one.
 	re := newTestComparator(t, regressRule)
-	re.relaunch("blog", "v1", "")
+	re.relaunch("shop", "s1", "")
 	if got := infoLine(t, re.logs, lineStarts); got["relaunch"] != true {
 		t.Errorf("a relaunch after a stop: %v", got)
 	}
