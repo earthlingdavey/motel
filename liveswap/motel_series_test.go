@@ -253,11 +253,7 @@ func TestSeriesChosenByTheHandle(t *testing.T) {
 // number or a time of the body (a point's unix time, a run of digits
 // inside a memory value, a date, the end's hour, a short number) leaves
 // every point, the step and the end as the source gave them, and the
-// read whole. The points and the step are numbers, which rule 7 of
-// redact.go holds in any body but in its fallbacks (a value across a
-// number's edge among them), and filterSeries holds even then; the end
-// is a time under a key rule 7 does not hold, so a date value or a piece
-// of one would be replaced inside it but for filterSeries.
+// read whole: no filter runs over a series body.
 func TestSeriesNumbersPassNoFilter(t *testing.T) {
 	for _, value := range []string{"1795096800", "19084083", "12345678901", "2026-11-19", "2026-11-19T14:00:00Z", "T14:00:00", "0.000123", "42", "300", "191889408,"} {
 		h, people := alertsRig(t)
@@ -274,64 +270,34 @@ func TestSeriesNumbersPassNoFilter(t *testing.T) {
 	}
 }
 
-// TestSeriesWordsPassTheFilter: the body's words do pass the app's
-// filter: a value equal to a panel's name is masked there, the body
-// names the key, and the points stay; a body the filter withholds (its
-// env_file unreadable) is the filter's sentence; and a value spanning
-// the words' punctuation changes their structure, so the body goes
-// whole through the filter, the value not in the bytes sent. (One made
-// of the punctuation and a number's digits, which only the whole body
-// holds, can stand in it: the accepted row in DESIGN-access.md.)
-func TestSeriesWordsPassTheFilter(t *testing.T) {
-	h, people := alertsRig(t)
-	ma := h.app.managed["demo"]
-	must(t, os.WriteFile(ma.spec.envFile, []byte("PANEL=requests_per_second\n"), 0o600))
-	h.app.SetSeriesSource(&fakeSeries{byApp: map[string]wire.Series{"demo": demoSeries()}})
-	w := sendTo(t, h, "GET", "/_motel/apps/demo/series?range=24h", token(people.alice))
-	var got struct {
-		wire.Series
-		RedactedEnv []string `json:"redacted_env"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got.Panels) != 5 || got.Panels[2].Name != "[redacted:PANEL]" ||
-		!reflect.DeepEqual(got.Panels[2].Points, demoSeries().Panels[2].Points) || !reflect.DeepEqual(got.RedactedEnv, []string{"PANEL"}) ||
-		got.End == nil || !got.End.Equal(seriesEnd) || got.StepSeconds != 300 || got.Store != wire.StoreOn {
-		t.Errorf("a panel's name as a value: %v: %s", err, w.Body)
-	}
-	if strings.Contains(w.Body.String(), "requests_per_second") {
-		t.Errorf("the value is in the body: %s", w.Body)
-	}
-
-	// The store's word and the window are the box's own: a value equal
-	// to one leaves them as they are, and the answer read.
-	for _, c := range []struct{ value, store string }{{"unanswered", wire.StoreUnanswered}, {"unanswered", wire.StoreOn}} {
+// TestSeriesWordsPassNoFilter: a series is moteld's and its store's
+// (panel names, units, a window, points), with nothing of the app's
+// text, and no filter runs over it: a value equal to a panel's name, to
+// the store's word or to a piece of the body's punctuation changes
+// nothing, and with the app's env_file unreadable the series is sent as
+// it is. An older moteld filtered its words with the app's values.
+func TestSeriesWordsPassNoFilter(t *testing.T) {
+	for _, env := range []string{
+		"PANEL=requests_per_second\n",
+		"WORD=unanswered\n",
+		`K=bytes"},{"name":"cpu_cores` + "\n",
+		`K="name":"cpu_cores","unit":"cores` + "\n",
+		"", // the file removed: unreadable
+	} {
 		h, people := alertsRig(t)
-		must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("WORD="+c.value+"\n"), 0o600))
-		src := &fakeSeries{byApp: map[string]wire.Series{"demo": demoSeries()}, unanswered: c.store == wire.StoreUnanswered}
-		h.app.SetSeriesSource(src)
-		w := sendTo(t, h, "GET", "/_motel/apps/demo/series?range=24h", token(people.alice))
-		var got wire.Series
-		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Store != c.store || got.Window != "24h" || strings.Contains(w.Body.String(), "redacted") {
-			t.Errorf("WORD=%s, the store %s: %v %s", c.value, c.store, err, w.Body)
+		ma := h.app.managed["demo"]
+		if env == "" {
+			must(t, os.Remove(ma.spec.envFile))
+			ma.secretsLoaded = false
+		} else {
+			must(t, os.WriteFile(ma.spec.envFile, []byte(env), 0o600))
 		}
-	}
-
-	must(t, os.Remove(ma.spec.envFile))
-	ma.secretsLoaded = false
-	w = sendTo(t, h, "GET", "/_motel/apps/demo/series?range=24h", token(people.alice))
-	if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), `{"error":"response withheld`) {
-		t.Errorf("withheld: %d %s", w.Code, w.Body)
-	}
-
-	// The first stands in the words alone (the points come between them
-	// in the body), the second in both: neither is in the bytes sent,
-	// whatever the filter then did with the whole body.
-	for _, value := range []string{`bytes"},{"name":"cpu_cores`, `"name":"cpu_cores","unit":"cores`} {
-		h, people := alertsRig(t)
-		must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K="+value+"\n"), 0o600))
 		h.app.SetSeriesSource(&fakeSeries{byApp: map[string]wire.Series{"demo": demoSeries()}})
 		w := sendTo(t, h, "GET", "/_motel/apps/demo/series?range=24h", token(people.alice))
-		if w.Code != http.StatusOK || strings.Contains(w.Body.String(), value) || !json.Valid(w.Body.Bytes()) {
-			t.Errorf("K=%s: %d %s", value, w.Code, w.Body)
+		var got wire.Series
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || !reflect.DeepEqual(got.Panels, demoSeries().Panels) ||
+			got.End == nil || !got.End.Equal(seriesEnd) || got.StepSeconds != 300 || got.Store != wire.StoreOn || got.Window != "24h" || strings.Contains(w.Body.String(), "redacted") {
+			t.Errorf("%q: %v: %d %s", env, err, w.Code, w.Body)
 		}
 	}
 }

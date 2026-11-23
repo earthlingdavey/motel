@@ -101,7 +101,7 @@ var errLogsEntryTooLong = fmt.Errorf("an entry of journalctl's output is over %d
 // array of byte values when it is not UTF-8 or holds a control
 // character, kept as the bytes it is: the filter must see an env_file
 // value's bytes as the app wrote them, and only what it returns is made
-// valid UTF-8 (filterLogLine). A MESSAGE
+// valid UTF-8 (door.logLine). A MESSAGE
 // that is absent or null is an error, never an empty line: with --all
 // journalctl prints every MESSAGE.
 func decodeEntry(raw []byte) (logEntry, error) {

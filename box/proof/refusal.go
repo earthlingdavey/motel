@@ -30,10 +30,10 @@ import (
 // trouble (ssh-keygen could not be run), not a verdict on the push.
 //
 // IDs are the object ids Msg names — HEAD, the baseline, a commit on
-// the chain, a tree — so that an answer can hold them out of liveswap's
-// response filter, whose entropy layer masks any 40-hex run: a refusal
-// that masked the commit it is about would name nothing (DESIGN-box.md,
-// "Handler contract").
+// the chain, a tree — each in the id grammar, which the result keeps
+// beside the refusal (named). An older moteld held them out of the
+// heuristics it ran over every answer, whose entropy layer masks any
+// 40-hex run; no filter runs over an answer now.
 type Refusal struct {
 	Msg  string
 	IDs  []string

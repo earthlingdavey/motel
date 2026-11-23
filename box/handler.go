@@ -39,7 +39,9 @@ func init() {
 // POST on `/` is authenticated first, on the limiter liveswap's
 // webhook uses, so an unauthenticated caller gets the same flat 401 a
 // deploy host gives; the route's action is then put to access.Decide
-// (routes). Every body passes liveswap's response filter.
+// (routes). No filter runs over a body: what an answer holds of the
+// pusher's text, or of caddy validate's, passed a filter where it
+// entered (diff.go, validate.go).
 type Handler struct {
 	app     *App
 	logger  *zap.Logger
@@ -260,11 +262,7 @@ func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.I
 	}
 	edited := want != "" && sum != want && !busy && !h.inFlight()
 	body := wire.BoxStatus{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient(), OutOfBand: edited}
-	safe := []string{base.SHA, shape.Host, sum}
-	if body.Recipient != "" { // a bech32 key is what the entropy layer catches
-		safe = append(safe, body.Recipient)
-	}
-	return respond(w, http.StatusOK, body, safe...)
+	return respond(w, http.StatusOK, body)
 }
 
 // inFlight says a transaction's record (txn.json) stands: from before
@@ -370,13 +368,10 @@ func (h *Handler) logStateError(what string, err error) {
 
 func errorBody(msg string) wire.Error { return wire.Error{Error: msg} }
 
-// respond writes body through liveswap's response filter: the shape
-// and entropy layers, with safe — the protocol's own commit, digest and
-// host, each one the caller checked against its grammar — held out of
-// them, since a 40-hex commit and a 64-hex digest are exactly what the
-// entropy layer exists to catch.
-func respond(w http.ResponseWriter, code int, body any, safe ...string) error {
-	return liveswap.RespondJSON(w, code, body, liveswap.NewRedactor(nil, safe))
+// respond writes body. What a result holds of the pusher's text was
+// filtered when the result was made (diff.go, validate.go).
+func respond(w http.ResponseWriter, code int, body any) error {
+	return liveswap.RespondJSON(w, code, body)
 }
 
 var (

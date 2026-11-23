@@ -54,43 +54,39 @@ func restartedLogsRig(t *testing.T, launched string, change func(t *testing.T, s
 // TestReattachKnowsTheLaunchedValues (#657): after a moteld restart
 // that reattaches to a running instance, every answer that carries the
 // app's text is filtered with the values the instance was launched
-// with, and redacted_env names the key: the logs read, the status's
-// filter, and the filter a deploy's record is written through. Whatever
-// the operator did to the env_file since the launch. While the file
-// cannot be read (gone, unreadable), every body is withheld as before:
-// the journal holds lines of the app's other units too, which the
-// reattach did not read (a candidate launched from the file as it was
-// later). The record's filter knows the launched value whatever the
-// file's state (a record whose own file is there but does not parse is
-// written as its envelope, recordRedactor's own rule); and the moment
-// the file reads again, every body does.
+// with, and redacted_env names the key: the logs read, the app's door,
+// and the door a failed deploy's detail passes. Whatever the operator
+// did to the env_file since the launch. While the file cannot be read
+// (gone, unreadable), the app's text is the filter's sentence as
+// before: the journal holds lines of the app's other units too, which
+// the reattach did not read (a candidate launched from the file as it
+// was later). A failed deploy's door reads no file and knows the
+// launched value whatever the file's state; and the moment the file
+// reads again, every door does.
 func TestReattachKnowsTheLaunchedValues(t *testing.T) {
 	launched := "API_TOKEN=" + launchedToken + "\nOTHER=kept-value-0000\n"
 	rotated := "API_TOKEN=" + rotatedToken + "\nOTHER=kept-value-0000\n"
 	for _, c := range []struct {
 		name   string
 		unread bool
-		// unparsed: the file is there and does not read whole, so the
-		// record's filter names that and the record is its envelope.
-		unparsed bool
-		change   func(t *testing.T, spec *appSpec)
+		change func(t *testing.T, spec *appSpec)
 	}{
-		{"the value changed in the file", false, false, func(t *testing.T, spec *appSpec) {
+		{"the value changed in the file", false, func(t *testing.T, spec *appSpec) {
 			must(t, os.WriteFile(spec.envFile, []byte(rotated), 0o600))
 		}},
-		{"the key taken out of the file", false, false, func(t *testing.T, spec *appSpec) {
+		{"the key taken out of the file", false, func(t *testing.T, spec *appSpec) {
 			must(t, os.WriteFile(spec.envFile, []byte("OTHER=kept-value-0000\n"), 0o600))
 		}},
-		{"the file gone", true, false, func(t *testing.T, spec *appSpec) {
+		{"the file gone", true, func(t *testing.T, spec *appSpec) {
 			must(t, os.Remove(spec.envFile))
 		}},
-		{"the file unreadable", true, true, func(t *testing.T, spec *appSpec) {
+		{"the file unreadable", true, func(t *testing.T, spec *appSpec) {
 			// A directory where the file was: unreadable as root too,
 			// which the test container runs as.
 			must(t, os.Remove(spec.envFile))
 			must(t, os.Mkdir(spec.envFile, 0o700))
 		}},
-		{"the spec naming another file", false, false, func(t *testing.T, spec *appSpec) {
+		{"the spec naming another file", false, func(t *testing.T, spec *appSpec) {
 			other := filepath.Join(t.TempDir(), "other.env")
 			must(t, os.WriteFile(other, []byte(rotated), 0o600))
 			spec.envFile = other
@@ -100,17 +96,16 @@ func TestReattachKnowsTheLaunchedValues(t *testing.T) {
 			h, people, ma, err := restartedLogsRig(t, launched, c.change)
 			must(t, err)
 			line := "token " + launchedToken
-			rd, unknown := ma.recordRedactor(ma.snapshot(), deployResult{Version: "v2"})
-			if out, _ := rd.Redact(line); out != "token [redacted:API_TOKEN]" || (unknown != "") != c.unparsed {
-				t.Errorf("the record's filter: %q, unknown %q", out, unknown)
+			if out := ma.doorKnowing(nil, false, "v2").text(line); out != "token [redacted:API_TOKEN]" {
+				t.Errorf("a failed deploy's door: %q", out)
 			}
 			if c.unread {
 				w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
-				if strings.Contains(w.Body.String(), launchedToken) || !strings.Contains(w.Body.String(), "response withheld") {
+				if strings.Contains(w.Body.String(), launchedToken) || !strings.Contains(w.Body.String(), "[withheld: the app's env_file could not be read") {
 					t.Fatalf("the logs read while the file is unread: %d %s", w.Code, w.Body)
 				}
-				if ma.redactorFor(ma.status()).withhold == "" {
-					t.Fatal("the status's filter withholds nothing while the file is unread")
+				if ma.door().unread == "" {
+					t.Fatal("the app's door withholds nothing while the file is unread")
 				}
 				// The file reads again, as the operator left it: rotated.
 				must(t, os.RemoveAll(ma.spec.envFile))
@@ -122,10 +117,9 @@ func TestReattachKnowsTheLaunchedValues(t *testing.T) {
 				got.Lines[0].Text != "upstream said 401 for [redacted:API_TOKEN]" || !slices.Contains(got.RedactedEnv, "API_TOKEN") {
 				t.Fatalf("the logs read: %d %s", w.Code, w.Body)
 			}
-			// The status's filter holds the same values: the probe body
-			// and the log tail pass it.
-			if out, keys := ma.redactorFor(ma.status()).Redact(line); out != "token [redacted:API_TOKEN]" || !slices.Contains(keys, "API_TOKEN") {
-				t.Errorf("the status's filter: %q %v", out, keys)
+			// The app's door holds the same values.
+			if d := ma.door(); d.text(line) != "token [redacted:API_TOKEN]" || !slices.Contains(d.keys(), "API_TOKEN") {
+				t.Errorf("the app's door: %q", d.keys())
 			}
 		})
 	}
@@ -189,8 +183,8 @@ func TestReattachWithNoEnvironmentKnowsTheFileAsBefore(t *testing.T) {
 		if got := logs.FilterMessageSnippet("is not one motel built for this instance").All(); len(got) != 1 || strings.Contains(got[0].Message, launchedToken) {
 			t.Errorf("%q: warned %v", env, logs.All())
 		}
-		if r := rig.ma.redactorFor(rig.ma.status()); r.withhold == "" {
-			t.Errorf("%q: the filter withholds nothing while the file is unreadable and the values unknown", env)
+		if rig.ma.door().unread == "" {
+			t.Errorf("%q: the door withholds nothing while the file is unreadable and the values unknown", env)
 		}
 	}
 }

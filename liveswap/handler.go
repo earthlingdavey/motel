@@ -1,6 +1,7 @@
 package liveswap
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -173,7 +174,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	}
 	who, refusal := h.limiter.Authenticate(r, verifiers, h.logger, "app", loggedAppName(name))
 	if refusal != nil {
-		return refusal.Write(func(code int, body any) error { return RespondJSON(w, code, body, nil) })
+		return refusal.Write(func(code int, body any) error { return RespondJSON(w, code, body) })
 	}
 	if motel {
 		// A global source verified the token: a deployer of no app,
@@ -184,15 +185,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		// A global source verified the token: a deployer of no app
 		// here, which may take no action on this name. The name is
 		// answered 404 whatever the method, before the route table.
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)})
 	}
 	if !h.awaitInstalled(r, ma, who.By) {
-		return h.installing(w, ma)
+		return h.installing(w)
 	}
 	rt := findRoute(r)
 	if rt == nil {
 		w.Header().Set("Allow", "GET, POST")
-		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"})
 	}
 	// The token was verified against this app's own sources, so it is
 	// a deployer of this app and Decide allows every app action: it
@@ -200,7 +201,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	// refuses rather than serves.
 	app, err := h.allowApp(access.Principal{Kind: access.AppDeployer, App: name}, rt.action, name)
 	if err != nil {
-		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err))
 	}
 	return rt.serve(h, w, r, app, who.By)
 }
@@ -283,9 +284,9 @@ const installingMessage = "motel is starting and has not loaded this app yet; re
 
 // installing answers a verified request whose app no Start installed in
 // time: 503 with Retry-After, never the 401, since the token is good.
-func (h *Handler) installing(w http.ResponseWriter, ma *managedApp) error {
+func (h *Handler) installing(w http.ResponseWriter) error {
 	w.Header().Set("Retry-After", "1")
-	return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: installingMessage}, ma.redactorFor(statusSnapshot{}))
+	return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: installingMessage})
 }
 
 // appHandle is the one app a route reads or acts on. Only allowApp
@@ -335,7 +336,7 @@ func ForbiddenBody(err error) any {
 // read Decide allowed waits for the app's install in the first moments
 // of a start (awaitRead).
 func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name string, motel bool) error {
-	p, ok, err := AdmitPerson(w, r, h.gate(), "app", loggedAppName(name), func(code int, body any) error { return RespondJSON(w, code, body, nil) })
+	p, ok, err := AdmitPerson(w, r, h.gate(), "app", loggedAppName(name), func(code int, body any) error { return RespondJSON(w, code, body) })
 	if !ok {
 		return err
 	}
@@ -347,7 +348,7 @@ func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name strin
 		// A person's token is good on a GET alone, which always has a
 		// row: this is the table and the token falling apart.
 		w.Header().Set("Allow", "GET, POST")
-		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"}, nil)
+		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"})
 	}
 	// Decide before the app is looked for: a person whose grants do not
 	// cover the name is told the same 403 whether it is an app here or
@@ -356,14 +357,14 @@ func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name strin
 	app, err := h.allowApp(p.Principal, rt.action, name)
 	switch {
 	case errors.Is(err, errUnknownApp):
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)})
 	case err != nil:
-		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), nil)
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err))
 	}
 	// After Decide: the read is this person's to make, and what it
 	// reads is the app a Start installed, as a deploy token's is.
 	if late := h.awaitRead(r, p.Name, app.ma); late != nil {
-		return h.installing(w, late)
+		return h.installing(w)
 	}
 	return rt.serve(h, w, r, app, p.Name)
 }
@@ -450,9 +451,7 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandl
 	// query is refused here rather than read as no query.
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		// The handler's words and the parser's, which quote the
-		// request's own bad escape: nothing of the app's (rule 6).
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, NewRedactor(nil, nil))
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()})
 	}
 	window := wire.MetricsRanges[0]
 	if q.Has("range") {
@@ -460,7 +459,7 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandl
 		// the same on every box.
 		if window = q.Get("range"); !slices.Contains(wire.MetricsRanges, window) {
 			return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{
-				Error: "range must be one of " + strings.Join(wire.MetricsRanges, ", ")}, ma.redactorFor(statusSnapshot{}))
+				Error: "range must be one of " + strings.Join(wire.MetricsRanges, ", ")})
 		}
 	}
 	s := ma.status()
@@ -470,7 +469,7 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandl
 		// failed or stalled status.
 		s.Metrics = src.AppMetrics(r.Context(), ma.name, window)
 	}
-	return RespondJSON(w, http.StatusOK, s, ma.redactorFor(s))
+	return RespondJSON(w, http.StatusOK, s)
 }
 
 // deployURL is the default path: a JSON body naming an artifact URL to
@@ -482,15 +481,15 @@ func (h *Handler) deployURL(w http.ResponseWriter, r *http.Request, app appHandl
 	// would surface as a misleading "invalid JSON" 400.
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadBytes+1))
 	if err != nil {
-		return RespondJSON(w, http.StatusBadRequest, wire.Error{Error: "reading body: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusBadRequest, wire.Error{Error: "reading body: " + err.Error()})
 	}
 	if len(body) > maxPayloadBytes {
 		return RespondJSON(w, http.StatusRequestEntityTooLarge, wire.Error{
-			Error: fmt.Sprintf("payload exceeds %d bytes", maxPayloadBytes)}, ma.redactorFor(statusSnapshot{}))
+			Error: fmt.Sprintf("payload exceeds %d bytes", maxPayloadBytes)})
 	}
 	p, status, msg := parseDeployPayload(body)
 	if status != 0 {
-		return RespondJSON(w, status, wire.Error{Error: msg}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, status, wire.Error{Error: msg})
 	}
 	return h.runDeploy(w, r, ma, p.request(), by)
 }
@@ -536,7 +535,7 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 	ma := app.ma
 	version := r.URL.Query().Get("version")
 	if !validVersion(version) {
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("version query param must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("version query param must match %s", versionRe)})
 	}
 	// Acquire the per-app deploy lock BEFORE staging the upload: a
 	// concurrent push then gets an immediate 409 instead of streaming a
@@ -566,7 +565,7 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 		// The refusal alone, as the staging failure below is answered:
 		// the status's last_deploy and deploys describe other deploys,
 		// which a client would read as this one's (#533).
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: err.Error()}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: err.Error()})
 	}
 	// In flight from here, its upload included: each way out before the
 	// pipeline ends it before its response is written, which the status
@@ -584,17 +583,17 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 	switch {
 	case errors.Is(err, errArtifactTooLarge):
 		return RespondJSON(w, http.StatusRequestEntityTooLarge, wire.Error{
-			Error: fmt.Sprintf("uploaded artifact exceeds max_artifact_size (%d bytes)", spec.maxArtifactSize)}, ma.redactorFor(statusSnapshot{}))
+			Error: fmt.Sprintf("uploaded artifact exceeds max_artifact_size (%d bytes)", spec.maxArtifactSize)})
 	case errors.As(err, &stgErr):
 		// A local filesystem failure (mkdir/create/write/close, e.g. a
 		// full disk) is a server error, like a failed URL download, and
 		// reported as one: the pipeline's own report never runs.
 		ma.lifecycle(c, LifecycleEvent{Name: EventDeployFailed, Release: version, DeployedBy: by,
 			Summary: "deploy of " + version + " failed before it began: the upload could not be staged on the box"})
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "staging upload: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "staging upload: " + err.Error()})
 	case err != nil:
 		// Otherwise the body read itself failed — a bad request.
-		return RespondJSON(w, http.StatusBadRequest, wire.Error{Error: "reading upload: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusBadRequest, wire.Error{Error: "reading upload: " + err.Error()})
 	}
 	// Backstop cleanup: fetch removes the archive once it extracts it,
 	// but if the pipeline returns before fetch it would leak.
@@ -616,7 +615,7 @@ func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, app app
 	ma := app.ma
 	version := r.URL.Query().Get("rollback")
 	if !validVersion(version) {
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("rollback version must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("rollback version must match %s", versionRe)})
 	}
 	return h.runDeploy(w, r, ma, deployRequest{version: version, rollback: true}, by)
 }
@@ -625,51 +624,26 @@ func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, app app
 // outcome of that version's latest deploy (deploys.go).
 func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version string) error {
 	if !validVersion(version) {
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("deploy query param must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("deploy query param must match %s", versionRe)})
 	}
 	c := ma.snapshot()
 	if c.spec == nil {
 		// An app the pool still holds but no loaded config describes
 		// (status() makes the same allowance): nowhere to read from.
-		return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: "app has no configuration loaded"}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: "app has no configuration loaded"})
 	}
 	rec, err := readDeployRecord(c.spec.dirs, version)
 	if err != nil {
-		// No record was read, so the answer holds nothing the app wrote
-		// and need hold none of its values: it is the handler's own
-		// words and, in the 404, the version this request asked for.
-		// Both bodies below are such, and pass a filter that knows no
-		// value (redact.go, rule 6). Through the app's filter the
-		// version came back as a marker naming the key whenever it held
-		// an env_file value, in any form the filter knows, and a caller
-		// who may only read could try values until one did. The version
-		// passed validVersion, and is a safe string here as it is in
-		// the status, so a commit id asked for reads as it was sent.
 		if errors.Is(err, errNoDeployRecord) {
-			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, NewRedactor(nil, []string{version}))
+			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)})
 		}
-		// The error may name the record's file, and so the version
-		// asked for, and the app's directories: the first is the same
-		// question through the app's filter, and the second may be one
-		// of the app's values (APP_DIR=<the directory>), which a filter
-		// that knows none would send as it is. So the error is not in
-		// the answer, which says only that the record did not read, in
-		// the handler's words alone, and the journal says why.
+		// The error names the app's directories; the journal has it.
 		c.logger.Error("reading a deploy record", zap.String("version", version), zap.Error(err))
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "this deploy's record could not be read; the box's journal says why (journalctl -u moteld)"}, NewRedactor(nil, nil))
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "this deploy's record could not be read; the box's journal says why (journalctl -u moteld)"})
 	}
-	// The requested version, and the record's own pin, are names the
-	// filter should let through whether or not the status still lists
-	// them by the time it is built (a prune, a reload between the read
-	// and the response): safe strings like the versions the status
-	// names, under the same rule (redactorFor).
-	s := ma.status()
-	head, _ := recordHead(rec, version+".json")
-	head.Version = version
-	s.Deploys = append(s.Deploys, head)
-	// Through the live filter like every body; its outcome words
-	// stand outside the filter there (redact.go, rule 3).
-	return respondFiltered(w, http.StatusOK, ma.redactorFor(s).redactJSON(rec))
+	// The record as it was written: the app's text in it passed the
+	// app's filter when the deploy ended, and nothing filters it again.
+	return respondBytes(w, http.StatusOK, bytes.TrimSuffix(rec, []byte("\n")))
 }
 
 // runDeploy records who authorized it, runs the pipeline, and maps
@@ -681,7 +655,7 @@ func (h *Handler) runDeploy(w http.ResponseWriter, r *http.Request, ma *managedA
 	if !wantsStream(r) {
 		return h.mapDeployResult(w, ma, ma.Deploy(r.Context(), req))
 	}
-	st := newDeployStream(w, ma)
+	st := newDeployStream(w)
 	req.onPhase = st.phase
 	return st.finish(ma, ma.Deploy(r.Context(), req))
 }
@@ -693,7 +667,7 @@ func (h *Handler) finishDeploy(w http.ResponseWriter, r *http.Request, ma *manag
 	if !wantsStream(r) {
 		return h.mapDeployResult(w, ma, run(nil))
 	}
-	st := newDeployStream(w, ma)
+	st := newDeployStream(w)
 	return st.finish(ma, run(st.phase))
 }
 
@@ -713,42 +687,35 @@ func (h *Handler) logDeployAuthorized(r *http.Request, ma *managedApp, req deplo
 
 // mapDeployResult turns a pipeline outcome into the webhook response.
 func (h *Handler) mapDeployResult(w http.ResponseWriter, ma *managedApp, err error) error {
-	code, body, rd := deployOutcome(ma, err)
+	code, body := deployOutcome(ma, err)
 	if body == nil {
 		// The client hung up mid-deploy; nobody is reading this.
 		return nil
 	}
-	return RespondJSON(w, code, body, rd)
+	return RespondJSON(w, code, body)
 }
 
 // deployOutcome is the status code and body a pipeline outcome maps
-// to, with the app's filter for it; a nil body is a client that hung
-// up, which nothing is written for.
-func deployOutcome(ma *managedApp, err error) (int, any, *Redactor) {
+// to; a nil body is a client that hung up, which nothing is written
+// for.
+func deployOutcome(ma *managedApp, err error) (int, any) {
 	status := ma.status()
-	// A refused pin names two digests, and a digest is the shape of a
-	// token the filter masks: told they are names — the deployer's own
-	// pin, and what the host served — the 422 can say which is which.
-	// Not a mismatch: no names (the zero value's are empty, and
-	// NewRedactor skips those).
-	var dm digestMismatch
-	_ = errors.As(err, &dm)
-	rd := ma.redactorFor(status, dm.names()...)
 	var vErr validationError
 	switch {
 	case err == nil:
-		return http.StatusOK, status, rd
+		return http.StatusOK, status
 	case errors.Is(err, errDeployInProgress):
-		return http.StatusConflict, wire.Error{Error: err.Error()}, rd
+		return http.StatusConflict, wire.Error{Error: err.Error()}
 	case errors.As(err, &vErr):
-		return http.StatusUnprocessableEntity, wire.Error{Error: err.Error()}, rd
+		return http.StatusUnprocessableEntity, wire.Error{Error: err.Error()}
 	case errors.Is(err, context.Canceled):
-		return 0, nil, rd
+		return 0, nil
 	default:
 		return http.StatusInternalServerError, wire.Failure{
-			Error:  err.Error(),
-			Status: status, // shows the old version still serving
-		}, rd
+			Error:       err.Error(),
+			Status:      status, // shows the old version still serving
+			RedactedEnv: status.RedactedEnv,
+		}
 	}
 }
 
@@ -787,76 +754,63 @@ func wantsStream(r *http.Request) bool {
 // carries "http_status", the code the single response would have had,
 // which a client that streams reads instead. An outcome reached before
 // any phase (a version refused, a deploy already running) has nothing
-// streamed yet and is the single response with its real code. Every
-// line passes the app's filter.
+// streamed yet and is the single response with its real code.
 type deployStream struct {
 	w     http.ResponseWriter
-	ma    *managedApp
 	begun bool
 }
 
-func newDeployStream(w http.ResponseWriter, ma *managedApp) *deployStream {
-	return &deployStream{w: w, ma: ma}
+func newDeployStream(w http.ResponseWriter) *deployStream {
+	return &deployStream{w: w}
 }
 
-// write sends one filtered JSON object as a line and flushes it. A
+// write sends one JSON object as a line and flushes it. A
 // write that fails is a client gone; the deploy carries on (its
 // context says when to stop) and the last line's write reports it.
-func (s *deployStream) write(filtered string) error {
+func (s *deployStream) write(line []byte) error {
 	if !s.begun {
 		s.begun = true
 		s.w.Header().Set("Content-Type", ndjson)
 		s.w.Header().Set("Cache-Control", "no-store")
 		s.w.WriteHeader(http.StatusOK)
 	}
-	if _, err := s.w.Write(append([]byte(filtered), '\n')); err != nil {
+	if _, err := s.w.Write(append(line, '\n')); err != nil {
 		return err
 	}
 	_ = http.NewResponseController(s.w).Flush()
 	return nil
 }
 
-// phase is the pipeline's listener: one line per phase entered. Like
-// the last line, its fixed fields go on after the filter: a filter
-// that withholds the whole body (an unreadable env_file) then leaves
-// its diagnostic in the line and the event and phase beside it.
+// phase is the pipeline's listener: one line per phase entered.
 func (s *deployStream) phase(phase string) {
-	raw, err := json.Marshal(map[string]any{"at": time.Now().UTC()})
+	line, err := json.Marshal(wire.PhaseEvent{At: time.Now().UTC(), Event: wire.EventPhase, Phase: phase})
 	if err != nil {
 		return
 	}
-	filtered := s.ma.redactorFor(statusSnapshot{}).redactJSON(raw)
-	_ = s.write(fmt.Sprintf(`%s,"event":%q,"phase":%q}`, filtered[:len(filtered)-1], wire.EventPhase, phase))
+	_ = s.write(line)
 }
 
 // finish writes the outcome as the last line: the single response's
 // body with "event":"done" and "http_status" added — or, when no
 // phase was ever streamed, as the single response itself.
 func (s *deployStream) finish(ma *managedApp, err error) error {
-	code, body, rd := deployOutcome(ma, err)
+	code, body := deployOutcome(ma, err)
 	if body == nil {
 		return nil
 	}
 	if !s.begun {
-		return RespondJSON(s.w, code, body, rd)
+		return RespondJSON(s.w, code, body)
 	}
-	// The single response's bytes, filtered as RespondJSON filters
-	// them, with two fields appended after the filter: appended, not
-	// re-marshalled, so the line has the single response's order, which
-	// is whatever the filter left (a redaction re-marshals the top
-	// level, sorting its keys; a nested object keeps its order — see
-	// withField). The examples' deploy.sh relies on it: it reads a
-	// failure's cause as the first key and its phase from last_deploy on.
-	// And after, so the outcome's markers survive a filter that
-	// withholds the whole body (an unreadable env_file). redactJSON
-	// always returns one JSON object, so the closing brace is where it
-	// ends.
+	// The single response's bytes with two fields appended: appended,
+	// not re-marshalled, so the line has the single response's order.
+	// The examples' deploy.sh relies on it: it reads a failure's cause
+	// as the first key and its phase from last_deploy on. A body is one
+	// JSON object, so the closing brace is where it ends.
 	raw, mErr := json.Marshal(body)
 	if mErr != nil {
 		return mErr
 	}
-	filtered := rd.redactJSON(raw)
-	return s.write(fmt.Sprintf(`%s,"event":%q,"http_status":%d}`, filtered[:len(filtered)-1], wire.EventDone, code))
+	return s.write(fmt.Appendf(nil, `%s,"event":%q,"http_status":%d}`, raw[:len(raw)-1], wire.EventDone, code))
 }
 
 // isGzipUpload reports whether the request body is a pushed artifact.
@@ -940,30 +894,23 @@ func stageUpload(body io.Reader, tmpDir string, maxBytes int64) (string, string,
 	return path, hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// RespondJSON writes every body the webhook sends, through the
-// response filter (redact.go). r is the app's filter — every site
-// with the app in scope passes ma.redactorFor, the 405 included —
-// but for a body that holds nothing of the app's: nil for the bodies
-// written before an app is known (401, 404), and a filter that knows
-// no values for one made only of the handler's words and what the
-// request itself sent (rule 6). The shape and entropy layers still
-// apply to both. When a
-// known secret was found the object gains a `redacted_env` field
-// naming the keys. The box webhook writes its bodies through it too,
-// with a filter from NewRedactor.
-func RespondJSON(w http.ResponseWriter, code int, v any, r *Redactor) error {
+// RespondJSON writes every body the webhook sends: marshalled and
+// sent. No filter runs over a body: the app's text in it passed the
+// app's door where it entered (redact.go), and the rest is motel's own
+// data. The box webhook writes its bodies through it too.
+func RespondJSON(w http.ResponseWriter, code int, v any) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	return respondFiltered(w, code, r.redactJSON(raw))
+	return respondBytes(w, code, raw)
 }
 
-// respondFiltered writes a body that has already passed the filter.
-func respondFiltered(w http.ResponseWriter, code int, filtered string) error {
+// respondBytes writes a JSON body as it stands.
+func respondBytes(w http.ResponseWriter, code int, body []byte) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_, err := w.Write(append([]byte(filtered), '\n'))
+	_, err := w.Write(append(body, '\n'))
 	return err
 }
 

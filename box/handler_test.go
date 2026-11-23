@@ -448,6 +448,9 @@ func TestHandlerStatusBoxErrors(t *testing.T) {
 // A file the box runs that the walk refuses — a console edit that
 // imports, say — is the operator's to mend, not the box failing: 409,
 // as before init, with the refusal's reason, and journaled as a warning.
+// The reason quotes the operator's own file as written, bounded: an
+// address shaped like a token too, which an older moteld's heuristics
+// masked in the answer (no filter runs over a box answer now).
 func TestHandlerStatusRunsARefusedFile(t *testing.T) {
 	for name, c := range map[string]struct {
 		file string
@@ -460,7 +463,7 @@ func TestHandlerStatusRunsARefusedFile(t *testing.T) {
 			"the Caddyfile this box runs lists no signer; moteld init is the way back"},
 		"with input": {strings.Replace(good, "deploy.example.com {", strings.Repeat("a", 2000)+".com {", 1),
 			"has a box_webhook site whose address is not one bare hostname"},
-		"the address filtered": {strings.Replace(good, "deploy.example.com {", "https://"+jwt+" {", 1), "[redacted:jwt]"},
+		"a token-shaped address": {strings.Replace(good, "deploy.example.com {", "https://"+jwt+" {", 1), "(https://" + jwt + ")"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig(t)
@@ -468,9 +471,6 @@ func TestHandlerStatusRunsARefusedFile(t *testing.T) {
 			r.write(t, r.installed, file(c.file))
 			w := r.do(t, req{target: "/", token: r.token(t)})
 			wantError(t, w, http.StatusConflict, c.want)
-			if strings.Contains(w.Body.String(), jwt) {
-				t.Errorf("a token-shaped address in the answer: %s", w.Body)
-			}
 			if len(w.Body.String()) > 600 {
 				t.Errorf("an unbounded 409: %d bytes", w.Body.Len())
 			}

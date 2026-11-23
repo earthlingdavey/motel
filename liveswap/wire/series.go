@@ -21,8 +21,8 @@ type Series struct {
 	// no numbers) or StoreUnanswered (the store did not answer within
 	// the box's budget: Panels is empty, and says nothing). A client
 	// reads a word it does not know as not knowing.
-	Store  string `json:"store"`
-	Window string `json:"window"`
+	Store  string `json:"store" text:"moteld"`
+	Window string `json:"window" text:"moteld"`
 	// StepSeconds is the window's step, the time between two points of
 	// a panel; absent unless the store answered.
 	StepSeconds int `json:"step_seconds,omitempty"`
@@ -38,8 +38,8 @@ type Series struct {
 // Panel is one number over the window.
 type Panel struct {
 	// Name is one of the Panel names below, and Unit its unit.
-	Name string `json:"name"`
-	Unit string `json:"unit"`
+	Name string `json:"name" text:"moteld"`
+	Unit string `json:"unit" text:"moteld"`
 	// Points are [unix seconds, value] pairs, oldest first, each at a
 	// multiple of the step. A step with no point is a gap: the box
 	// sends no pair for it, never a zero.

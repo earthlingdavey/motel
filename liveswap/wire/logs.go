@@ -45,14 +45,15 @@ const (
 // the box's journal, oldest first (liveswap/README.md, "Reading an app's
 // logs"). A read with no after is a tail, the newest lines; one with
 // after (a Cursor an earlier answer gave) is the lines after that one.
-// Each text has passed the app's response filter, which no filter can
-// make a promise of: the lines carry what the app printed.
+// Each text has passed the app's filter where it entered the answer,
+// which no filter can make a promise of: the lines carry what the app
+// printed.
 // Experimental: its fields may change until a release's notes say
 // otherwise.
 type Logs struct {
 	// Kept is KeptOn, or KeptOff for an app that keeps its output on the
 	// box. A client reads a word it does not know as not knowing.
-	Kept  string    `json:"kept"`
+	Kept  string    `json:"kept" text:"moteld"`
 	Lines []LogLine `json:"lines"`
 	// More is true when the read stopped with a line left unsent: the
 	// count asked for, or 64 KiB of the lines' text as the journal holds
@@ -73,10 +74,11 @@ type Logs struct {
 	// the after of the next read; absent when the read took none, and
 	// then the client keeps the one it sent. It is the box's position
 	// in its journal, to be held in memory only, never written to disk.
-	Cursor string `json:"cursor,omitempty"`
+	Cursor string `json:"cursor,omitempty" text:"passes"`
 	// RedactedEnv names the env_file keys whose values the filter
-	// replaced; absent when none.
-	RedactedEnv []string `json:"redacted_env,omitempty"`
+	// replaced in the lines' texts, as far as it read them; absent when
+	// none.
+	RedactedEnv []string `json:"redacted_env,omitempty" text:"moteld"`
 }
 
 // LogLine is one line the app wrote to its stdout or stderr, which the
@@ -87,9 +89,9 @@ type LogLine struct {
 	// Release is the version of the unit that wrote the line, when the
 	// journal kept the unit; "" when it did not (a process that exited
 	// before journald read its line, any line while journald is behind).
-	Release string `json:"release"`
+	Release string `json:"release" text:"moteld"`
 	// Text is the line, valid UTF-8, at most 4 KiB: a longer one is cut
 	// and ends in "…". A run of bytes that are not UTF-8 is one U+FFFD; control
 	// characters are as the app wrote them, for a client to escape.
-	Text string `json:"text"`
+	Text AppText `json:"text"`
 }

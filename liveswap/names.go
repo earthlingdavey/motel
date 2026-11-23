@@ -54,7 +54,12 @@ func versionPathComponent(v string) string {
 // validVersion reports whether v is an acceptable version tag: the
 // gate every version passes before it reaches a filesystem path (see
 // versionRe for what the alphabet refuses and why). FuzzDeployRequest
-// pins the filesystem property behind it.
+// pins the filesystem property behind it. A version read off disk
+// passes it before it is used as one (launched, listed, offered,
+// recorded): state.json's current_version (ensureRunning), a release
+// directory's name (listReleases), a record's (recordHead), a deploy
+// marker's. Release GC enumerates directory entries by name; that is
+// not a use of a version.
 func validVersion(v string) bool {
 	return versionRe.MatchString(v)
 }

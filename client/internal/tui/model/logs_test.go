@@ -71,7 +71,7 @@ func TestLogsLinesShown(t *testing.T) {
 		{"日\tx", "日       x"},
 		{"no tab", "no tab"},
 	} {
-		got := LogsLines([]wire.LogLine{{Text: c.in}})[0].Text.String()
+		got := LogsLines([]wire.LogLine{{Text: wire.AppText(c.in)}})[0].Text.String()
 		if got != c.want {
 			t.Errorf("%q: %q, want %q", c.in, got, c.want)
 		}

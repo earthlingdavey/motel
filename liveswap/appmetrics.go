@@ -119,8 +119,8 @@ func sampleMemoryMax(hs handleState) uint64 {
 // window `?range=` named (one of wire.MetricsRanges). It must answer
 // within its own short budget whatever the store does, and is called
 // with the request's context; what it returns is marshalled into the
-// status and passes the app's response filter with the rest. nil
-// leaves the object out.
+// status: the store's figures and moteld's words, which no filter
+// meets. nil leaves the object out.
 type MetricsSource interface {
 	AppMetrics(ctx context.Context, app, window string) *wire.Metrics
 }

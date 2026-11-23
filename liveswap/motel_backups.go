@@ -117,23 +117,13 @@ func (b boxHandle) backupsStatus(ctx context.Context) wire.Backups { return b.ba
 // own claim about its backups, `motel-backup status --json` as any
 // account on the box sees it, with HTTP 200 whether they are healthy,
 // not, or could not be told. The body holds every app's name, data
-// paths and snapshot ids, and no secret (backups/record): it passes
-// the filter with no app's values, as the apps list's frame does, since
-// no one app's filter may see another's, and the shape and entropy
-// layers run over it.
+// paths and snapshot ids, and no secret (backups/record).
 func (h *Handler) backups(w http.ResponseWriter, r *http.Request, p *Person) error {
 	box, err := h.allowBox(p.Principal, access.BoxBackups)
 	if err != nil {
 		// serveMotel asked Decide about the row's action already: the two
 		// falling apart.
-		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), nil)
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err))
 	}
-	body := box.backupsStatus(r.Context())
-	safe := make([]string, 0, len(body.Apps))
-	for _, a := range body.Apps {
-		if appNameRe.MatchString(a.Name) {
-			safe = append(safe, a.Name)
-		}
-	}
-	return RespondJSON(w, http.StatusOK, body, NewRedactor(nil, safe))
+	return RespondJSON(w, http.StatusOK, box.backupsStatus(r.Context()))
 }

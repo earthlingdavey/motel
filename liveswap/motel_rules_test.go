@@ -381,10 +381,10 @@ func TestAppRulesBody(t *testing.T) {
 	}
 }
 
-// TestRulesPassNoAppValue: a rules body holds no byte of an app's, so it
-// passes a filter that knows no app's values: an env_file value shaped
-// like a date, a number, a word or a name in the body masks nothing in
-// it, and the body reads whole, on both routes.
+// TestRulesPassNoAppValue: a rules body holds no byte of an app's, and
+// no filter runs over it: an env_file value shaped like a date, a
+// number, a word or a name in the body masks nothing in it, and the
+// body reads whole, on both routes.
 func TestRulesPassNoAppValue(t *testing.T) {
 	h, people := alertsRig(t)
 	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte(
@@ -406,12 +406,13 @@ func TestRulesPassNoAppValue(t *testing.T) {
 			}
 		}
 	}
-	// The shape and entropy layers still run: a generated token in a
-	// rule's words is masked.
+	// Nor do the shape and entropy layers, which an older moteld ran
+	// over it: a generated token in a rule's words (the operator's) is
+	// sent as written.
 	l := rulesListing()
 	l.Alerts[3].Guards = []wire.GuardListing{{Op: ">=", Value: num(1), Meaning: "token q8Zr3XvLp2NwTb7KmYc4Hd9Fs6Jg"}} // gitleaks:allow — made up for this test
 	h.app.SetRulesSource(&fakeRules{l: l})
-	if w := sendTo(t, h, "GET", "/_motel/rules", token(people.carol)); strings.Contains(w.Body.String(), "q8Zr3XvLp2NwTb7KmYc4Hd9Fs6Jg") || w.Code != http.StatusOK { // gitleaks:allow — made up for this test
+	if w := sendTo(t, h, "GET", "/_motel/rules", token(people.carol)); !strings.Contains(w.Body.String(), "q8Zr3XvLp2NwTb7KmYc4Hd9Fs6Jg") || w.Code != http.StatusOK { // gitleaks:allow — made up for this test
 		t.Errorf("a token in a rule's words: %d %s", w.Code, w.Body)
 	}
 }
@@ -442,8 +443,8 @@ func TestRulesChosenByTheHandle(t *testing.T) {
 }
 
 // TestRulesSafeNames: an app's name the body holds (an alert's app, the
-// apps a pinned alert names, a reading's app or backup) stands through
-// the entropy layer, however generated it looks.
+// apps a pinned alert names, a reading's app or backup) is sent as
+// written, however generated it looks: no filter runs over the body.
 func TestRulesSafeNames(t *testing.T) {
 	h, people := alertsRig(t)
 	name := "k3x9q2m7v8w1z4p6r5t0"
@@ -457,8 +458,8 @@ func TestRulesSafeNames(t *testing.T) {
 
 // TestRulesCheckNumbersWhole: a check's number as its detector read it,
 // a long run of digits (a nearly empty filesystem's used percent, in
-// either of Go's forms), passes the box's filter whole: the entropy
-// layer masks nothing inside it, and the body stays JSON.
+// either of Go's forms), is sent whole: no filter runs over the body,
+// and it stays JSON.
 func TestRulesCheckNumbersWhole(t *testing.T) {
 	h, people := alertsRig(t)
 	for _, v := range []float64{0.000123456789012345, 5.740305648246404e-05, 1.2345678901234567e-07} {

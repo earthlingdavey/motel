@@ -17,12 +17,12 @@ type Backups struct {
 	Healthy bool `json:"healthy"`
 	// CouldNotTell is why status could not look, where it could not:
 	// the exit status 3.
-	CouldNotTell string       `json:"could_not_tell,omitempty"`
+	CouldNotTell string       `json:"could_not_tell,omitempty" text:"passes"`
 	Apps         []BackupApp  `json:"apps"`
 	Running      []BackupUnit `json:"running"`
 	// UnrecognisedUnits are units the manager holds whose name says
 	// nothing here.
-	UnrecognisedUnits []string `json:"unrecognised_units"`
+	UnrecognisedUnits []string `json:"unrecognised_units" text:"passes"`
 	// Lines are what the text says, in its order.
 	Lines []BackupLine `json:"lines"`
 }
@@ -31,11 +31,11 @@ type Backups struct {
 type BackupLine struct {
 	// App is the app the line is of; none for the run, the repository
 	// and a unit of no app.
-	App string `json:"app,omitempty"`
+	App string `json:"app,omitempty" text:"passes"`
 	// Level is problem for a line that makes status unhealthy, warning
 	// for a warning: line, info for any other.
-	Level string `json:"level"`
-	Text  string `json:"text"`
+	Level string `json:"level" text:"passes"`
+	Text  string `json:"text" text:"passes"`
 	// Alert and Severity are, for a problem line, the alert moteld's
 	// monitor raises while it stands and its level (status.Alerts). Not
 	// in the JSON: only the monitor reads them, inside the box.
@@ -45,12 +45,12 @@ type BackupLine struct {
 
 // BackupApp is what status decides of one app.
 type BackupApp struct {
-	Name string `json:"name"`
+	Name string `json:"name" text:"passes"`
 	// Healthy is that no line of this app is a problem.
 	Healthy bool `json:"healthy"`
 	// Result is how the last run ended for it (backups/record's Class);
 	// empty where the record holds no result for it.
-	Result string `json:"result"`
+	Result string `json:"result" text:"passes"`
 	// LastCompleteBackup is when it was made; Fresh that it is no more
 	// than status.StaleAfter old and no listing since has missed it.
 	LastCompleteBackup *time.Time `json:"last_complete_backup"`
@@ -65,8 +65,8 @@ type BackupApp struct {
 // BackupUnit is one unit of a run, a restore, a drill or a setup that
 // the manager holds, as said.
 type BackupUnit struct {
-	Role  string     `json:"role"`
-	App   string     `json:"app,omitempty"`
-	State string     `json:"state"`
+	Role  string     `json:"role" text:"passes"`
+	App   string     `json:"app,omitempty" text:"passes"`
+	State string     `json:"state" text:"passes"`
 	Since *time.Time `json:"since,omitempty"`
 }

@@ -102,7 +102,7 @@ func LogsLines(lines []wire.LogLine) []LogsLine {
 		if rel == "" {
 			rel = LogsNoRelease
 		}
-		out[i] = LogsLine{At: l.At, Release: termtext.From(rel), Text: termtext.Tabbed(l.Text)}
+		out[i] = LogsLine{At: l.At, Release: termtext.From(rel), Text: termtext.Tabbed(string(l.Text))}
 	}
 	return out
 }

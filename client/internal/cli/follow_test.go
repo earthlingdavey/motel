@@ -103,7 +103,7 @@ func landed(status, cur string, names ...string) *wire.Status {
 	d := &wire.DeployResult{Version: "v43", Status: status, By: "ci", StartedAt: t1.Add(time.Second), FinishedAt: t1.Add(time.Minute), Phases: phasesAt(names...)}
 	if status == "failed" {
 		d.Phase, d.Error = names[len(names)-1], "the health check answered 500"
-		d.Detail = &wire.DeployDetail{Exit: "exit status 3", LogTail: []string{"pg: connection refused"}}
+		d.Detail = &wire.DeployDetail{Exit: "exit status 3", LogTail: []wire.AppText{"pg: connection refused"}}
 	}
 	return &wire.Status{App: "blog", Phase: "idle", CurrentVersion: cur, Running: true, AvailableVersions: []string{cur}, LastDeploy: d,
 		Deploys: []wire.DeploySummary{{Version: "v43", Status: status, Phase: d.Phase}}}

@@ -1271,8 +1271,8 @@ instant queries per 30 s, whatever the number of people, run four at
 once (`rulesAtOnce`), since the store, capped at 96 MiB, also answers
 vmalert, the pusher and `GET /<app>`'s metrics. Each series of a value
 is one reading (`app`, or `path` as `instance`, or neither), the value
-rounded to six significant digits (a longer run of digits reads as a
-generated secret to a response filter, `metricsview.go`'s `roundTo`); a
+rounded to six significant digits (a longer run of digits says nothing
+a person reads, `metricsview.go`'s `roundTo`); a
 point that is NaN or an infinity (a share of no responses, a cap of 0)
 is left out of its series, not a failure of the whole answer. Its
 `state` is the `ALERTS` series of that alert name and subject, firing
@@ -1486,8 +1486,8 @@ app started seconds ago has none until its unit has a rate. It is
 absent too with no CPU point in the window's range, since it sits
 beside `avg`; a number with no points is absent (`max` too, when the
 window holds no raw sample). The CPU averages are rounded to a millionth of a core: an
-unrounded float is a run of twenty digits the response filter masks as
-a generated value, and the status would be withheld.
+unrounded float is a run of twenty digits, which an older moteld's
+filter over the whole status masked as a generated value.
 
 `requests` is four instant queries over the window, each counter
 through the operator rules' guard with the window as its own
@@ -1557,8 +1557,8 @@ per 30 s, and again at the first ask after a load (each load's view
 starts with no cache): a store that takes pushes but fails the view's
 queries (the budget, the 4 MB cap, a point it cannot read) leaves
 `metrics_store_down` quiet, and the deployer's fixed text is all
-anyone else sees. The whole body passes the app's response filter,
-as every status does.
+anyone else sees. No filter runs over it: it is the store's figures
+and moteld's words, as every field of a status but the app's text.
 
 ## An app's series
 

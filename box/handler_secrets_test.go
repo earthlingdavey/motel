@@ -159,9 +159,11 @@ func TestPushFastPathSecrets(t *testing.T) {
 	}
 }
 
-// A result's secrets' names reach the workflow as root wrote them: a
-// variable's name can look as random as a key, and the filter would
-// mask it.
+// A result reaches the workflow as root wrote it: its secrets' names (a
+// variable's name can look as random as a key, which an older moteld's
+// heuristics then masked) and its diff, which passed the heuristic
+// layers when the result was made (caddyfileDiff, diff.go). No filter
+// runs over the answer.
 func TestResultSecretNamesUnmasked(t *testing.T) {
 	p := newPushRig(t)
 	name := "example/K8XQ2PL7ZR4MW9TB3NV6YC1HD5JF0GSA"
@@ -172,8 +174,7 @@ func TestResultSecretNamesUnmasked(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 
-	// Added after the filter, as the result's last fields: the answer
-	// is the result's own bytes when the filter masks nothing.
+	// The answer is the result's own bytes.
 	res := result{ID: randomID(t), Phase: phaseApplied, Commit: p.base, SecretsAdded: []string{name}, SecretsChanged: []string{"example/B"}, SecretsRemoved: []string{"api/C"}, SecretsOutOfBand: []string{"api"}}
 	p.writeResult(t, res)
 	w = p.get(t, "/?result="+res.ID, p.token(t, ""))
@@ -181,9 +182,9 @@ func TestResultSecretNamesUnmasked(t *testing.T) {
 		t.Fatalf("got %s\nwant %s", w.Body, want)
 	}
 
-	// The filter still reads the rest, beside the most names a push
-	// can report.
-	token := "ghp_" + strings.Repeat("aB3dE5fG7h", 4)[:36]
+	// And beside the most names a push can report, a diff as root
+	// wrote it.
+	token := "ghp_" + strings.Repeat("aB3dE5fG7h", 4)[:36] // gitleaks:allow — made up for this test
 	res = result{ID: randomID(t), Phase: phaseApplied, Commit: p.base, Diff: "+ " + token + "\n", SecretsOutOfBand: []string{"api"}}
 	for i := range maxSecretNames {
 		res.SecretsAdded = append(res.SecretsAdded, "example/K"+itoa(i))
@@ -191,7 +192,7 @@ func TestResultSecretNamesUnmasked(t *testing.T) {
 	p.writeResult(t, res)
 	w = p.get(t, "/?result="+res.ID, p.token(t, ""))
 	var got result
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || strings.Contains(w.Body.String(), token) || !slices.Equal(got.SecretsAdded, res.SecretsAdded) || !slices.Equal(got.SecretsOutOfBand, res.SecretsOutOfBand) {
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || got.Diff != res.Diff || !slices.Equal(got.SecretsAdded, res.SecretsAdded) || !slices.Equal(got.SecretsOutOfBand, res.SecretsOutOfBand) {
 		t.Fatalf("%d %v: %.300s", w.Code, err, w.Body)
 	}
 }
