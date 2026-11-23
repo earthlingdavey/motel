@@ -332,16 +332,15 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	if err := req.checkSets(active); err != nil {
 		return unprocessable(err)
 	}
-	// The comment is the one free text: masked as a summary is, the
-	// release safe as the engine takes it, rather than refused
-	// (DESIGN-notify.md, "Silences").
+	// The comment is the one free text: masked as a summary is, rather
+	// than refused (DESIGN-notify.md, "Silences").
 	// The known values of the config checked above and the engine's
 	// now: a reload between the two must neither unmask what the checked
 	// config knew nor miss what the new one added.
 	theEngine.mu.Lock()
 	known := append(slices.Clone(active.known), theEngine.known...)
 	theEngine.mu.Unlock()
-	comment := cleanText(known, req.Comment, req.Release)
+	comment := cleanText(known, req.Comment)
 	now = now.UTC()
 	s := amSilence{Matchers: req.matchers(), StartsAt: now, EndsAt: now.Add(d), CreatedBy: createdBy(req.By), Comment: comment}
 	// Without the caller's cancel, bounded by the client's timeout: a

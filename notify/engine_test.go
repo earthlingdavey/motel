@@ -191,7 +191,7 @@ func TestEachOneShotIsItsOwnAlert(t *testing.T) {
 			t.Errorf("alert %d: endsAt %v, startsAt %v", i, a.EndsAt, a.StartsAt)
 		}
 		// Through the filter, as a summary is, it is left whole.
-		if r, _ := liveswap.NewRedactor(te.known, nil).Redact(v); r != v {
+		if r, _ := liveswap.NewRedactor(te.known).Redact(v); r != v {
 			t.Errorf("the filter masks occurred_at %q as %q", v, r)
 		}
 		// Apart from it, the labels and annotations are the first's.

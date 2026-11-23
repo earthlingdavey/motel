@@ -946,8 +946,9 @@ quiet the heartbeat, pause that check instead. Your own events from
 `--app` for an app's.
 
 The comment is required, one line of plain text (no tab or escape
-sequence), at most 200 characters; anything in it that looks like a
-secret is masked, as in a notification's summary.
+sequence), at most 200 characters; a channel's URL in it, or a
+credential of a recognisable shape (a JWT, a GitHub token, …), is
+masked, as in a notification's summary.
 The duration is from `1m` to `24h`, `2h` if you leave it out, from now.
 
 Each silence added or expired is a line in moteld's journal

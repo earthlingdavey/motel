@@ -38,10 +38,6 @@ type Event struct {
 	// happened) and annotations on a state alert, whose identity is
 	// what is wrong, never when or by whom (#418).
 	Release, DeployedBy string
-	// Safe are names the summary carries that the filter's heuristics
-	// must leave as written, beside Release: a key's fingerprint, which
-	// looks generated, and a person's name.
-	Safe []string
 	// Firing is a state alert's condition: true while it holds, false
 	// when it has cleared.
 	Firing bool
@@ -314,18 +310,15 @@ func (e *engine) bucketFor(key string) *bucket {
 }
 
 // clean is s through liveswap's filter, its known values the channel
-// URLs and safe the names the text carries (a release, which the
-// entropy layer would mask when it is a git sha), cut to maxSummary.
-// One filter per event: events are rare, and a filter holds its safe
-// names.
-func (e *engine) clean(s string, safe ...string) string {
-	return cleanText(e.known, s, safe...)
+// URLs, cut to maxSummary. One filter per event: events are rare.
+func (e *engine) clean(s string) string {
+	return cleanText(e.known, s)
 }
 
 // cleanText is clean with the known values given: a silence's comment
 // is masked with the known values of the config its route checked.
-func cleanText(known []string, s string, safe ...string) string {
-	s, _ = liveswap.NewRedactor(known, safe).Redact(s)
+func cleanText(known []string, s string) string {
+	s, _ = liveswap.NewRedactor(known).Redact(s)
 	return deploytrust.CutRunes(s, maxSummary)
 }
 
@@ -390,11 +383,11 @@ func (e *engine) reportLocked(ev Event) {
 		}
 		return
 	}
-	ev.Summary = e.clean(ev.Summary, append([]string{ev.Release}, ev.Safe...)...)
+	ev.Summary = e.clean(ev.Summary)
 	if len(ev.Details) > 0 {
 		d := make(map[string]string, len(ev.Details))
 		for k, v := range ev.Details {
-			d[k] = e.clean(v, ev.Release)
+			d[k] = e.clean(v)
 		}
 		ev.Details = d
 	}

@@ -1,4 +1,4 @@
-# a full 40-character SHA as the version is on the safe list and survives everywhere it appears
+# a full 40-character SHA as the version survives everywhere it appears
 "current_version":"3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c"
 /var/lib/liveswap/example/releases/3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c/server
 motel-example.3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c.fedcba9876543210.service

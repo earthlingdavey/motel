@@ -8,5 +8,5 @@ error: Invalid HTTP_HOST header: 'localhost'. You may need to add 'localhost' to
 at handleRequest (file:///var/lib/liveswap/example/releases/dx2/main.ts:42:11)
 at ext:deno_http/00_serve.ts:511:19
 fetch https://api.github.com/repos/smallhoursorg/example/releases/assets/12345 -> 404
-session id [masked, 64 chars] expired
+session id 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 expired
 2026-09-14T07:15:33Z exited with status 3

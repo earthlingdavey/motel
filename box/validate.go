@@ -84,7 +84,7 @@ func newChildValidator(stage string) *childValidator {
 	env := os.Environ()
 	return &childValidator{
 		stage: stage, moteld: moteldProgram, backup: backupProgram,
-		env: env, timeout: validateTimeout, redactor: liveswap.NewRedactor(secretCandidates(env), nil),
+		env: env, timeout: validateTimeout, redactor: liveswap.NewRedactor(secretCandidates(env)),
 	}
 }
 

@@ -105,10 +105,7 @@ func (ma *managedApp) tell(n Notifier, ev LifecycleEvent) {
 	}
 	ev.App = ma.name
 	if ev.Summary != "" {
-		// The release is a name, which the entropy layer would mask when
-		// it is a git sha (redact.go: a version is high-entropy by
-		// design); it is a label beside the summary anyway.
-		ev.Summary, _ = ma.doorKnowing(nil, true, ev.Release).r.Redact(ev.Summary)
+		ev.Summary, _ = ma.doorKnowing(nil, true).r.Redact(ev.Summary)
 	}
 	n.Lifecycle(ev)
 }

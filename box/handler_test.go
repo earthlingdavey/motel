@@ -26,8 +26,7 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/deploytrust/trusttest"
 )
 
-// sha is a commit id the entropy layer masks unless it is listed (the
-// one liveswap's TestRedactorSafeList pins).
+// sha is a commit id.
 const sha = "3f9a1c2b4d5e6f708192a3b4c5d6e7f8091a2b3c"
 
 const jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvIn0.c2lnbmF0dXJlX2hlcmVfMTIz" // gitleaks:allow

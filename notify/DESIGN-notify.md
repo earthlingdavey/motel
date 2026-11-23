@@ -545,9 +545,8 @@ whichever config serves when it clears.
   the engine starts, it ends the mute of every app its config runs, in
   one post before any other.
 - **Summaries** pass through liveswap's filter, primed with every
-  channel URL (and, at liveswap's end, with the app's own values), with
-  the release as a safe name (a git sha is otherwise masked by the
-  entropy layer), and are cut to 200 runes.
+  channel URL (and, at liveswap's end, with the app's own values), and
+  are cut to 200 runes.
 - **A config that drops a source** ends what nothing can clear any
   more: the keys of an app it no longer runs (and its mute), the backup
   keys once `backup_record off`, a filesystem's once its path is not
@@ -968,10 +967,9 @@ producer's own names (`moteld monitor send --name`), which no config
 lists; regexes; other labels.
 
 The comment is the one free text, and it is **masked, not refused**:
-`cleanText(known, comment, release)`, the filter and the 200-character
+`cleanText(known, comment)`, the filter and the 200-character
 cut a summary gets (the engine's `clean` is the same function over its
-own known values), with the release safe as the engine takes it, and
-`known` the union of the checked config's known values and the
+own known values), with `known` the union of the checked config's known values and the
 engine's at that instant: a reload between the route's check and the
 mask neither unmasks a secret the checked config knew nor misses one
 the new config added. A refusal would echo nothing useful (it cannot

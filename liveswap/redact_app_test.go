@@ -54,7 +54,7 @@ func TestDoorLoadsEnvFileWithoutALaunch(t *testing.T) {
 	ma2 := newManagedApp(spec2.name)
 	ma2.spec = spec2
 	// …but the app's text is withheld until it reads: the running app's
-	// values are unknown, and the heuristics alone are not the promise.
+	// values are unknown, and the shape rules alone are not the promise.
 	if out := ma2.door().text("a low-entropy secret"); strings.Contains(string(out), "low-entropy") || !strings.Contains(string(out), "env_file could not be read") {
 		t.Fatalf("the app's text sent with the env_file unread: %s", out)
 	}
@@ -69,8 +69,7 @@ func TestDoorLoadsEnvFileWithoutALaunch(t *testing.T) {
 	}
 
 	// A value equal to one of the app's own paths, or its name, is a
-	// secret like any other value, and the path is no longer a safe
-	// string (layer 2): the door's safe list exempts nothing.
+	// secret like any other value.
 	spec3 := testSpec(t)
 	spec3.envFile = filepath.Join(t.TempDir(), "paths.env")
 	if err := os.WriteFile(spec3.envFile, []byte("APP_ROOT="+spec3.dirs.app+"\nNAME="+spec3.name+"-is-short\n"), 0o600); err != nil {
@@ -79,6 +78,6 @@ func TestDoorLoadsEnvFileWithoutALaunch(t *testing.T) {
 	ma3 := newManagedApp(spec3.name)
 	ma3.spec = spec3
 	if out, keys := ma3.door().r.Redact("socket " + spec3.dirs.app + "/run/x/app.sock"); strings.Contains(out, spec3.dirs.app) || strings.Join(keys, ",") != "APP_ROOT" {
-		t.Fatalf("a safe string exempted the env_file value equal to it: %q %v", out, keys)
+		t.Fatalf("the env_file value equal to the app's dir survived: %q %v", out, keys)
 	}
 }

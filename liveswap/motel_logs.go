@@ -124,16 +124,12 @@ func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle,
 			zap.String("app", app.ma.name), zap.Int("lines", read.passedOver), zap.String("units", read.passedUnit))
 	}
 	// The releases the lines name are versions from unit names, valid
-	// as versions (unitRelease): names the heuristics leave alone.
-	var releases []string
+	// as versions (unitRelease).
 	rels := make([]string, len(read.lines))
 	for i, e := range read.lines {
 		rels[i], _ = unitRelease(e.userUnit, app.ma.name)
-		if rels[i] != "" && !slices.Contains(releases, rels[i]) {
-			releases = append(releases, rels[i])
-		}
 	}
-	d := app.ma.door(releases...)
+	d := app.ma.door()
 	body := wire.Logs{Kept: wire.KeptOn, Lines: make([]wire.LogLine, len(read.lines)), More: read.more, Gap: read.gap, Cursor: read.cursor}
 	for i, e := range read.lines {
 		body.Lines[i] = wire.LogLine{At: e.at, Release: rels[i], Text: d.logLine(e.text)}
@@ -160,7 +156,7 @@ func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle,
 }
 
 // logsCutMargin is the least the filter sees of a cut line past what is
-// sent: the reach of a credential the shape and entropy layers know,
+// sent: the reach of a credential the shape rules know,
 // whose rule needs its end (a PEM block of an RSA key of 4,096 bits on
 // one line, about 3.3 KB; a JWT's three segments; a provider token).
 // The filter reads 4 KiB of a line and this margin, or the longest form
@@ -168,9 +164,6 @@ func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle,
 // KiB of a 48 KiB line, as journald stores one at most, unless a known
 // value's longest form is longer than 8 KiB.
 const logsCutMargin = 8 << 10
-
-// tokenAlphabet is layer 4's (entropyTokenRe in redact.go).
-const tokenAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+=_-"
 
 // commonStart is the bytes a and b begin with alike, ended on a rune's
 // start: a rune they share the first bytes of and not the rest is not
