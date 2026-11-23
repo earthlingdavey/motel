@@ -481,6 +481,7 @@ func TestHomeOutsideTheViewIsReported(t *testing.T) {
 		{"the base view is in view", "/usr/share", false},
 		{"a path nothing binds is not", "/opt/app", true},
 		{"the app dir root is not bound", appDir, true},
+		{"an empty HOME names no place in the view", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, outside := homeOutsideView(env(tc.home), sb)

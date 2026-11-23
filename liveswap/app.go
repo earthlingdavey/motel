@@ -1652,7 +1652,7 @@ func (spec *appSpec) prepareLaunch(logger *zap.Logger, version string) (launch, 
 			zap.String("env_file", spec.envFile), zap.Strings("withheld", withheld))
 	}
 	if twice := keysSetTwice(l.secrets); len(twice) > 0 {
-		logger.Warn("env_file sets a variable on more than one line: the app is given the last line's value",
+		logger.Warn("env_file sets a variable on more than one line: only its last line can reach the app",
 			zap.String("env_file", spec.envFile), zap.Strings("keys", twice))
 	}
 	if spec.envFile != "" {
@@ -2133,8 +2133,9 @@ func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secre
 
 // keysSetTwice names, once each and in file order, the keys that more
 // than one of an env_file's pairs set (secrets is those pairs, every
-// line in order). lastPairWins gives the app the last line's value
-// without a word, and the operator who wrote the first may expect that
+// line in order). Of those lines only the last can reach the app
+// (lastPairWins; a withheld key or one a higher layer sets reaches it
+// from none), and the operator who wrote the first may expect that
 // one; a launch names them instead.
 func keysSetTwice(pairs []string) []string {
 	seen := make(map[string]bool, len(pairs))

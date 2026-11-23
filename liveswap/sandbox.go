@@ -705,17 +705,21 @@ func unitSyntaxChar(p string) (string, bool) {
 // — inside the release dir, say — which is deliberate. What is not
 // deliberate is doing it by accident: a HOME that is absent inside the
 // unit surfaces as an ENOENT from whichever runtime touches $HOME
-// first, naming no cause. env holds one HOME, the highest layer's:
-// buildEnvFull keeps each key once.
+// first, naming no cause. So does an empty HOME (an env_file's
+// `HOME=`), which names no place in the view or out. env holds one
+// HOME, the highest layer's: buildEnvFull keeps each key once.
 func homeOutsideView(env []string, s *sandboxSpec) (string, bool) {
-	home := ""
+	home, set := "", false
 	for _, kv := range env {
 		if v, ok := strings.CutPrefix(kv, "HOME="); ok {
-			home = v
+			home, set = v, true
 		}
 	}
-	if home == "" {
+	if !set {
 		return "", false
+	}
+	if home == "" {
+		return "", true
 	}
 	// Resolved, because the view is recognised by its bind sources and
 	// a symlink would walk straight past a lexical comparison — the
