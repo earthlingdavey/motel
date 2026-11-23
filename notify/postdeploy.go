@@ -146,8 +146,8 @@ type checkNumbers struct {
 	elapsed    time.Duration
 	newer, old releaseNumbers
 	// oldRead is whether the check read the old release, hasOld
-	// whether that was a baseline (verdict).
-	oldRead, hasOld bool
+	// whether that was a baseline (verdict); failed whether it failed.
+	oldRead, hasOld, failed bool
 }
 
 // countFields are a comparison's checks so far, for a line at its end.
@@ -350,9 +350,12 @@ func (c *comparator) tick(ctx context.Context) {
 				c.logger.Info("monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed", f...)
 				continue
 			}
+			// The last judged check's own verdict: the count in a row can
+			// be reset by a check that weighed no bound, and the rule's
+			// failures changed by a reload.
 			msg := "monitor rules: the post-deploy comparison ended with its window: the release held"
-			if r.failed > 0 {
-				msg = "monitor rules: the post-deploy comparison ended with its window: the release held, its last judged checks failing, fewer in a row than failures"
+			if r.last.failed {
+				msg = "monitor rules: the post-deploy comparison ended with its window: the release held, though its last judged check failed"
 			}
 			c.logger.Info(msg, append(append(f, zap.Int("failing_in_a_row", r.failed)), numberFields(r.last)...)...)
 			continue
@@ -419,7 +422,7 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 		default:
 			if d.rule.Max5xxShare != nil || v.newer.hasP95 {
 				d.run.judged++
-				d.run.last = checkNumbers{elapsed: d.elapsed, newer: v.newer, old: v.old, oldRead: v.oldRead, hasOld: v.hasOld}
+				d.run.last = checkNumbers{elapsed: d.elapsed, newer: v.newer, old: v.old, oldRead: v.oldRead, hasOld: v.hasOld, failed: v.failed}
 			} else {
 				// Sent enough, timed too few for a p95, and no 5xx bound:
 				// no bound weighed, so not judged, though it passes as

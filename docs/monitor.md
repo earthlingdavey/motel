@@ -1069,8 +1069,8 @@ checks it counted: judged (a bound weighed), skipped under
 motel's for them):
 
 - `monitor rules: the post-deploy comparison ended with its window:
-  the release held` (`…, its last judged checks failing, fewer in a row
-  than failures` when `failing_in_a_row` is not 0), with the numbers of the
+  the release held` (`…, though its last judged check failed` when it
+  did; `failing_in_a_row` says how many in a row), with the numbers of the
   last check judged: the new release's responses, `5xx_share` and
   `p95`; the old release's `previous_responses` when that check read
   it, which it does only when the new one was over a bound and there

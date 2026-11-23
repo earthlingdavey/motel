@@ -562,7 +562,7 @@ func wantFields(t *testing.T, got, want map[string]any) {
 const (
 	lineStarts     = "monitor rules: the post-deploy comparison starts"
 	lineHeld       = "monitor rules: the post-deploy comparison ended with its window: the release held"
-	lineHeldFailed = "monitor rules: the post-deploy comparison ended with its window: the release held, its last judged checks failing, fewer in a row than failures"
+	lineHeldFailed = "monitor rules: the post-deploy comparison ended with its window: the release held, though its last judged check failed"
 	lineJudgedNone = "monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed"
 	lineReplaced   = "monitor rules: a new deploy ends the post-deploy comparison in flight"
 	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config loaded last has no post_deploy rule for the app"
@@ -643,6 +643,53 @@ func TestPostDeployWindowEndsWithNoEvent(t *testing.T) {
 	got := infoLine(t, pass.logs, lineHeld)
 	if _, ok := got["previous_responses"]; ok || got["checks_judged"] != int64(3) || got["5xx_share"] != 0.0 {
 		t.Errorf("a window within the bounds: %v", got)
+	}
+}
+
+// The held line says the last judged check failed by that check's own
+// verdict, not by the count in a row: a check with no p95 resets the
+// count (DESIGN-metrics.md, "Owed"), and a reload can change failures.
+func TestPostDeployHeldSaysItsLastJudgedCheckFailed(t *testing.T) {
+	p95 := Rule{Name: "shop_regress", Kind: rulePostDeploy, App: "shop", Window: caddyMinutes(3), MaxP95: caddyMs(100), Failures: 2}
+	tc := newTestComparator(t, p95)
+	tc.deploy("shop", "s2", "")
+	tc.store.set("s2", 200, 0, 3) // over max_p95: fails
+	tc.minute()
+	tc.store.set("s2", 200, 0, 0) // timed, and no quantile sample: no p95
+	for range 3 {
+		tc.minute()
+	}
+	if len(tc.evs) != 0 || len(tc.runs) != 0 {
+		t.Fatalf("%d events, %d in flight", len(tc.evs), len(tc.runs))
+	}
+	got := infoLine(t, tc.logs, lineHeldFailed)
+	if got["failing_in_a_row"] != int64(0) || got["p95"] != 3*time.Second || got["last_check"] != time.Minute {
+		t.Errorf("fields = %v", got)
+	}
+
+	// Two failing checks under failures 3, then a reload to failures 2
+	// after the last: no event, and the count is not "fewer than".
+	r := regressRule
+	r.Window, r.Failures = caddyMinutes(3), 3
+	rl := newTestComparator(t, r)
+	rl.deploy("blog", "v2", "v1")
+	rl.store.set("v1 old", 200, 0, 0.1)
+	rl.store.set("v2", 200, 0, 0.1)
+	rl.minute()
+	rl.store.set("v2", 200, 20, 0.1)
+	rl.minute()
+	rl.minute()
+	r.Failures = 2
+	next := &MetricsStore{Rules: []Rule{r}}
+	core, logs := observer.New(zap.DebugLevel)
+	rl.configure(liveRules{m: next, store: rl.store, logger: zap.New(core)})
+	t.Cleanup(func() { rl.release(next) })
+	rl.minute()
+	if len(rl.evs) != 0 {
+		t.Fatalf("an event after the window: %+v", rl.evs)
+	}
+	if got := infoLine(t, logs, lineHeldFailed); got["failing_in_a_row"] != int64(2) {
+		t.Errorf("fields = %v", got)
 	}
 }
 
