@@ -1528,12 +1528,25 @@ What liveswap does for you:
   8+ characters is scrubbed from responses, so a non-secret there (a
   path, a hostname) gets scrubbed too and belongs in inline `env`
   instead; and inline `env` values are never treated as secrets,
-  because the Caddyfile lives in a repo. While an app's `env_file`
-  cannot be read (a rewrite mid-flight, a mode not yet fixed), every
-  response about that app is withheld, since its values are unknown
-  to the filter; the body says so, and the next response after the
-  file reads is normal. Past the first layer it is best effort, and
-  the limits are in DESIGN-threat-model.md.
+  because the Caddyfile lives in a repo. The filter also knows the
+  values the running app was launched with, which the file may no
+  longer hold: moteld remembers what each launch read, and after a
+  moteld restart it reads the running unit's environment back from
+  systemd when it reattaches to it. So a value changed in `env_file`,
+  or taken out of it, while the app was not launched again stays
+  known for as long as the instance that holds it runs; of that
+  environment, only what motel puts there
+  itself (the inherited `PATH`, `LANG`, `TZ` and `LC_*`, `HOME`,
+  `SOCKET`) and the inline `env` lines as the config has them now are
+  not known values. Until that reattach (moteld just started, or its
+  user manager not answering), or when the environment the manager
+  gives back is not one motel built for that unit (a warning names the
+  unit), the filter knows the file only as it is now. While an app's `env_file` cannot be read (a rewrite
+  mid-flight, a mode not yet fixed), every response about that app is
+  withheld, since its values are unknown to the filter; the body says
+  so, and the next response after the file reads is normal. Past the
+  first layer it is best effort, and the limits are in
+  DESIGN-threat-model.md.
 - Deploy logs record the artifact **host only**; download errors go
   through a redactor that drops credentials and query strings (where
   presigned-URL and token secrets live).

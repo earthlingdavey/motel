@@ -3,6 +3,7 @@ package liveswap
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -60,6 +61,9 @@ type fakeSystemdConn struct {
 	// generic error when that is nil).
 	defaultTasksMax    uint64
 	defaultTasksMaxErr error
+
+	// env is the environment UnitStatusAndEnvironment reports per unit.
+	env map[string][]string
 }
 
 func (f *fakeSystemdConn) DefaultTasksMax(_ context.Context) (uint64, error) {
@@ -165,6 +169,16 @@ func (f *fakeSystemdConn) UnitStatus(_ context.Context, name string) (unitStatus
 		return unitStatus{LoadState: "not-found"}, nil
 	}
 	return st, nil
+}
+
+func (f *fakeSystemdConn) UnitStatusAndEnvironment(ctx context.Context, name string) (unitStatus, []string, error) {
+	st, err := f.UnitStatus(ctx, name)
+	if err != nil || st.LoadState == "not-found" {
+		return st, nil, err // as the real client: a unit not known has none
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return st, append([]string(nil), f.env[name]...), nil
 }
 
 func (f *fakeSystemdConn) ResetFailedUnit(_ context.Context, name string) error {
@@ -301,6 +315,11 @@ func TestSystemdRunnerStartBuildsUnit(t *testing.T) {
 	}
 	if strings.Join(u.Environment, ",") != "SOCKET=/var/lib/liveswap/demo/run/0a1b2c3d0a1b2c3d.sock" {
 		t.Fatalf("environment must be exactly the caller's env, got %v", u.Environment)
+	}
+	// A unit this process started reports no launch environment: the
+	// launch remembered what it rendered (handle.launchEnv).
+	if env := h.launchEnv(); env != nil {
+		t.Fatalf("a started handle reports a launch environment %q", env)
 	}
 	st := h.state()
 	if st.Unit != u.Name || st.PID != 4242 || st.StartedAt.IsZero() {
@@ -676,6 +695,13 @@ func (c *endedJobConn) UnitStatus(ctx context.Context, name string) (unitStatus,
 	return c.fakeSystemdConn.UnitStatus(ctx, name)
 }
 
+func (c *endedJobConn) UnitStatusAndEnvironment(ctx context.Context, name string) (unitStatus, []string, error) {
+	if c.onEndedJob(ctx) {
+		return unitStatus{}, nil, context.DeadlineExceeded
+	}
+	return c.fakeSystemdConn.UnitStatusAndEnvironment(ctx, name)
+}
+
 func (c *endedJobConn) ResetFailedUnit(ctx context.Context, name string) error {
 	if c.onEndedJob(ctx) {
 		return context.DeadlineExceeded
@@ -794,6 +820,10 @@ func TestSystemdRunnerReattach(t *testing.T) {
 	}
 
 	adopted := []string{"/opt/app/server", "--port=0"}
+	launched := []string{"API_TOKEN=launched-value-01", "SOCKET=/run/app.sock"}
+	conn.mu.Lock()
+	conn.env = map[string][]string{"live.service": launched}
+	conn.mu.Unlock()
 	conn.setStatus("live.service", unitStatus{LoadState: "loaded", ActiveState: "active", SubState: "running", MainPID: 77, Sandboxed: true, ExecStart: adopted})
 	h, ok, err := r.Reattach(handleState{Unit: "live.service", StartedAt: started})
 	if !ok || err != nil {
@@ -807,6 +837,11 @@ func TestSystemdRunnerReattach(t *testing.T) {
 	// status would report nothing for every app across a restart.
 	if st := h.state(); !slices.Equal(st.Command, adopted) {
 		t.Fatalf("a reattached handle must report the unit's command %v, got %v", adopted, st.Command)
+	}
+	// The same for the environment it was launched with: the values the
+	// running app holds, which the response filter must know (#657).
+	if got := h.launchEnv(); !slices.Equal(got, launched) {
+		t.Fatalf("a reattached handle must report the unit's environment %q, got %q", launched, got)
 	}
 	// A running unit WITHOUT the sandbox is never adopted: nothing
 	// this moteld starts lacks it, so it is something else's unit —
@@ -950,6 +985,57 @@ func TestStatusFromPropsAndStopBudget(t *testing.T) {
 	}
 	if (unitStatus{}).stopBudget(0) != defaultStopTimeout {
 		t.Fatal("unknown budget and zero grace must fall back to the default")
+	}
+}
+
+// TestEnvStrings: the unit's Environment, an "as" that godbus decodes
+// as a []string, is read as the manager gave it, every pair in its
+// order: an empty value, a value holding = whole, and a repeated key
+// twice (the manager refuses a key twice at a unit's start, "Invalid
+// environment block", so a running unit never reports one; the reader
+// still drops nothing it is given). It is what a reattach hands the
+// response filter (#657), so a pair dropped here is a value sent as
+// written. Any other shape is no environment, never a panic.
+func TestEnvStrings(t *testing.T) {
+	env := []string{"API_TOKEN=one-value-0001", "EMPTY=", "DSN=user=app password=p=q", "API_TOKEN=two-value-0002", "SOCKET=/run/app.sock"}
+	got := envStrings(env)
+	if !slices.Equal(got, env) {
+		t.Fatalf("Environment read as %q, want %q", got, env)
+	}
+	env[0] = "API_TOKEN=changed"
+	if got[0] != "API_TOKEN=one-value-0001" {
+		t.Fatal("the environment read must be a copy of the manager's")
+	}
+	for _, v := range []any{nil, "API_TOKEN=x", []any{"API_TOKEN=x"}, [][]string{{"API_TOKEN=x"}}, []string{}} {
+		if got := envStrings(v); got != nil {
+			t.Errorf("%#v read as %q, want nothing", v, got)
+		}
+	}
+}
+
+// TestStatusCarriesNoEnvironment: a status, read on every poll, stop
+// and sweep and kept as a handle's last, holds none of the unit's
+// environment, which the full property map holds (#657's review).
+func TestStatusCarriesNoEnvironment(t *testing.T) {
+	st := statusFromProps(map[string]any{"LoadState": "loaded", "Environment": []string{"API_TOKEN=one-value-0001"}})
+	if strings.Contains(fmt.Sprintf("%+v", st), "one-value-0001") {
+		t.Fatalf("a status holds the environment: %+v", st)
+	}
+}
+
+// TestSystemdRunnerReattachAdoptsAUnitWithNoEnvironment: a read that
+// succeeds with no environment (the property missing, or a shape not
+// read) still adopts the running unit, which serves; the handle reports
+// none, and the app's filter knows the file as it is now.
+func TestSystemdRunnerReattachAdoptsAUnitWithNoEnvironment(t *testing.T) {
+	r, conn := newTestSystemdRunner(t)
+	conn.setStatus("live.service", unitStatus{LoadState: "loaded", ActiveState: "active", SubState: "running", MainPID: 77, Sandboxed: true})
+	h, ok, err := r.Reattach(handleState{Unit: "live.service"})
+	if !ok || err != nil {
+		t.Fatalf("a running unit must be adopted though it reports no environment: ok=%v err=%v", ok, err)
+	}
+	if env := h.launchEnv(); env != nil {
+		t.Fatalf("no environment reported as %q", env)
 	}
 }
 
