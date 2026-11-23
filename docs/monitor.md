@@ -1096,8 +1096,9 @@ the store) and missed (the store took no push of motel's for them):
   never sent.
 
 A restart of moteld, or a reload to a config with no metrics line,
-ends a comparison with no line. Debug adds one
-line per check the store did not answer or took no push for; in the
+ends a comparison with no line. Debug adds a line for each try of a
+check the store did not answer (it is asked again at every tick, 10 s
+apart) and one for each check it took no push for; in the
 Caddyfile's global options, this writes the `monitor` logger's lines
 to the journal from Debug up:
 
