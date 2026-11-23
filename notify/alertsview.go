@@ -245,11 +245,13 @@ func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.Held
 			// kept.
 			var over *amOverLimitError
 			if errors.As(err, &over) {
-				what := "alerts"
+				// The silence list holds expired silences too, until
+				// Alertmanager's retention drops them: no producer to stop.
+				what := "alerts than motel reads (4 MiB of its answer); docs/monitor.md, \"More alerts than motel reads\", says how to see them"
 				if over.path == "/api/v2/silences" {
-					what = "silences"
+					what = "silences than motel reads (4 MiB of its answer, expired ones counting until its retention drops them); docs/monitor.md, \"Silence an alert\", says how to list them"
 				}
-				logger.Warn(fmt.Sprintf("monitor: every person's read of alerts (an app's, or the box's) is answered \"monitor\":\"unanswered\": Alertmanager holds more %s than motel reads (4 MiB of its answer); docs/monitor.md, \"More alerts than motel reads\", says how to see them", what), zap.Error(err))
+				logger.Warn("monitor: every person's read of alerts (an app's, or the box's) is answered \"monitor\":\"unanswered\": Alertmanager holds more "+what, zap.Error(err))
 			} else {
 				logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": motel could not read what Alertmanager holds", zap.Error(err))
 			}

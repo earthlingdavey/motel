@@ -215,7 +215,12 @@ func TestHeldAlertsOverTheLimit(t *testing.T) {
 		t.Fatalf("at the limit: %v, %d alerts, %d silences", err, len(held.Alerts), len(held.Silences))
 	}
 
-	for _, over := range []struct{ path, what string }{{"/api/v2/alerts", "alerts"}, {"/api/v2/silences", "silences"}} {
+	for _, over := range []struct{ path, what, says string }{
+		{"/api/v2/alerts", "alerts", `Alertmanager holds more alerts than motel reads (4 MiB of its answer); docs/monitor.md, "More alerts than motel reads", says how to see them`},
+		// Expired silences count until Alertmanager drops them: no
+		// producer to stop, so the alerts' passage is not the one.
+		{"/api/v2/silences", "silences", `Alertmanager holds more silences than motel reads (4 MiB of its answer, expired ones counting until its retention drops them); docs/monitor.md, "Silence an alert", says how to list them`},
+	} {
 		am.mu.Lock()
 		am.alerts, am.silences = padded(heldAnswer, maxAMBody), padded(silencesAnswer, maxAMBody)
 		if over.what == "alerts" {
@@ -236,8 +241,7 @@ func TestHeldAlertsOverTheLimit(t *testing.T) {
 			t.Errorf("%s over the limit: the read was answered", over.what)
 		}
 		all := logs.All()
-		if len(all) != 1 || !strings.Contains(all[0].Message, "Alertmanager holds more "+over.what+" than motel reads (4 MiB of its answer)") ||
-			!strings.Contains(all[0].Message, `docs/monitor.md, "More alerts than motel reads"`) || strings.Contains(all[0].Message, "did not answer") {
+		if len(all) != 1 || !strings.HasSuffix(all[0].Message, over.says) || strings.Contains(all[0].Message, "did not answer") {
 			t.Errorf("%s over the limit: journal %+v", over.what, all)
 		}
 	}
