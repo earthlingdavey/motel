@@ -379,7 +379,7 @@ only root and the motel uid can send.
 | `watchdog_throttled` | liveswap | state | critical | the restart budget is spent; again on any failed probe or crash during a recovery's hold, below the restart threshold too | the first healthy probe after it, held `max(30s, watchdog_grace)`; a deploy that succeeds; `watchdog off` |
 | `relaunch_refused` | liveswap | state | critical | the watchdog's relaunch is refused at its pre-flight (its reason without the deployer's text, as for `deploy_refused`) | any path publishes an instance |
 | `deploy_failed` | liveswap | event | warning | a 5xx outcome, a push's upload that could not be staged, or app dirs that are not motel's; the summary names the version and the phase, never the error's text, and says nothing of what serves now | — |
-| `deploy_refused` | liveswap | event | warning | a 422 (liveswap's own words, through the filter: a refusal whose message quotes the deployer's text, the artifact URL or a path in the release, is told without it, which the 422 and the journal keep) | — |
+| `deploy_refused` | liveswap | event | warning | a 422 (liveswap's own words, told as written: a refusal whose message quotes the deployer's text, the artifact URL or a path in the release, is told by its said where it has one, without that text, which the 422 and the journal keep) | — |
 | `rollback` | liveswap | event | warning | `?rollback=` succeeds | — |
 | `deploy_succeeded` | liveswap | event | info | a deploy succeeds; dropped unless `deploy_succeeded on` | — |
 | `deploy_in_progress` | liveswap | the mute | none | a deploy starts; re-posted each minute while it runs | it ends, whatever it came to |
@@ -545,9 +545,11 @@ whichever config serves when it clears.
   the engine starts, it ends the mute of every app its config runs, in
   one post before any other.
 - **Summaries** pass through liveswap's filter, primed with every
-  channel URL (and, at liveswap's end, with the app's own values), with
+  channel URL, with
   the release as a safe name (a git sha is otherwise masked by the
-  entropy layer), and are cut to 200 runes.
+  entropy layer), and are cut to 200 runes. A lifecycle summary
+  arrives as moteld wrote it: no filter with the app's values runs
+  over it on the way.
 - **A config that drops a source** ends what nothing can clear any
   more: the keys of an app it no longer runs (and its mute), the backup
   keys once `backup_record off`, a filesystem's once its path is not
