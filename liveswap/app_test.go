@@ -1345,13 +1345,13 @@ func TestBuildEnvSetsEachKeyOnce(t *testing.T) {
 	}
 }
 
-// A key an env_file sets on more than one line is named at each launch:
-// the app is given the last line's value, which the operator who wrote
-// the first may not expect.
+// A key an env_file sets on more than one line is named at each launch,
+// its value never: every line but the last is ignored, which the
+// operator who wrote the first may not expect.
 func TestLaunchNamesAKeyAnEnvFileSetsTwice(t *testing.T) {
 	for _, tc := range []struct{ file, want string }{
-		{"A=1\nB=1\nA=2\nB=2\nA=3\nC=1\n", "[A B]"},
-		{"A=1\nB=2\n", ""},
+		{"A=val-a1\nB=val-b1\nA=val-a2\nB=val-b2\nA=val-a3\nC=val-c1\n", "[A B]"},
+		{"A=val-a1\nB=val-b1\n", ""},
 	} {
 		rig := newTestRig(t)
 		rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
@@ -1365,6 +1365,8 @@ func TestLaunchNamesAKeyAnEnvFileSetsTwice(t *testing.T) {
 			t.Errorf("%q: warned %v, want no warning", tc.file, got)
 		case tc.want != "" && (len(got) != 1 || fmt.Sprint(got[0].ContextMap()["keys"]) != tc.want):
 			t.Errorf("%q: warned %v, want one warning naming %s", tc.file, got, tc.want)
+		case tc.want != "" && strings.Contains(got[0].Message+fmt.Sprint(got[0].ContextMap()), "val-"):
+			t.Errorf("%q: the warning holds a value of the file: %v", tc.file, got)
 		}
 	}
 }

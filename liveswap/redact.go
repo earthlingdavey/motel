@@ -36,8 +36,9 @@ import (
 //     inside a body's times and numbers, which no layer sees (rule
 //     7). Inline
 //     `env` values are not secrets by policy (the Caddyfile is in a
-//     repo) and are not redacted; SOCKET, HOME and the inherited PATH
-//     are paths a diagnostic needs.
+//     repo) and are not redacted; motel's SOCKET, the sandbox HOME and
+//     the inherited PATH are paths a diagnostic needs, and none is an
+//     env_file value (a HOME or PATH the env_file sets is one).
 //  2. A safe list — the versions the status names, the app's dirs —
 //     exempt from the heuristics below, so a 40-character git SHA used
 //     as a version survives. Each entry is also split the way layer 4
@@ -283,10 +284,12 @@ type secretForm struct {
 //
 // The box webhook builds its own: the pairs are the caller's choice,
 // as an app's are liveswap's — an app's filter is primed with
-// env_file alone, and SOCKET, HOME and PATH stay readable because a
-// diagnostic needs its paths — so a caller priming with a process
-// environment (the box, whose `caddy validate` quotes expanded values
-// in its errors) will want the same for the variables that are paths.
+// env_file alone, and motel's SOCKET, the sandbox HOME and the
+// inherited PATH stay readable because a diagnostic needs its paths (a
+// HOME or PATH the env_file sets is one of its values) — so a caller
+// priming with a process environment (the box, whose `caddy validate`
+// quotes expanded values in its errors) will want the same for the
+// variables that are paths.
 // The safe strings are the ids a body names, which the entropy layer
 // would otherwise mask: a 40-hex commit sha, a 32-hex result id, as
 // liveswap lists an app's versions. Build one per set of safe strings

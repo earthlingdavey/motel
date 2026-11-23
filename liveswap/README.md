@@ -199,7 +199,9 @@ Caddy's environment (`PATH`, `LANG`, `TZ`, `LC_*` — nothing else, so
 supervisor credentials like ACME DNS tokens never reach apps) →
 `HOME` set to the app's `shared/` → `env_file` → inline `env` →
 injected `SOCKET`, all layered on the systemd user manager's own
-defaults (`XDG_RUNTIME_DIR`, `INVOCATION_ID`, …). Two of those
+defaults (`XDG_RUNTIME_DIR`, `INVOCATION_ID`, …). A key two layers set
+reaches the app once, with the higher layer's value; of two lines of
+one `env_file` the later counts, and each launch warns naming the key. Two of those
 defaults are **reserved** in a sandboxed unit and cannot be set by
 `env` or `env_file`: `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`
 are unset after everything else, because they name the user manager's

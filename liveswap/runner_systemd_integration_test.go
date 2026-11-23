@@ -1514,6 +1514,55 @@ func TestIntegrationSystemdEnvFileHomeWins(t *testing.T) {
 	}
 }
 
+// TestIntegrationSystemdEnvFilePathChoosesTheCommand: a command given
+// by name is the one the unit's own PATH finds, an env_file's here,
+// not moteld's. The name is on both: moteld's PATH holds a decoy in the
+// release dir, which ran silently before #666's fix to resolveCommand.
+func TestIntegrationSystemdEnvFilePathChoosesTheCommand(t *testing.T) {
+	r := integrationRunner(t)
+	root, release, shared := sandboxRoot(t)
+	out := filepath.Join(shared, "ran.txt")
+	body := []byte("#!/bin/sh\ntrap 'exit 0' TERM\necho \"$0 $PATH\" > " + out + ".tmp && mv " + out + ".tmp " + out + "\nsleep 300 & wait\n")
+	var tools []string
+	for _, d := range []string{filepath.Join(release, "bin"), filepath.Join(shared, "bin")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		tools = append(tools, filepath.Join(d, "mytool"))
+		if err := os.WriteFile(tools[len(tools)-1], body, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", filepath.Join(release, "bin")+":"+os.Getenv("PATH"))
+	appPath := filepath.Join(shared, "bin") + ":/usr/bin:/bin"
+	envFile := filepath.Join(root, "itest.env")
+	if err := os.WriteFile(envFile, []byte("PATH="+appPath+"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	spec := &appSpec{name: "itest", command: []string{"mytool", "serve"}, envFile: envFile, grace: 2 * time.Second, dirs: newAppDirs(root, "itest")}
+	l, err := spec.prepareLaunch(zap.NewNop(), "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss := l.startSpec(spec, spec.command)
+	if err := r.Preflight(ss); err != nil {
+		t.Fatalf("pre-flight of a command the env_file's PATH finds: %v", err)
+	}
+	h, err := r.Start(ss)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Stop(h, spec.grace) })
+	waitForFile(t, out, 5*time.Second) // renamed into place whole
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(b)), tools[1]+" "+appPath; got != want {
+		t.Errorf("the unit ran %q, want %q: the tool its own PATH finds, with that PATH", got, want)
+	}
+}
+
 // TestIntegrationSystemdPreStartKeepsItsGraceAtDeadline: a pre_start
 // that runs past the unit's own TimeoutStartSec= is stopped by the
 // manager with its grace, the sibling in its cgroup too. Before it, a

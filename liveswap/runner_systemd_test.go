@@ -1638,6 +1638,59 @@ func TestPreflightOutsideTheViewSaidNamesNoPath(t *testing.T) {
 // script passes; an executable for another machine is refused with the
 // runner to build on; a command outside the sandbox view is refused
 // with where the runtime has to live — all before a unit exists.
+// A command given by name is the one the unit's own PATH finds, in the
+// pre-flight and at the launch alike, not the one moteld's PATH finds:
+// the unit execs the path resolved for it (#666). The refusal for a
+// name the unit's PATH does not hold prints no PATH: an env_file's is
+// a secret.
+func TestCommandIsTheOneTheUnitsPathFinds(t *testing.T) {
+	r, _ := newTestSystemdRunner(t)
+	spec := testApp(t)
+	tool := func(dir, name string) string {
+		must(t, os.MkdirAll(dir, 0o755))
+		p := filepath.Join(dir, name)
+		must(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+		return p
+	}
+	moteld, own := filepath.Join(spec.dir, "moteld-bin"), filepath.Join(spec.dir, "app-bin")
+	t.Setenv("PATH", moteld+":/usr/bin:/bin")
+	for _, tc := range []struct {
+		name string
+		in   []string // the dirs that hold the tool
+	}{
+		{"only on the unit's PATH", []string{own}},
+		{"on both: the unit's wins", []string{moteld, own}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			name := "tool" + strconv.Itoa(len(tc.in))
+			var want string
+			for _, d := range tc.in {
+				want = tool(d, name)
+			}
+			s := spec
+			s.command = []string{name, "serve"}
+			s.env = append([]string{"PATH=" + own + ":/usr/bin"}, spec.env...)
+			if err := r.Preflight(s); err != nil {
+				t.Fatalf("pre-flight: %v", err)
+			}
+			u, err := r.unitFor(s, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if u.ExecStart[0] != want {
+				t.Fatalf("the unit execs %s, want %s, the one its own PATH finds", u.ExecStart[0], want)
+			}
+		})
+	}
+	s := spec
+	s.command = []string{"no-such-tool"}
+	s.env = append([]string{"PATH=/srv/secret-path-value/bin"}, spec.env...)
+	err := r.Preflight(s)
+	if err == nil || !strings.Contains(err.Error(), "the PATH the app's env_file or inline env sets") || strings.Contains(err.Error(), "secret-path-value") {
+		t.Fatalf("a name the unit's PATH does not hold must be refused naming which PATH, never its value: %v", err)
+	}
+}
+
 func TestSystemdRunnerPreflight(t *testing.T) {
 	r, conn := newTestSystemdRunner(t)
 	spec := testApp(t)

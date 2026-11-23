@@ -2104,8 +2104,9 @@ func buildEnv(spec *appSpec, version, socket, releaseDir string) ([]string, erro
 // values the response filter treats as secrets, a pair a higher layer
 // overrides too. Inline `env` is not among them — it lives in the
 // Caddyfile, in a repo, and is not secret by policy — and neither are
-// HOME, SOCKET or the inherited PATH, which a diagnostic has to be
-// able to name.
+// the sandbox HOME, motel's SOCKET or the inherited PATH, LANG, TZ and
+// LC_*, which a diagnostic has to be able to name; a HOME or PATH the
+// env_file sets is, like every value there.
 func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secrets, withheld []string, envFileMode os.FileMode, err error) {
 	env = append(inheritedEnv(), "HOME="+spec.dirs.shared)
 	if spec.envFile != "" {
@@ -2133,8 +2134,8 @@ func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secre
 	return lastPairWins(env), secrets, withheld, envFileMode, nil
 }
 
-// keysSetTwice names, once each and in file order, the keys that more
-// than one of an env_file's pairs set (secrets is those pairs, every
+// keysSetTwice names, once each and in the order of each key's second
+// line, the keys that more than one of an env_file's pairs set (secrets is those pairs, every
 // line in order). lastPairWins ignores every line of a key but its
 // last (which a withheld key or one a higher layer sets does not use
 // either), and the operator who wrote the first may expect that one;
