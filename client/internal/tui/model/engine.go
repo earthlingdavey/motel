@@ -202,6 +202,10 @@ type Engine struct {
 	lastList  time.Time
 	lastRetry time.Time
 	ticked    time.Time
+	// woken is the last wake from sleep: an answer to a read asked before
+	// it, in flight through the sleep, may be from before it, and leaves
+	// the read's mark (entry.woke) as it was.
+	woken time.Time
 	// latest is the latest time a caller gave: one before it is the
 	// wall clock set back (seen).
 	latest time.Time
@@ -234,8 +238,8 @@ type entry struct {
 	// left after the last it sent (logsMore): it takes its turn among the
 	// other apps' reads, not ahead of them.
 	again bool
-	// woke is an answer not read again since the machine slept: stale,
-	// whatever its kind (Woke).
+	// woke is an answer from before the machine slept, not answered since
+	// by a read asked after the wake: stale, whatever its kind (Woke).
 	woke bool
 	// every is the interval the read after the last answer was due by,
 	// against which the row's age is judged; answered is when that
@@ -1189,7 +1193,8 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	alone := false
 	switch out {
 	case Answered:
-		en.misses, en.failed, en.answered, en.woke = 0, false, now, false
+		en.misses, en.failed, en.answered = 0, false, now
+		en.woke = en.woke && en.asked.Before(e.woken)
 		if j.Kind == KWhoAmI {
 			e.meAnswered = now
 		}
@@ -1424,10 +1429,12 @@ func (e *Engine) Row(app string) (misses int, held bool, every time.Duration, wo
 }
 
 // Woke says whether the answer j's read last gave is from before a wake
-// from sleep, not read again since: the screen says it is stale. A held
-// read (a 403, a 404, a record, which is read once) is not being asked
-// again, so it is never marked, as the apps table's rows are not (Row);
-// a read with no entry is not either.
+// from sleep, not answered since by a read asked after it: the screen
+// says it is stale. A read held (a 403, a 404, a record, which is read
+// once) is not being asked again, so its mark is not shown while it is
+// held, as the apps table's rows say none (Row); once the hold is lifted
+// (ctrl-r, opening a record again) it is, until the read answers. A read
+// with no entry is not marked.
 func (e *Engine) Woke(j Job) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1489,11 +1496,12 @@ func (e *Engine) seen(now time.Time) bool {
 }
 
 // wakeLocked is a wake from sleep at now (Tick): every read's answer is
-// marked stale until it is read again (Woke); the statuses, and the
-// watch's reads of the apps' alerts, are spread over their cycle again,
-// the open app's status, the list and whoami are due at once, and every
-// other read keeps the due time it had.
+// marked stale until a read of it asked after now answers (Woke); the
+// statuses, and the watch's reads of the apps' alerts, are spread over
+// their cycle again, the open app's status, the list and whoami are due
+// at once, and every other read keeps the due time it had.
 func (e *Engine) wakeLocked(now time.Time) {
+	e.woken = now
 	every := e.background()
 	for j, en := range e.jobs {
 		en.woke = true
@@ -1539,7 +1547,7 @@ func (e *Engine) shift(d time.Duration) {
 			}
 		}
 	}
-	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry, &e.ticked, &e.noneAsked, &e.waitFrom)
+	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry, &e.ticked, &e.noneAsked, &e.waitFrom, &e.woken)
 	for _, en := range e.jobs {
 		move(&en.due, &en.answered, &en.asked)
 	}
