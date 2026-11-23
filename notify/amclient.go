@@ -53,8 +53,9 @@ const maxErrBody = 512
 
 // maxAMBody bounds what is read of an answer. The largest is every
 // alert Alertmanager holds, for the people's reads (heldAlerts): 4 MiB
-// is 5,500 to 7,500 alerts the size of motel's own (docs/monitor.md,
-// "More alerts than motel reads").
+// is 5,500 to 7,500 alerts with no details, as motel's own events are,
+// and about 1,300 to 1,400 from `moteld monitor send` with its 2 KiB of
+// details (docs/monitor.md, "More alerts than motel reads").
 const maxAMBody = 4 << 20
 
 // do asks Alertmanager. A 2xx answer over maxAMBody is an

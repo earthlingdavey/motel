@@ -254,12 +254,9 @@ func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.Held
 				}
 				logger.Warn("monitor: every person's read of alerts (an app's, or the box's) is answered \"monitor\":\"unanswered\": Alertmanager holds more "+what, zap.Error(err))
 			case errors.Is(err, context.DeadlineExceeded):
-				// Alertmanager builds its whole answer before its first
-				// byte: far past the limit that outlasts alertsBudget (80,000
-				// alerts took about 2 s on one CPU, measured for #638), as a
-				// start by the read's connection can. Either list may be the
-				// late one: the error does not say which.
-				logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": Alertmanager did not answer within 2 s, as when it starts, or when it holds so many alerts or silences that its answer takes that long; docs/monitor.md, \"More alerts than motel reads\", says how to see them", zap.Error(err))
+				// The fetch's budget, alertsBudget, covers both lists: the
+				// error does not say which was late, nor why.
+				logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": Alertmanager's answers did not come within the 2 s motel waits", zap.Error(err))
 			default:
 				logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": motel could not read what Alertmanager holds", zap.Error(err))
 			}

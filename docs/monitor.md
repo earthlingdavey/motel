@@ -894,33 +894,31 @@ forwards the same way (`~/.motel/vm.sock:/run/motel-metrics/vm.sock`).
 
 For the people's reads of alerts (`motel monitor alerts`, with or
 without `--app`, and the TUI), motel reads at most 4 MiB of what
-Alertmanager holds, and of its silence list: 5,500 to 7,500 alerts the
-size of motel's own, which take 550 to 760 bytes each in Alertmanager's
-answer (measured by marshalling them as `GET /api/v2/alerts` gives
-them, and against Alertmanager 0.28.1: 5,000 alerts with 100-character
-summaries came to 3.3 MB). From 500 alerts up to that, the box's read sends the newest 500
-and says it holds more. Past it, every one of those reads, the box's
-and each app's, answers `"monitor":"unanswered"`: the TUI says `not
-known: the box could not read its Alertmanager`, and `motel monitor
-alerts` exits 3. Alertmanager still routes and sends every alert to
-your channels.
+Alertmanager holds, and of its silence list. That is 5,500 to 7,500
+alerts with no details, as motel's own events are: 550 to 760 bytes
+each in Alertmanager's answer (measured by marshalling them as `GET
+/api/v2/alerts` gives them, and against Alertmanager 0.28.1: 5,000
+alerts with 100-character summaries came to 3.3 MB). An alert from
+`moteld monitor send` with its 2 KiB of `--detail` and a 128-character
+`--instance` takes about 3 KB, so about 1,300 to 1,400 of those fit
+(measured against Alertmanager 0.28.1). From 500 alerts up to the
+limit, the box's read sends the newest 500 and says it holds more.
+Past it, every one of those reads, the box's and each app's, answers
+`"monitor":"unanswered"`: the TUI says `not known: the box could not
+read its Alertmanager`, and `motel monitor alerts` exits 3. The limit
+is on motel's own read: it does not change what Alertmanager routes
+and sends.
 
-motel's own events and your `rule` lines stay far below it (a rule
-raises at most one alert per app). It takes a producer that sends many,
-such as `moteld monitor send` with a new `--instance` at every send
-([Your own events](#your-own-events-moteld-monitor-send)). While people
-read, the journal then says, at most once every 5 seconds:
+motel's own events and your `rule` lines stay far below it: an app's
+rule raises at most one alert per app, and `disk_fill` one per
+filesystem. It takes a producer that sends many, such as `moteld
+monitor send` with a new `--instance` at every send ([Your own
+events](#your-own-events-moteld-monitor-send)). While people read, the
+journal then says, at most once every 5 seconds:
 
 ```
 monitor: every person's read of alerts (an app's, or the box's) is answered "monitor":"unanswered": Alertmanager holds more alerts than motel reads (4 MiB of its answer); docs/monitor.md, "More alerts than motel reads", says how to see them
 ```
-
-Far past the limit Alertmanager can take longer to answer than the 2
-seconds motel waits: it builds the whole answer before it sends any of
-it, and 80,000 alerts took about 2 seconds on one CPU (measured with
-Alertmanager 0.28.1). The line then says Alertmanager did not answer
-within 2 s, as when it starts, or holds so many alerts or silences that
-its answer takes that long.
 
 Ask Alertmanager itself, which has no such limit. On every box, over
 its socket, count what it holds by name:
@@ -945,7 +943,8 @@ ip netns exec motel-metrics amtool --alertmanager.url=http://127.0.0.1:9093 aler
 ```
 
 Then stop the producer. A one-shot ends five minutes after it was sent;
-a state holds until the producer sends `--state resolved` for its key.
+a state holds until the producer sends `--state resolved` for its key,
+its app leaves the config, or the monitor block is taken out.
 A silence list past the limit is listed with `curl … /api/v2/silences`
 ([Silence an alert](#silence-an-alert)); an expired silence counts until
 Alertmanager drops it, five days after it ends.

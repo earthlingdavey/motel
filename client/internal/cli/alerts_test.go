@@ -87,11 +87,15 @@ func TestMonitorAlerts(t *testing.T) {
 			t.Errorf("%s, --json: exit %d, stdout %q", c.monitor, r.code, r.stdout)
 		}
 	}
-	// Unanswered names no cause the client cannot know: the box's
-	// Alertmanager may not have answered, or held more than the box reads.
+	// Unanswered names no cause the client cannot know (the box's journal
+	// says which of several it was), and the help says the same.
 	fb.alerts = wire.Alerts{Monitor: wire.MonitorUnanswered, Alerts: []wire.Alert{}}
 	if r := runKey(t, fb, nil, "monitor", "alerts", "--app", "blog"); r.stderr != "motel: 127.0.0.1 could not tell blog's alerts: it could not read what its Alertmanager holds (the box's journal says why)\n" {
 		t.Errorf("unanswered: stderr %q", r.stderr)
+	}
+	if r := run(t, nil, nil, "monitor", "alerts", "--help"); !strings.Contains(strings.Join(strings.Fields(r.stdout), " "),
+		"3 when the box could not read what its Alertmanager holds (the box's journal says why), or said a word for it this client does not know") {
+		t.Errorf("the help does not say unanswered as the command does:\n%s", r.stdout)
 	}
 	fb.alerts = wire.Alerts{Monitor: wire.MonitorOn, Alerts: []wire.Alert{}}
 	if r := runKey(t, fb, nil, "monitor", "alerts", "--app", "blog"); r.code != 0 || r.stdout != "127.0.0.1 says no alert of blog is held\n" {

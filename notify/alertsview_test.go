@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -215,6 +216,23 @@ func TestHeldAlertsOverTheLimit(t *testing.T) {
 		t.Fatalf("at the limit: %v, %d alerts, %d silences", err, len(held.Alerts), len(held.Silences))
 	}
 
+	// A refusal is said as its status, however long its body; a route
+	// is named without its query.
+	am.mu.Lock()
+	am.alerts, am.alertsCode = padded(heldAnswer, maxAMBody+1), http.StatusServiceUnavailable
+	am.mu.Unlock()
+	var refused *amStatusError
+	if _, err := c.heldAlerts(context.Background()); !errors.As(err, &refused) || refused.code != http.StatusServiceUnavailable {
+		t.Errorf("a refusal over the limit: %v, want its status", err)
+	}
+	am.mu.Lock()
+	am.alertsCode = http.StatusOK
+	am.mu.Unlock()
+	var overCopies *amOverLimitError
+	if _, err := c.failureCopies(context.Background(), "ops"); !errors.As(err, &overCopies) || overCopies.path != "/api/v2/alerts" {
+		t.Errorf("a filtered read over the limit: %v, want /api/v2/alerts named without its query", err)
+	}
+
 	for _, over := range []struct{ path, what, says string }{
 		{"/api/v2/alerts", "alerts", `Alertmanager holds more alerts than motel reads (4 MiB of its answer); docs/monitor.md, "More alerts than motel reads", says how to see them`},
 		// Expired silences count until Alertmanager drops them: no
@@ -247,10 +265,10 @@ func TestHeldAlertsOverTheLimit(t *testing.T) {
 	}
 }
 
-// TestAlertsViewSlowAnswer (#638): Alertmanager builds its whole
-// answer before its first byte, so far past the limit it answers too
-// late for the budget: the fetch's error is the deadline's, and the
-// journal line says it may hold so many alerts, and where to look.
+// TestAlertsViewSlowAnswer (#638): an answer later than the budget is
+// the deadline's error, and its journal line says only that the answers
+// did not come within the wait: not why, nor which list. Any other
+// error, a cancelled one too, has the default line.
 func TestAlertsViewSlowAnswer(t *testing.T) {
 	sock := unixServer(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -259,13 +277,21 @@ func TestAlertsViewSlowAnswer(t *testing.T) {
 	if !errors.Is(slow, context.DeadlineExceeded) {
 		t.Fatalf("a late answer: %v, want the deadline's", slow)
 	}
-	core, logs := observer.New(zap.WarnLevel)
-	v := &alertsView{now: time.Now, fetch: func(context.Context) (liveswap.HeldAlerts, error) { return liveswap.HeldAlerts{}, slow }}
-	if _, ok := v.get(context.Background(), zap.New(core)); ok {
-		t.Error("a late answer was answered")
-	}
-	if all := logs.All(); len(all) != 1 || !strings.HasSuffix(all[0].Message, `Alertmanager did not answer within 2 s, as when it starts, or when it holds so many alerts or silences that its answer takes that long; docs/monitor.md, "More alerts than motel reads", says how to see them`) {
-		t.Errorf("journal %+v", all)
+	for _, c := range []struct {
+		err  error
+		says string
+	}{
+		{slow, `"monitor":"unanswered": Alertmanager's answers did not come within the 2 s motel waits`},
+		{fmt.Errorf("alertmanager at /run/x: %w", context.Canceled), `"monitor":"unanswered": motel could not read what Alertmanager holds`},
+	} {
+		core, logs := observer.New(zap.WarnLevel)
+		v := &alertsView{now: time.Now, fetch: func(context.Context) (liveswap.HeldAlerts, error) { return liveswap.HeldAlerts{}, c.err }}
+		if _, ok := v.get(context.Background(), zap.New(core)); ok {
+			t.Errorf("%v: answered", c.err)
+		}
+		if all := logs.All(); len(all) != 1 || !strings.HasSuffix(all[0].Message, c.says) {
+			t.Errorf("%v: journal %+v", c.err, all)
+		}
 	}
 }
 

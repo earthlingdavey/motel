@@ -123,9 +123,8 @@ box's free text, on a `summary` line under it. Not the box's own alerts,
 and not the silences. The box asks Alertmanager at most every 5 s, so
 an answer can be that old. It exits 0 when it read them, alerts or none,
 and when the box has no monitor (nothing is raised there); 3 when the
-box could not read what its Alertmanager holds (`"monitor":"unanswered"`:
-it did not answer, or held more than the box reads; the box's journal
-says which) or names
+box could not read what its Alertmanager holds (`"monitor":"unanswered"`;
+the box's journal says why) or names
 its monitor in a word the client does not know: `--json` then prints
 the client's own sentence. It is asked with your own key only, as
 `whoami` is. An alert's name is held to `^[A-Za-z_][A-Za-z0-9_:.-]{0,63}$` (an app's
@@ -159,7 +158,8 @@ as `?`. The box sends at most 500 alerts, the newest, and 200 silences,
 the active ones first and then the soonest to start, and says when it
 held more: the first line then says so. That holds up to 4 MiB of what
 Alertmanager holds, the most the box reads of it (5,500 to 7,500 alerts
-the size of motel's own): past it the box reads none, and says
+with no details, as motel's own events are; about 1,300 to 1,400 from
+`moteld monitor send` with its 2 KiB of details): past it the box reads none, and says
 `"monitor":"unanswered"` (docs/monitor.md, "More alerts than motel
 reads").
 
