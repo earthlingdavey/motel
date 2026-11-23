@@ -1311,12 +1311,6 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	case j.Kind == KWhoAmI:
 		en.due = now.Add(e.meEvery())
 	}
-	if out == Answered && en.woke && !en.held {
-		// Asked before a wake and answered after it: its answer may be from
-		// before the sleep, so it is still marked, and asked again now, as
-		// the wake asked it (wakeLocked), not an interval on.
-		en.due = now
-	}
 	if alone {
 		en.due = maxTime(en.due, now.Add(backoff(en.misses)))
 		if en.misses == 1 {
