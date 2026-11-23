@@ -805,7 +805,7 @@ func (s *Session) MeAsOf(now time.Time) Line {
 	if s.Me == nil {
 		return nil
 	}
-	return s.asOf(s.Me.At, now)
+	return append(s.asOf(s.Me.At, now), s.stale(Job{Kind: KWhoAmI})...)
 }
 
 // RecordAsOf is how old a deploy's record is, for its crumb: it is read
@@ -814,6 +814,9 @@ func (s *Session) MeAsOf(now time.Time) Line {
 func (s *Session) RecordAsOf(app, version string, now time.Time) Line {
 	s.seen(now)
 	if g, err, ok := s.Record(app, version); ok && g != nil && !Forbidden(err) && !NotFound(err) {
+		// No word for a wake (stale): a record is read once and held, so
+		// it is never marked (Engine.Woke). It is read again only when the
+		// person opens it again or asks (ctrl-r).
 		l := s.asOf(g.At, now)
 		if err != nil {
 			l = append(l, ownC(" · the last read failed", Warn))
@@ -829,7 +832,7 @@ func (s *Session) BoxAsOf(now time.Time) Line {
 	if s.BoxSt == nil {
 		return nil
 	}
-	return s.asOf(s.BoxSt.At, now)
+	return append(s.asOf(s.BoxSt.At, now), s.stale(Job{Kind: KBox})...)
 }
 
 // BoxView is the box screen, its lines whole.

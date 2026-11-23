@@ -371,7 +371,7 @@ func (s *Session) MetricsAsOf(app, rng string, now time.Time) Line {
 	if _, refused := s.appRefused(app); g == nil || refused {
 		return nil
 	}
-	l := s.asOf(g.At, now)
+	l := append(s.asOf(g.At, now), s.stale(Job{Kind: KSeries, App: app, Range: rng})...)
 	if err != nil {
 		l = append(l, ownC(" · the last read failed", Warn))
 	}

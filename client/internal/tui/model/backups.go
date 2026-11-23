@@ -30,7 +30,7 @@ func (s *Session) BackupsAsOf(now time.Time) Line {
 	if s.BackupsSt == nil {
 		return nil
 	}
-	l := s.asOf(s.BackupsSt.At, now)
+	l := append(s.asOf(s.BackupsSt.At, now), s.stale(Job{Kind: KBackups})...)
 	if s.BackupsErr != nil {
 		l = append(l, ownC(" · the last read failed", Warn))
 	}
@@ -187,6 +187,10 @@ func (s *Session) BoxBackupsLine(now time.Time) Line {
 	switch {
 	case s.BackupsSt != nil:
 		l := Line{own(Ago(now.Sub(s.BackupsSt.At)) + " ago · :backups · ")}
+		if s.Engine.Woke(Job{Kind: KBackups}) {
+			// After the pointer, as the failed read's words are (stale).
+			l = append(l, ownC("stale · ", Warn))
+		}
 		if s.BackupsErr != nil {
 			l = append(l, ownC("the last read failed · ", Warn))
 		}

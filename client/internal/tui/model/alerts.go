@@ -57,7 +57,7 @@ func (s *Session) alertLines(app string, now time.Time) []Line {
 	default:
 		head = append(head, ownC("not known: the box says ", Warn), boxT(g.V.Monitor), own(" of its monitor"))
 	}
-	head = append(head, own(" · as of "+Ago(now.Sub(g.At))+" ago"))
+	head = append(append(head, own(" · as of "+Ago(now.Sub(g.At))+" ago")), s.stale(Job{Kind: KAlerts, App: app})...)
 	if a.alertsErr != nil {
 		head = append(head, ownC(" · the last read failed", Warn))
 	}

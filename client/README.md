@@ -1061,8 +1061,14 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   counts. A step of the clock back is seen at the first time read after
   it, and every time kept of the reads moves back by it, to within the
   second between two readings; a sleep, or a step back past 30 s, makes
-  every row that is still being read stale until read again (one held
-  by a 403 or a 404 waits for `ctrl-r`). A step of the clock forward cannot be told from a short sleep: one that leaves no more than 30 s between two of the clock's ticks (one a second) is counted as time passed, so the bucket fills by the step and a 429's wait or a backoff ends early by it; a longer one is a wake.
+  every answer kept that is still being read stale until read again,
+  whatever screen shows it (one held by a 403 or a 404, or a deploy's
+  record, read once, waits for `ctrl-r`): an apps row says `stale` in
+  its state, and the crumb of an app's screen, who am I, the box, the
+  backups, the alerts, the rules and the metrics says `stale` after the
+  answer's age, as do the box screen's lines of the backups and the
+  alerts, and an app's line of its alerts; the logs screen's crumb does
+  not. A step of the clock forward cannot be told from a short sleep: one that leaves no more than 30 s between two of the clock's ticks (one a second) is counted as time passed, so the bucket fills by the step and a 429's wait or a backoff ends early by it; a longer one is a wake.
   Colour only repeats a mark (`✖ ▲ ⟳ ? ·`) or a word; `NO_COLOR`
   turns it off.
 - **Box text on tview.** tview reads `[...]` as tags in table cells,

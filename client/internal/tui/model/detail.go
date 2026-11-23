@@ -52,6 +52,17 @@ func (s *Session) asOf(at time.Time, now time.Time) Line {
 	return Line{own("as of " + hms(at) + " UTC · " + Ago(now.Sub(at)) + " ago")}
 }
 
+// stale is said after an answer's age while the read j behind it is
+// marked by a wake from sleep (Engine.Woke), until it answers again; nil
+// otherwise. Every line that says a kept answer's age says it so, before
+// "the last read failed" when both are said.
+func (s *Session) stale(j Job) Line {
+	if !s.Engine.Woke(j) {
+		return nil
+	}
+	return Line{ownC(" · stale", Warn)}
+}
+
 // Overview is app's screen at now.
 func (s *Session) Overview(app string, now time.Time) OverviewView {
 	s.seen(now)
@@ -77,7 +88,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		return v
 	}
 	st := a.st.V
-	v.AsOf = s.asOf(a.st.At, now)
+	v.AsOf = append(s.asOf(a.st.At, now), s.stale(Job{Kind: KStatus, App: app})...)
 	if a.err != nil {
 		v.AsOf = append(v.AsOf, ownC(" · the last read failed", Warn))
 		v.Failed = Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(a.err), 2*LineMax)}}
