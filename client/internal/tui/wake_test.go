@@ -15,9 +15,10 @@ import (
 // none does once each has been.
 func TestWakeMarksRowsStale(t *testing.T) {
 	// The sleep. A row is stale by its age past StaleAfter+1 of its
-	// intervals (BackgroundEvery at the least), and each was answered
-	// within one interval before the sleep: a sleep of StaleAfter
-	// intervals or more could make the rows stale without the wake.
+	// intervals (no app is open here, so BackgroundEvery at the least),
+	// and each was answered within one interval before the sleep: a
+	// sleep of StaleAfter intervals or more could make the rows stale
+	// without the wake.
 	sleep := model.WakeAfter + 15*time.Second
 	if sleep >= model.StaleAfter*model.BackgroundEvery {
 		t.Fatalf("a sleep of %s makes the rows stale by their age: this test would not see the wake", sleep)
