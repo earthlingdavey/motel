@@ -523,9 +523,8 @@ func TestPostDeployANewDeployCancels(t *testing.T) {
 	}
 }
 
-// infoLine is the one line at Info with message msg, its fields; and
-// no line, at any level, carries who deployed.
-func infoLine(t *testing.T, logs *observer.ObservedLogs, msg string) map[string]any {
+// noDeployedBy is that no line, at any level, carries who deployed.
+func noDeployedBy(t *testing.T, logs *observer.ObservedLogs) {
 	t.Helper()
 	for _, l := range logs.AllUntimed() {
 		for k, v := range l.ContextMap() {
@@ -534,6 +533,18 @@ func infoLine(t *testing.T, logs *observer.ObservedLogs, msg string) map[string]
 			}
 		}
 	}
+}
+
+// checkCounts is a line's checks judged, skipped and missed.
+func checkCounts(fields map[string]any) [3]any {
+	return [3]any{fields["checks_judged"], fields["checks_skipped"], fields["checks_missed"]}
+}
+
+// infoLine is the one line at Info with message msg, its fields; and
+// no line, at any level, carries who deployed.
+func infoLine(t *testing.T, logs *observer.ObservedLogs, msg string) map[string]any {
+	t.Helper()
+	noDeployedBy(t, logs)
 	lines := logs.FilterMessage(msg).AllUntimed()
 	if len(lines) != 1 || lines[0].Level != zap.InfoLevel {
 		t.Fatalf("%d lines %q, want one at Info: %+v", len(lines), msg, logs.AllUntimed())
@@ -1088,6 +1099,14 @@ func TestPostDeployAsksAgainWhatTheStoreDidNotAnswer(t *testing.T) {
 	if n := tc.logs.FilterMessageSnippet("ended unfinished").FilterField(zap.String("release", "v3")).Len(); n != 1 {
 		t.Errorf("%d warning lines, want one", n)
 	}
+	// Minute 2, asked three times, and minute 3, twice: each counted once.
+	if got := checkCounts(infoLine(t, tc.logs, lineRegressed)); got != [3]any{int64(3), int64(0), int64(0)} {
+		t.Errorf("v2's judged, skipped, missed = %v, want 3, 0, 0", got)
+	}
+	w := tc.logs.FilterMessageSnippet("ended unfinished").AllUntimed()[0]
+	if got := checkCounts(w.ContextMap()); w.Level != zap.WarnLevel || got != [3]any{int64(0), int64(0), int64(0)} {
+		t.Errorf("v3's warning: level %s, judged, skipped, missed = %v, want 0, 0, 0", w.Level, got)
+	}
 }
 
 // A check counts only on a push the store took in the minute before its
@@ -1133,6 +1152,10 @@ func TestPostDeployCountsNoCheckTheStoreTookNoPushFor(t *testing.T) {
 	if len(lines) != 1 || lines[0].ContextMap()["elapsed"] != 3*time.Minute {
 		t.Fatalf("ended as held on the snapshot of 1m30s, unsaid: %+v", lines)
 	}
+	if got := checkCounts(lines[0].ContextMap()); got != [3]any{int64(2), int64(0), int64(1)} {
+		t.Errorf("judged, skipped, missed = %v, want 2, 0, 1", got)
+	}
+	noDeployedBy(t, tc.logs)
 
 	// A store read-only for the whole window (queries answered, pushes
 	// refused) reads as nothing pushed, then or since: no check counts, a
@@ -1156,6 +1179,10 @@ func TestPostDeployCountsNoCheckTheStoreTookNoPushFor(t *testing.T) {
 	if got, _ := lines[0].ContextMap()["error"].(string); !strings.Contains(got, want) {
 		t.Errorf("the warning's error = %q, want %q", got, want)
 	}
+	if got := checkCounts(lines[0].ContextMap()); got != [3]any{int64(0), int64(0), int64(0)} {
+		t.Errorf("each try asked again, judged, skipped, missed = %v, want 0, 0, 0", got)
+	}
+	noDeployedBy(t, ro.logs)
 	for _, q := range ro.store.queries {
 		if q != pushedQuery {
 			t.Errorf("a release read with no push in the store: %s", q)
@@ -1243,6 +1270,10 @@ func TestPostDeployGoesOnPastAMinuteTheStoreMissed(t *testing.T) {
 	tc.minute()
 	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "regressed 5m after") || !strings.Contains(tc.evs[0].Summary, "2 failing checks in a row") {
 		t.Fatalf("after the missed minute: %+v", tc.evs)
+	}
+	// Minute 3 counted once, as missed, though it was asked four times.
+	if got := checkCounts(infoLine(t, tc.logs, lineRegressed)); got != [3]any{int64(4), int64(0), int64(1)} {
+		t.Errorf("judged, skipped, missed = %v, want 4, 0, 1", got)
 	}
 }
 
