@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 
+	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -106,6 +108,7 @@ func TestWakeMarkIsEachReadsOwn(t *testing.T) {
 		{"the box's backups refused", "box", "backups", []string{"backups"}, []string{"", "alerts"}},
 		{"an app's alerts refused", "status blog", "alerts:blog", []string{"alerts"}, []string{""}},
 		{"an app's status refused", "status blog", "blog", []string{""}, []string{"alerts"}},
+		{"the list refused, on who am I", "me", "apps", nil, []string{""}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := start(t, 100, 30, nil)
@@ -121,8 +124,13 @@ func TestWakeMarkIsEachReadsOwn(t *testing.T) {
 				return labelled(h, label)
 			}
 			for _, l := range c.still {
-				if got := line(l); !strings.Contains(got, "stale") {
+				got := line(l)
+				if !strings.Contains(got, "stale") {
 					t.Errorf("its read refused since the wake, line %q is %q", l, got)
+				}
+				// The word before the failure's, on every line that says both.
+				if f := strings.Index(got, "the last read failed"); f >= 0 && strings.Index(got, "stale") > f {
+					t.Errorf("line %q says stale after the failure: %q", l, got)
 				}
 			}
 			for _, l := range c.gone {
@@ -149,6 +157,46 @@ func TestWakeCrumbOrder(t *testing.T) {
 				t.Errorf("its read failed since a wake, the crumb is %q", crumb)
 			}
 		})
+	}
+}
+
+// TestWakeAlertsLineAt80: an app's line of its alerts says stale at 80
+// columns after a wake, whatever the box said of its monitor and with a
+// failed read beside it: the age, the word and the failure come before
+// the box's words, so however long those are (an Alertmanager not
+// answered, a monitor word of the box's own, capped), the cut at the
+// window's edge takes them first.
+func TestWakeAlertsLineAt80(t *testing.T) {
+	alert := `{"name":"a","severity":"warning","summary":"","starts_at":"@-1m","state":"active"}`
+	for _, c := range []struct{ name, body string }{
+		{"none held", `{"monitor":"on","alerts":[]}`},
+		{"one held", `{"monitor":"on","alerts":[` + alert + `]}`},
+		{"two held", `{"monitor":"on","alerts":[` + alert + `,` + alert + `]}`},
+		{"no monitor", `{"monitor":"off","alerts":[]}`},
+		{"unanswered", `{"monitor":"unanswered","alerts":[]}`},
+		{"a word of the box's", `{"monitor":"` + strings.Repeat("x", 300) + `","alerts":[]}`},
+	} {
+		for _, failed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s, failed %v", c.name, failed), func(t *testing.T) {
+				h := start(t, 80, 24, func(f *demo.Fake) { f.Body("alerts/blog.json", c.body) })
+				h.press(":", "status blog", tcell.KeyEnter)
+				h.walk(5*time.Second, model.Job{})
+				h.sleep(t)
+				if failed {
+					h.fake.Set("alerts:blog", &model.Failure{Kind: model.FailThis, Message: "no"})
+					h.walk(10*time.Second, model.Job{})
+				} else {
+					h.sync()
+				}
+				want := " ago · stale · "
+				if failed {
+					want = " ago · stale · the last read failed · "
+				}
+				if l := labelled(h, "alerts"); !strings.Contains(l, want) {
+					t.Errorf("after a wake, at 80 columns, the alerts line is %q", l)
+				}
+			})
+		}
 	}
 }
 

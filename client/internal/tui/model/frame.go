@@ -815,8 +815,10 @@ func (s *Session) RecordAsOf(app, version string, now time.Time) Line {
 	s.seen(now)
 	if g, err, ok := s.Record(app, version); ok && g != nil && !Forbidden(err) && !NotFound(err) {
 		// No word for a wake (stale): a record is read once, on opening
-		// it, and held after, which Engine.Woke does not mark; it is read
-		// again only when the person opens it again or asks (ctrl-r).
+		// it, and held after; it is read again only when the person opens
+		// it again or asks (ctrl-r). The wake marks its entry too, and
+		// once ctrl-r lifts the hold Engine.Woke says so until the read
+		// answers, but this crumb says the age alone.
 		l := s.asOf(g.At, now)
 		if err != nil {
 			l = append(l, ownC(" · the last read failed", Warn))

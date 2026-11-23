@@ -56,7 +56,8 @@ func (s *Session) asOf(at time.Time, now time.Time) Line {
 // marked by a wake from sleep (Engine.Woke), until it answers again; nil
 // otherwise. The lines that say a kept answer's age say it so, before
 // "the last read failed" when both are said; a record's crumb
-// (RecordAsOf) and the logs screen's (owed, client/README.md) do not.
+// (RecordAsOf), the logs screen's and the title bar's whoami words (both
+// owed, client/README.md) do not.
 func (s *Session) stale(j Job) Line {
 	if !s.Engine.Woke(j) {
 		return nil

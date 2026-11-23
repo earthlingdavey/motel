@@ -155,3 +155,98 @@ func TestWakeMarksTheListFailed(t *testing.T) {
 		t.Errorf("after a wake, the list's read failed: %q", l)
 	}
 }
+
+// TestWakeMarkStaysThroughFailures: after a wake a read that gets no
+// answer, or a 429, keeps its mark: only an answer clears it.
+func TestWakeMarkStaysThroughFailures(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+	}{
+		{"no answer", fail(model.FailNoAnswer)},
+		{"a 429", &model.Failure{Kind: model.FailSlowed, RetryAfter: time.Second}},
+		{"refused", fail(model.FailThis)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e, _, now := wokeEngine(t)
+			e.Tick(now)
+			now = now.Add(model.WakeAfter + time.Second)
+			if !e.Tick(now) {
+				t.Fatal("a tick past WakeAfter not taken for a wake")
+			}
+			var j model.Job
+			for ok, end := false, now.Add(time.Minute); !ok; {
+				if now = now.Add(100 * time.Millisecond); now.After(end) {
+					t.Fatal("no read in a minute after the wake")
+				}
+				e.Tick(now)
+				e.Touch(now)
+				j, ok, _ = e.Take(now)
+			}
+			e.Done(j, now, c.err)
+			if !e.Woke(j) {
+				t.Errorf("%v, its first read after the wake ended in %s, is no longer marked", j, c.name)
+			}
+		})
+	}
+}
+
+// TestWakeMarksTheWatchedAppsAlerts: for a person with app grants only,
+// the watch reads each listed app's alerts in the background; a wake
+// marks those reads too, whose cycle it spreads again.
+func TestWakeMarksTheWatchedAppsAlerts(t *testing.T) {
+	now := t0
+	e := model.NewEngine(now)
+	e.SetWatch(model.WatchApps, now)
+	e.SetApps([]string{"blog", "shop"}, now)
+	shopAlerts := model.Job{Kind: model.KAlerts, App: "shop"}
+	answered := false
+	for end := now.Add(2 * time.Minute); !answered; {
+		if now = now.Add(100 * time.Millisecond); now.After(end) {
+			t.Fatal("shop's alerts not read in two minutes")
+		}
+		e.Tick(now)
+		e.Touch(now)
+		if j, ok, _ := e.Take(now); ok {
+			e.Done(j, now, nil)
+			answered = answered || j == shopAlerts
+		}
+	}
+	e.Tick(now)
+	now = now.Add(model.WakeAfter + time.Second)
+	if !e.Tick(now) {
+		t.Fatal("a tick past WakeAfter not taken for a wake")
+	}
+	if !e.Woke(shopAlerts) {
+		t.Error("a background app's alerts, read by the watch, not marked after a wake")
+	}
+}
+
+// TestStaleIsAWarning: the word beside an age is in the warning style,
+// as the failed read's words are.
+func TestStaleIsAWarning(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	s.Engine.BoxOpen(true, now)
+	for range 20 {
+		step(t, s, f, &now)
+	}
+	s.Engine.Tick(now)
+	now = now.Add(model.WakeAfter + time.Second)
+	if !s.Engine.Tick(now) {
+		t.Fatal("a tick past WakeAfter not taken for a wake")
+	}
+	found := false
+	for _, g := range s.BoxAsOf(now) {
+		if strings.Contains(g.T.String(), "stale") {
+			found = true
+			if g.C != model.Warn {
+				t.Errorf("the box's crumb says %q in style %v, not Warn", g.T.String(), g.C)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the box's crumb after a wake: %q", s.BoxAsOf(now).Text())
+	}
+}
