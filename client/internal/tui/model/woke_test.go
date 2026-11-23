@@ -1,9 +1,11 @@
 package model_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -134,34 +136,64 @@ func TestStepBackMarksEveryRead(t *testing.T) {
 
 // TestWakeKeepsTheMarkOfAReadInFlight: a read asked before the sleep and
 // answered after it may carry an answer from before it: the read's mark
-// stays until a read of it asked after the wake answers.
+// stays, and the read is asked again at once, so the mark goes within
+// seconds, not at the read's interval (the box's, 30 s).
 func TestWakeKeepsTheMarkOfAReadInFlight(t *testing.T) {
 	e, _, now := wokeEngine(t)
-	var j model.Job
-	for ok, end := false, now.Add(time.Minute); !ok; {
+	box := model.Job{Kind: model.KBox}
+	for end := now.Add(time.Minute); ; {
 		if now = now.Add(100 * time.Millisecond); now.After(end) {
-			t.Fatal("no read in a minute")
+			t.Fatal("the box not read in a minute")
 		}
 		e.Tick(now)
 		e.Touch(now)
-		j, ok, _ = e.Take(now)
+		j, ok, _ := e.Take(now)
+		if ok && j == box {
+			break // in flight through the sleep
+		}
+		if ok {
+			e.Done(j, now, nil)
+		}
 	}
 	now = now.Add(model.WakeAfter + time.Second)
 	if !e.Tick(now) {
 		t.Fatal("a tick past WakeAfter not taken for a wake")
 	}
-	e.Done(j, now, nil)
-	if !e.Woke(j) {
-		t.Errorf("%v, asked before the wake and answered after it, is not marked", j)
+	e.Done(box, now, nil)
+	if !e.Woke(box) {
+		t.Errorf("the box, asked before the wake and answered after it, is not marked")
 	}
-	for end := now.Add(2 * time.Minute); e.Woke(j) && now.Before(end); now = now.Add(100 * time.Millisecond) {
+	answered := now
+	for end := now.Add(time.Minute); e.Woke(box) && now.Before(end); now = now.Add(100 * time.Millisecond) {
 		e.Tick(now)
 		e.Touch(now)
 		if k, ok, _ := e.Take(now); ok {
 			e.Done(k, now, nil)
 		}
 	}
-	if e.Woke(j) {
-		t.Errorf("%v still marked 2 minutes after the wake, read again since", j)
+	if took := now.Sub(answered); e.Woke(box) || took > 10*time.Second {
+		t.Errorf("the box still marked %s after its answer from before the wake (marked: %v)", took, e.Woke(box))
+	}
+}
+
+// TestWakeMarksTheListFailed: the apps screen's line of a list kept beside
+// a failed read says its age, and stale after a wake, before the failure.
+func TestWakeMarksTheListFailed(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	for range 20 {
+		step(t, s, f, &now)
+	}
+	s.Engine.Tick(now)
+	now = now.Add(model.WakeAfter + time.Second)
+	if !s.Engine.Tick(now) {
+		t.Fatal("a tick past WakeAfter not taken for a wake")
+	}
+	f.Set("apps", fail(model.FailThis))
+	for step(t, s, f, &now).Kind != model.KApps {
+	}
+	if l := s.AppsView(now, "", 0, 0).ListFailed.Text(); !strings.Contains(l, " ago · stale · the last read failed: ") {
+		t.Errorf("after a wake, the list's read failed: %q", l)
 	}
 }

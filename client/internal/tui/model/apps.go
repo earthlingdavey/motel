@@ -109,7 +109,12 @@ func (s *Session) AppsView(now time.Time, filter string, sort int, width int) Ap
 		return v
 	}
 	if s.ListErr != nil {
-		v.ListFailed = append(Line{ownC("list as of "+hms(s.List.At)+" UTC, "+Ago(now.Sub(s.List.At))+" ago · the last read failed: ", Warn),
+		said := "list as of " + hms(s.List.At) + " UTC, " + Ago(now.Sub(s.List.At)) + " ago · "
+		if s.Engine.Woke(Job{Kind: KApps}) {
+			// From before a wake from sleep (stale), as a crumb says it.
+			said += "stale · "
+		}
+		v.ListFailed = append(Line{ownC(said+"the last read failed: ", Warn),
 			Seg{T: Capped(failureText(s.ListErr), 2*LineMax)}}, s.askAgain(now)...)
 	}
 	names := s.List.V
