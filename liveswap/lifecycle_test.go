@@ -478,6 +478,27 @@ func TestLifecycleKeepsAShaRelease(t *testing.T) {
 	}
 }
 
+// TestLifecycleTellsTheSummaryAsWritten: a summary is moteld's own
+// sentence and reaches the notifier as written, even when the release
+// it names equals one of the app's env_file values (a date used as both,
+// here): no filter runs over it.
+func TestLifecycleTellsTheSummaryAsWritten(t *testing.T) {
+	rig, n := notifiedRig(t)
+	const release = "2026-11-19"
+	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
+	must(t, os.WriteFile(rig.spec.envFile, []byte("APP_VERSION="+release+"\n"), 0o600))
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/1", version: release}))
+	if ev, _ := n.find(EventDeploySucceeded); ev.Summary != "deployed "+release {
+		t.Fatalf("deployed: summary = %q (events %v)", ev.Summary, n.names())
+	}
+	n.reset()
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2", version: "v2"}))
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{version: release, rollback: true}))
+	if ev, _ := n.find(EventRollback); ev.Summary != "rolled back to "+release {
+		t.Fatalf("rollback: summary = %q (events %v)", ev.Summary, n.names())
+	}
+}
+
 func TestLifecycleNoNotifierIsSilent(t *testing.T) {
 	rig := newTestRig(t)
 	deployV1(t, rig) // no notifier: nothing to call, nothing panics

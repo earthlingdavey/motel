@@ -888,8 +888,8 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 		ma.wd.setLastFailure(err.Error())
 		// The operator's channels are told the refusal's said where it
 		// has one: its message names a path the release chose
-		// (validationError). Never a log tail; the filter runs over it
-		// anyway.
+		// (validationError). Never a log tail; told as written, as
+		// last_failure holds the message.
 		reason := err.Error()
 		if refused.said != "" {
 			reason = refused.said

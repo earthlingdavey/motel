@@ -253,8 +253,8 @@ Properties that matter to the model:
   launch remembered, reading no file. A deploy's record holds the
   result with its app text already filtered, and is served as written;
   a record an older moteld wrote was filtered whole when it was
-  written. A lifecycle event's summary passes the app's filter as text
-  when it is told, as it always did.
+  written. A lifecycle event's summary is moteld's own sentence, and is
+  told as written (below).
   **An error's text is not searched** (the owner's decision of
   2026-11-23). The filter is for an app that prints one of its values
   by accident (a library's error with a connection URL, a config dump,
@@ -303,16 +303,21 @@ Properties that matter to the model:
   from the operator's Caddyfile, a credential passed as a flag
   included; (4) an alert's summary motel did not write (an operator's
   rule, an admin's `moteld monitor send`), a silence's comment, and
-  the alert and silence rows as Alertmanager holds them (a summary
-  motel told passed the app's filter when it was told); (5) the
+  the alert and silence rows as Alertmanager holds them; (5) the
   heuristics over other programs' and the operator's text: the backups'
   lines (an app can name a table or an index, sqlite3's words about a
   damaged copy name it, and a viewer of the box reads that name; no
   app's values ever met it), the rules, and the box
   webhook's answers (a refusal quotes the operator's own Caddyfile);
-  (6) moteld's own names, words, times and figures. None of the six is
-  the app printing one of its values while it runs; the first two are
-  the deployer's, who can read the app's environment by deploying.
+  (6) moteld's own names, words, times and figures; (7) since
+  2026-11-23, the summary motel tells about an app's lifecycle (a
+  deploy, a rollback, a restart loop, a refused relaunch): moteld's
+  sentence over a version, a phase, a count or a refusal's reason,
+  never the app's output. A refusal's reason can quote the deployer's
+  version or a path in the release, as the same reason does in
+  `watchdog.last_failure`. None of the seven is the app printing one
+  of its values while it runs; the first two are the deployer's, who
+  can read the app's environment by deploying.
   What the filter does **not** promise: an encoding not in the list, a
   value under 8 characters, a secret split across lines (a value the
   app prints across two lines at the logs read stays readable), a

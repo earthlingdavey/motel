@@ -353,7 +353,6 @@ func (ma *managedApp) namesOnDisk() []string {
 // own, which a failed deploy's detail is filtered with whatever the
 // process remembers: failureDetail), with names and the app's name and
 // dirs as its safe strings. read is whether it may read the env_file.
-// tell's summary passes it with the release alone, as it always did.
 func (ma *managedApp) doorKnowing(also []string, read bool, names ...string) *door {
 	// The spec is read under secretsMu so the "which env_file is
 	// loaded" check and the spec it is checked against are one
@@ -781,9 +780,9 @@ func (ma *managedApp) Deploy(ctx context.Context, req deployRequest) error {
 // failed or refused, a rollback, a success that is off by default
 // there), then that it has ended, which lifts the deploy mute. A
 // success also ends a reported restart loop. The summary names the
-// version and the phase, never the error's text, which can quote what
-// the app printed; a refusal's is liveswap's own words, through the
-// filter: its said, where its message quotes the deployer's text.
+// version and the phase, never a failure's error, which can quote what
+// the app printed; a refusal's is liveswap's own words: its said, where
+// its message quotes the deployer's text. Each is told as written.
 func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result deployResult, err error) {
 	ev := LifecycleEvent{Release: req.version, DeployedBy: req.by}
 	var ve validationError
