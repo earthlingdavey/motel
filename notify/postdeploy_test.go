@@ -565,7 +565,7 @@ const (
 	lineHeldFailed = "monitor rules: the post-deploy comparison ended with its window: the release held, though its last judged check failed"
 	lineJudgedNone = "monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed"
 	lineReplaced   = "monitor rules: a new deploy ends the post-deploy comparison in flight"
-	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config loaded last has no post_deploy rule for the app"
+	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config it now follows has no post_deploy rule for the app"
 	lineRegressed  = "monitor rules: the post-deploy comparison ended: the release failed its checks, reported as post_deploy_regressed"
 )
 
@@ -815,6 +815,28 @@ func TestPostDeployARuleTakenAwaySaysSo(t *testing.T) {
 	wantFields(t, infoLine(t, logs, lineNoRule), map[string]any{
 		"app": "blog", "release": "v2", "checks_judged": int64(0), "checks_skipped": int64(0), "checks_missed": int64(0),
 	})
+}
+
+// A reload whose candidate adds the rule, with a deploy in its gap,
+// fails: the config before it serves on, with no rule, and the line
+// is true of it.
+func TestPostDeployAFailedReloadThatAddedTheRuleSaysSo(t *testing.T) {
+	tc := newTestComparator(t) // no post_deploy rule
+	core, logs := observer.New(zap.DebugLevel)
+	cand := &MetricsStore{Rules: []Rule{regressRule}}
+	tc.configure(liveRules{m: cand, store: tc.store, logger: zap.New(core)})
+	tc.deploy("blog", "v2", "v1")
+	if logs.FilterMessage(lineStarts).Len() != 1 {
+		t.Fatal("the candidate's rule started no comparison")
+	}
+	tc.release(cand) // the reload fails: the config before it serves on
+	tc.minute()
+	if len(tc.runs) != 0 {
+		t.Fatalf("in flight under a config with no rule: %+v", tc.runs)
+	}
+	if got := infoLine(t, tc.logs, lineNoRule); got["release"] != "v2" {
+		t.Errorf("fields = %v", got)
+	}
 }
 
 // A regression says so at Info beside its event, with the failing

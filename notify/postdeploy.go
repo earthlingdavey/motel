@@ -331,7 +331,7 @@ func (c *comparator) tick(ctx context.Context) {
 		rule, ok := c.ruleFor(app)
 		if !ok {
 			delete(c.runs, app)
-			c.logger.Info("monitor rules: the post-deploy comparison ended: the config loaded last has no post_deploy rule for the app",
+			c.logger.Info("monitor rules: the post-deploy comparison ended: the config it now follows has no post_deploy rule for the app",
 				append([]zap.Field{zap.String("app", app), zap.String("release", r.release)}, r.countFields()...)...)
 			continue
 		}

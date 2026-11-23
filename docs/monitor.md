@@ -1086,8 +1086,9 @@ motel's for them):
   says what became of it.
 - `monitor rules: a new deploy ends the post-deploy comparison in
   flight`, naming the release it ended and the `new_release`.
-- `monitor rules: the post-deploy comparison ended: the config loaded
-  last has no post_deploy rule for the app`, after a reload.
+- `monitor rules: the post-deploy comparison ended: the config it now
+  follows has no post_deploy rule for the app`, after a reload, or a
+  failed reload's return to the config before it.
 - `ended unfinished`, a warning, when the store had not answered 10
   minutes past the window's end, or took no push for its last check;
   never sent.
