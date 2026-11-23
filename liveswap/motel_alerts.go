@@ -77,8 +77,8 @@ func (b boxHandle) boxAlerts(ctx context.Context) wire.BoxAlerts {
 // instance names paths and the box's other sites: a viewer of the box's
 // alone.
 //
-// No filter runs over it: an alert motel raised is its own sentence,
-// told as written (lifecycle.go), and the rest is the operator's and
+// No filter runs over it: an alert motel raised is its own sentence
+// (lifecycle.go), and the rest is the operator's and
 // Alertmanager's text, sent as Alertmanager holds it. An alert whose app
 // label names an app this config runs is read through that app's
 // handle, so Decide is asked about each app it names.

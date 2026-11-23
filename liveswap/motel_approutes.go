@@ -210,9 +210,8 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 // the label alone: no matcher is built or sent. Nothing of the box's
 // own alerts is in it, not even one that names the app in its
 // instance (backup_stale/<app>), and no silence. Nothing of it is the
-// app's text: an alert motel raised is its own words (a lifecycle
-// event's summary is told as written, lifecycle.go), and a store rule's
-// is the operator's annotation.
+// app's text: an alert motel raised is its own words (lifecycle.go),
+// and a store rule's is the operator's annotation.
 func (h *Handler) appAlerts(w http.ResponseWriter, r *http.Request, app appHandle, _ appQuery) error {
 	return RespondJSON(w, http.StatusOK, app.alerts(r.Context(), h.app.alertsSource))
 }

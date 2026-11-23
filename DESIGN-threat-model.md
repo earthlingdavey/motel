@@ -253,8 +253,8 @@ Properties that matter to the model:
   launch remembered, reading no file. A deploy's record holds the
   result with its app text already filtered, and is served as written;
   a record an older moteld wrote was filtered whole when it was
-  written. A lifecycle event's summary is moteld's own sentence, and is
-  told as written (below).
+  written. A lifecycle event's summary is moteld's own sentence, and
+  liveswap tells it as written (below).
   **An error's text is not searched** (the owner's decision of
   2026-11-23). The filter is for an app that prints one of its values
   by accident (a library's error with a connection URL, a config dump,
@@ -313,7 +313,9 @@ Properties that matter to the model:
   2026-11-23, the summary motel tells about an app's lifecycle (a
   deploy, a rollback, a restart loop, a refused relaunch): moteld's
   sentence over a version, a phase, a count or a refusal's reason,
-  never the app's output. A refusal's reason can quote the deployer's
+  never the app's output, which meets no app's filter (notify's own
+  still masks its channels' URLs in it and cuts it to 200 runes). A
+  refusal's reason can quote the deployer's
   version or a path in the release, as the same reason does in
   `watchdog.last_failure`. None of the seven is the app printing one
   of its values while it runs; the first two are the deployer's, who
