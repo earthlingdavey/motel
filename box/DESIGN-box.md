@@ -1801,7 +1801,7 @@ and the validate child's line passed the same rules with the service
 environment's values (box/validate.go).
 A refusal's `error` is the catalogue's words over names and paths, and
 never quotes a secret's value (secrets.go). Until 2026-11-22 every
-answer also passed layers 3 and 4 whole, with those fields on a safe
+answer also passed the shape and entropy layers whole, with those fields on a safe
 list; an address shaped like a token in the operator's own Caddyfile,
 quoted in a refusal, was masked then and is sent as written now
 (DESIGN-threat-model.md, "What is no longer searched").
