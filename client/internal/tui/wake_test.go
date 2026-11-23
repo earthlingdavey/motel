@@ -41,12 +41,16 @@ func TestWakeMarksRowsStale(t *testing.T) {
 	}
 }
 
-// staleRows is how many of the apps table's rows say stale, read from
-// the screen's cells.
+// staleRows is how many of the apps table's rows say stale in STATE,
+// read from the screen's cells: the rows under the table's header, not
+// the title bar, the crumb or the strip above it.
 func staleRows(h *harness) int {
-	n := 0
+	n, table := 0, false
 	for _, r := range screenRows(h) {
-		if strings.Contains(r.text, "· stale") {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(r.text), "NAME "):
+			table = true
+		case table && strings.Contains(r.text, "· stale"):
 			n++
 		}
 	}

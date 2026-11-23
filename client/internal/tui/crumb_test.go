@@ -26,9 +26,10 @@ func TestWideSummaryCut(t *testing.T) {
 		f.Body("apps.json", `{"apps":[`+strings.Join(apps, ",")+`]}`)
 	})
 	// Every row read once, then a wake: every row is stale until read
-	// again. Here each is stale by its misses as well, as every app's
-	// read fails: this test is about the cut of the crumb's summary,
-	// not about the wake (TestWakeMarksRowsStale is).
+	// again. Without the wake many would be stale all the same, by their
+	// misses or their age, as every app's read fails: this test is about
+	// the cut of the crumb's summary, not about the wake
+	// (TestWakeMarksRowsStale is).
 	h.walk(6*time.Minute, model.Job{})
 	// The engine's first tick is no wake, having none before it to
 	// compare with: one here, so that the one after the sleep is.
