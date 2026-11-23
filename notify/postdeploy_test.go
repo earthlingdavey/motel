@@ -731,6 +731,58 @@ func TestPostDeployWindowThatJudgedNothingSaysSo(t *testing.T) {
 	})
 }
 
+// A comparison whose every check is made has ended with its window: at
+// the next tick, not a minute later, and a deploy before that tick says
+// so too, not that it cut the comparison short.
+func TestPostDeployTheWindowEndsWithItsLastCheck(t *testing.T) {
+	r := regressRule
+	r.Window = caddyMinutes(3)
+	tc := newTestComparator(t, r)
+	tc.deploy("blog", "v2", "v1")
+	tc.store.set("v2", 200, 0, 0.1)
+	for range 3 {
+		tc.minute() // the last check made at cutover + 3m11s
+	}
+	tc.at = tc.at.Add(10 * time.Second)
+	tc.tick(context.Background())
+	if len(tc.runs) != 0 {
+		t.Fatalf("in flight after its last check: %+v", tc.runs)
+	}
+	if got := infoLine(t, tc.logs, lineHeld); got["checks_judged"] != int64(3) {
+		t.Errorf("fields = %v", got)
+	}
+
+	// A deploy between the last check and the next tick.
+	dep := newTestComparator(t, r)
+	dep.deploy("blog", "v2", "v1")
+	dep.store.set("v2", 200, 0, 0.1)
+	for range 3 {
+		dep.minute()
+	}
+	dep.deploy("blog", "v3", "v2")
+	if dep.logs.FilterMessage(lineReplaced).Len() != 0 {
+		t.Errorf("a deploy after every check said it ended the comparison: %+v", dep.logs.FilterMessage(lineReplaced).AllUntimed())
+	}
+	if got := infoLine(t, dep.logs, lineHeld); got["release"] != "v2" || got["checks_judged"] != int64(3) {
+		t.Errorf("fields = %v", got)
+	}
+	if run := dep.runs["blog"]; run == nil || run.release != "v3" {
+		t.Fatalf("v3 not compared: %+v", dep.runs)
+	}
+	// A deploy while the last check is still to be counted ends it as
+	// one cut short.
+	cut := newTestComparator(t, r)
+	cut.deploy("blog", "v2", "v1")
+	cut.store.set("v2", 200, 0, 0.1)
+	cut.minute()
+	cut.minute()
+	cut.runs["blog"].next = 4 // the last check made, its verdict not yet back
+	cut.deploy("blog", "v3", "v2")
+	if got := infoLine(t, cut.logs, lineReplaced); got["checks_judged"] != int64(2) {
+		t.Errorf("fields = %v", got)
+	}
+}
+
 // A new deploy ends the comparison in flight at Info, naming both
 // releases.
 func TestPostDeployANewDeploySaysWhatItEnded(t *testing.T) {

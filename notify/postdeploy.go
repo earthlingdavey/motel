@@ -269,9 +269,16 @@ func (c *comparator) deployed(ev liveswap.LifecycleEvent) {
 		return
 	}
 	if r, ok := c.runs[ev.App]; ok {
-		delete(c.runs, ev.App)
-		c.logger.Info("monitor rules: a new deploy ends the post-deploy comparison in flight",
-			append([]zap.Field{zap.String("app", ev.App), zap.String("release", r.release), zap.String("new_release", ev.Release)}, r.countFields()...)...)
+		// Every check of its window finished (each counts once, and a
+		// check still in flight is not yet counted): it ended with its
+		// window, before the next tick could say so.
+		if rule, ok := c.ruleFor(ev.App); ok && r.judged+r.skipped+r.missed >= int(rule.window()/postDeployEvery) {
+			c.endWindow(r, rule)
+		} else {
+			delete(c.runs, ev.App)
+			c.logger.Info("monitor rules: a new deploy ends the post-deploy comparison in flight",
+				append([]zap.Field{zap.String("app", ev.App), zap.String("release", r.release), zap.String("new_release", ev.Release)}, r.countFields()...)...)
+		}
 	}
 	rule, ok := c.ruleFor(ev.App)
 	if !ok {
@@ -328,6 +335,13 @@ func (c *comparator) tick(ctx context.Context) {
 				append([]zap.Field{zap.String("app", app), zap.String("release", r.release)}, r.countFields()...)...)
 			continue
 		}
+		// The window is over once its last check is made (ticks run one
+		// at a time, and each waits for its checks): said at the next
+		// tick, not a minute later, where a deploy would take its place.
+		if r.next > int(rule.window()/postDeployEvery) {
+			c.endWindow(r, rule)
+			continue
+		}
 		// The next minute owed, once the store can answer for it: one a
 		// stalled tick or a store that did not answer left behind is
 		// made late, read at its own time, one a tick, so that with
@@ -335,29 +349,6 @@ func (c *comparator) tick(ctx context.Context) {
 		// can still be reached.
 		latest := int(now.Sub(r.cutover.Add(storeLag)) / postDeployEvery)
 		if latest < r.next {
-			continue
-		}
-		if last := int(rule.window() / postDeployEvery); r.next > last {
-			delete(c.runs, app) // the window is over
-			f := append([]zap.Field{zap.String("app", app), zap.String("release", r.release)}, r.countFields()...)
-			if r.judged == 0 {
-				// Not a release that held: every check was under
-				// min_requests, or missed.
-				f = append(f, zap.Int("min_requests", rule.minRequests()), zap.Int("responses", int(r.skippedLast.sent)))
-				if rule.MaxP95 != 0 {
-					f = append(f, zap.Int("responses_timed", int(r.skippedLast.timed)))
-				}
-				c.logger.Info("monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed", f...)
-				continue
-			}
-			// The last judged check's own verdict: the count in a row can
-			// be reset by a check that weighed no bound, and the rule's
-			// failures changed by a reload.
-			msg := "monitor rules: the post-deploy comparison ended with its window: the release held"
-			if r.last.failed {
-				msg = "monitor rules: the post-deploy comparison ended with its window: the release held, though its last judged check failed"
-			}
-			c.logger.Info(msg, append(append(f, zap.Int("failing_in_a_row", r.failed)), numberFields(r.last)...)...)
 			continue
 		}
 		k := r.next
@@ -380,6 +371,31 @@ func (c *comparator) tick(ctx context.Context) {
 		}()
 	}
 	wg.Wait()
+}
+
+// endWindow ends r, every check of its window made, and says how.
+// Called with mu held.
+func (c *comparator) endWindow(r *comparison, rule Rule) {
+	delete(c.runs, r.app)
+	f := append([]zap.Field{zap.String("app", r.app), zap.String("release", r.release)}, r.countFields()...)
+	if r.judged == 0 {
+		// Not a release that held: every check was under
+		// min_requests, or missed.
+		f = append(f, zap.Int("min_requests", rule.minRequests()), zap.Int("responses", int(r.skippedLast.sent)))
+		if rule.MaxP95 != 0 {
+			f = append(f, zap.Int("responses_timed", int(r.skippedLast.timed)))
+		}
+		c.logger.Info("monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed", f...)
+		return
+	}
+	// The last judged check's own verdict: the count in a row can be
+	// reset by a check that weighed no bound, and the rule's failures
+	// changed by a reload.
+	msg := "monitor rules: the post-deploy comparison ended with its window: the release held"
+	if r.last.failed {
+		msg = "monitor rules: the post-deploy comparison ended with its window: the release held, though its last judged check failed"
+	}
+	c.logger.Info(msg, append(append(f, zap.Int("failing_in_a_row", r.failed)), numberFields(r.last)...)...)
 }
 
 // check makes one due check and counts its outcome.
