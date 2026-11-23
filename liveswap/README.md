@@ -1478,12 +1478,11 @@ newest `keep` others (failed deploys, whose release is removed at
 once, and versions release GC has pruned), so the set is bounded by
 about twice `keep`. When a record was written is its version's deploy
 time: the order of `available_versions` and of release GC. A record is
-the deploy's result as the answer carried it, its error and detail
-already through the app's filter, and is served as written: a secret
-rotated later is not in an old record, and one added to `env_file`
-after the app printed it is (nothing filters a record again). A
-record written by a moteld older than this one is filtered again when
-read, its error and detail, as every record then was. A version is
+the deploy's result as the answer carried it, its detail (the app's
+text) already through the app's filter, and is served as written: a
+secret rotated later is not in an old record, and one added to
+`env_file` after the app printed it is (nothing filters a record
+again). A version is
 the deployer's name and motel's own data, never replaced: a version
 equal to an `env_file` value is named as written wherever it appears,
 so do not name versions (or apps) after `env_file` values; a release
@@ -1497,10 +1496,8 @@ What liveswap does for you:
   response lands in a CI log — readable by everyone with read access
   to the repository, retained, public for a public repo — so the app's
   bytes never reach it unfiltered. They enter at a few places: a failed
-  deploy's last lines and its health probe's answer, a line of its
-  journal at the logs read, and an error's text (Go quotes an answer
-  that is no HTTP into one; the system names paths the app made). Each
-  is filtered there, once, as text. motel knows the app's secrets by
+  deploy's last lines and its health probe's answer, and a line of its
+  journal at the logs read. Each is filtered there, once, as text. motel knows the app's secrets by
   value (it built the environment from `env_file`), so the first layer
   is exact: every `env_file` value of 8+ characters, as written,
   JSON-escaped, base64, hex or URL-escaped (and a URL value's password
@@ -1521,7 +1518,11 @@ What liveswap does for you:
   heuristics only: one equal to an `env_file` value is replaced in the
   app's text like the value. Everything else in a response is motel's
   own, or the deployer's, the operator's or another program's text,
-  and passes as written: no filter runs over a finished response, so a
+  and passes as written: an error's text too, which can quote an
+  `env_file` value only where the app named a file after one, answered
+  its health probe with something that is no HTTP, or the operator
+  wrote a line that is no assignment into `env_file` (its parse error
+  quotes it). No filter runs over a finished response, so a
   version, a name, a word of motel's, a figure or a time is never
   replaced, and no response is withheld whole. Two consequences for
   what you put where: `env_file` is for secrets, and every value in it
@@ -1543,9 +1544,9 @@ What liveswap does for you:
   gives back is not one motel built for that unit (a warning names the
   unit), the filter knows the file only as it is now. While an app's `env_file`
   cannot be read (a rewrite mid-flight, a mode not yet fixed), the
-  app's text and the error text in a response about that app are the
-  filter's sentence, since its values are unknown to the filter, and
-  the rest is sent; the next response after the file reads is normal.
+  app's text in a response about that app is the filter's sentence,
+  since its values are unknown to the filter, and the rest is sent; the
+  next response after the file reads is normal.
   Past the first layer it is best effort, and the limits are in
   DESIGN-threat-model.md.
 - Deploy logs record the artifact **host only**; download errors go

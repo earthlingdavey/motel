@@ -202,20 +202,18 @@ Properties that matter to the model:
   which the shipped units keep free of secrets (no `--environ`, the
   smoke test asserts it).
   The app's text is filtered once, as text, where it enters an answer
-  or a stored record, and nowhere else: a failed deploy's journal tail,
-  its probe's body and `Location`, a line of the app's journal at the
-  logs read, and every error string that becomes a field of an answer
-  or a record (an error can quote what the app answered a probe with,
-  and can name a path the app made: a cleanup that failed, a
-  pre-flight's refusal of a link in a release). Such text has a type of
-  its own that only the filter makes (`wire.AppText`, `wire.ErrText`;
-  `TestAppTextOnlyFromTheDoor`, `TestErrTextMakers`). An answer is then
+  or a stored record, and nowhere else: a failed deploy's journal tail
+  (a line at a time), its probe's body and `Location`, and a line of
+  the app's journal at the logs read. Such text has a type of its own
+  that only the filter makes (`wire.AppText`;
+  `TestAppTextOnlyFromTheDoor`). An answer is then
   marshalled from its typed struct and sent: no filter runs over a
   finished body, so a key, a word of motel's vocabulary, a version, the
   app's name, a time or a number is never replaced, and no answer is
   withheld whole. Every other string field of an answer is classed as
   moteld's own or as text that passes as written because it is the
-  caller's, the operator's or another program's, and a test fails for
+  caller's, the operator's or another program's, or an error's text
+  (below), and a test fails for
   a field nobody classed (`TestEveryStringFieldIsClassed`): nothing is
   filtered by default, so a new field cannot ship unclassed. A streamed
   deploy (`Accept: application/x-ndjson`) writes phase lines, a phase
@@ -240,37 +238,39 @@ Properties that matter to the model:
   cannot reach a fixed bar), is replaced by `[masked, N chars]`, never
   by a fingerprint. Markers are chosen so that none contains a known
   value, and the first layer runs once more over the text, so the
-  promise holds for the text sent. Each run Go quoted inside an error
-  is also filtered as the bytes it quotes, and an error's text is carried
-  to 4 KiB at most, so that what an app makes Go's client quote costs
-  moteld no more to filter than a logs line. motel's own sentence for a
-  probe that got no answer leaves motel's URL out, so that the error
-  net does not meet `DB_HOST=localhost` in motel's words.
+  promise holds for the text sent. The values the running instance was
+  launched with are known whatever the file holds now: a launch
+  remembers what it read, and after a moteld restart the reattach reads
+  the unit's environment back from systemd (every pair but those motel
+  puts there itself and the inline `env` lines as the config has them
+  now), in memory only.
   While an app's `env_file` cannot be read (after a restart, or a
   reload to another file), its values are unknown to the filter: each
-  text of the app's, and each error's text, is the filter's sentence
-  (`[withheld: …]`), and moteld's own fields are sent; a lifecycle
-  summary told meanwhile that quotes an error's text is the sentence
-  too, one of motel's words alone is told as written. Where an error
-  can quote a line of the file (one that is no assignment), its text is
-  the sentence also when the file read before no longer reads or
-  parses: a deploy's error from before its launch, a recovery that gave
-  up, a refused relaunch's `last_failure`, a push that could not be
-  staged, an interrupted deploy's record. That sentence says moteld's
-  journal has the error, which it does. Not a failed probe's
-  `last_failure`, an older record's error as it is served, or a
-  refusal's summary: none quotes a line of the file. A deploy whose own launch
-  rendered the file filters its error with the values it launched with,
-  and one that failed before its launch, with the file not there,
-  filters it with the values this process remembers, when it remembers
-  some (a file not there holds no others). moteld's journal says every
-  error as it came, and beside a withheld one the file's own read
-  error. A deploy's record holds the result with its app text
-  and error text already filtered, marked so, and is served as written;
-  a record an older moteld wrote has its error and detail filtered
-  again when it is read.
+  text of the app's is the filter's sentence (`[withheld: …]`), and
+  moteld's own fields and every error are sent. A failed deploy's
+  detail is filtered with the values its launch rendered and every
+  launch remembered, reading no file. A deploy's record holds the
+  result with its app text already filtered, and is served as written;
+  a record an older moteld wrote was filtered whole when it was
+  written. A lifecycle event's summary passes the app's filter as text
+  when it is told, as it always did.
+  **An error's text is not searched** (the owner's decision of
+  2026-11-23). The filter is for an app that prints one of its values
+  by accident (a library's error with a connection URL, a config dump,
+  a debug error page), and those reach a reader through the app's text
+  above. An error's text is motel's words over what failed, and is sent
+  as moteld wrote it, in every answer, record, `last_deploy`,
+  `watchdog.last_failure` and alert, whatever the env_file's state.
+  Three cases put a value there, accepted by the owner on 2026-11-23:
+  a file the app named after one of its values, quoted in a cleanup's
+  or a pre-flight's error (it takes an app that works at leaking its
+  own secret, which can send it anywhere already); a health probe's
+  answer that is no HTTP, which Go's client quotes into the error (an
+  app that answers its probe with junk); and a malformed `env_file`
+  line quoted in its parse error, as main's answer already did (the
+  operator's own mistake, which the deployer reads).
   A refusal made only of moteld's words and what the request itself
-  sent passes no app's filter (`wire.OwnText`): the 404 of `GET
+  sent meets no filter: the 404 of `GET
   /<app>?deploy=<version>` for a version with no record, and the 422 of
   a query that does not parse. Through the app's filter such a body was
   an oracle: the first layer replaces a value wherever a text holds it
@@ -314,16 +314,19 @@ Properties that matter to the model:
   app prints across two lines at the logs read stays readable), a
   secret the app fetched at runtime and printed in a low-entropy form,
   an inline `env` value (not a secret by policy: the Caddyfile is in a
-  repo), a value the still-running instance was launched with before a
-  moteld restart if the file has changed since, a value the app's
+  repo), a value the still-running instance was launched with while
+  moteld, started again, has not yet reattached to it (its user manager
+  not answering: the recovery's backoff) if the file has changed since,
+  a value no instance running now was launched with and the app's
   `env_file` no longer holds, in a line written while it did (a logs
-  read reaches lines of any age, and the filter knows only the file's
-  values now and those moteld has read since it started), or a value
-  added to `env_file` after the app printed it, in a deploy's record
-  written before (no read filters a marked record again). Nor that a
+  read reaches lines of any age, and the filter knows the file's values
+  now, those moteld has read since it started, and those of the
+  instance it reattached to), a value in an error's text (above), or a
+  value added to `env_file` after the app printed it, in a deploy's
+  record written before (no read filters a record again). Nor that a
   deploy source cannot confirm a guess of a value: a deploy's refusals
-  name its version and URL in an error's text, which passes the app's
-  filter, and a version it deploys is named as written in the status;
+  name its version and URL as written, and a version it deploys is
+  named as written in the status;
   it can read the app's environment by deploying code, so it learns
   nothing it could not. Nor that a value moteld's own data holds (a
   figure, a time, a version, a name) stays unknown: it stands there
@@ -2038,11 +2041,12 @@ Dated one-liners; the full text of each is in git.
   motel's own figures and times are never hidden for holding one, now
   beside the value's marker in the same body too (that body was
   withheld until then).
-- 2026-11-22 — The filter moved to where the app's text enters (the
-  owner's choice of "filter at the doors"): the app's text and every
-  error string pass the app's filter once, as text, where they enter an
-  answer or a record, with types only the filter makes; no filter runs
-  over a finished body; every string field of an answer is classed.
-  Six kinds of text that are not the app's printing one of its values
-  are no longer searched ("What is no longer searched", above), among
-  them the box webhook's answers.
+- 2026-11-23 — The filter moved to where the app's text enters (the
+  owner's choice of "filter at the doors", 2026-11-22): the app's text
+  passes the app's filter once, as text, where it enters an answer or a
+  record, with a type only the filter makes; no filter runs over a
+  finished body; every string field of an answer is classed. An
+  error's text is sent as moteld wrote it (the owner, 2026-11-23). Six
+  kinds of text that are not the app's printing one of its values are
+  no longer searched ("What is no longer searched", above), among them
+  the box webhook's answers.
