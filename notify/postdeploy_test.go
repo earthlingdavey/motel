@@ -551,7 +551,7 @@ func wantFields(t *testing.T, got, want map[string]any) {
 const (
 	lineStarts     = "monitor rules: the post-deploy comparison starts"
 	lineHeld       = "monitor rules: the post-deploy comparison ended with its window: the release held"
-	lineHeldFailed = "monitor rules: the post-deploy comparison ended with its window: the release held, its last checks failing, fewer in a row than failures"
+	lineHeldFailed = "monitor rules: the post-deploy comparison ended with its window: the release held, its last judged checks failing, fewer in a row than failures"
 	lineJudgedNone = "monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed"
 	lineReplaced   = "monitor rules: a new deploy ends the post-deploy comparison in flight"
 	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config loaded last has no post_deploy rule for the app"

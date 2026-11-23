@@ -157,10 +157,10 @@ func (r *comparison) countFields() []zap.Field {
 
 // numberFields are a judged check's numbers: the new release's
 // responses, 5xx share and p95; the old release's responses when the
-// check read them (only when the new one was over a bound and there was
-// a release before it), and its
-// share and p95 only when they were a baseline, as in the event. A
-// share to 1/10 000, a p95 to the millisecond.
+// check read them (only when the new one was over a bound and there
+// was a release before it), and its share and p95 only when they were
+// a baseline, as in the event. A share to 1/10 000, a p95 to the
+// millisecond.
 func numberFields(n checkNumbers) []zap.Field {
 	f := []zap.Field{zap.Duration("last_check", n.elapsed), zap.Int("responses", int(n.newer.sent)), zap.Float64("5xx_share", roundShare(n.newer.share()))}
 	if n.newer.hasP95 {
@@ -352,7 +352,7 @@ func (c *comparator) tick(ctx context.Context) {
 			}
 			msg := "monitor rules: the post-deploy comparison ended with its window: the release held"
 			if r.failed > 0 {
-				msg = "monitor rules: the post-deploy comparison ended with its window: the release held, its last checks failing, fewer in a row than failures"
+				msg = "monitor rules: the post-deploy comparison ended with its window: the release held, its last judged checks failing, fewer in a row than failures"
 			}
 			c.logger.Info(msg, append(append(f, zap.Int("failing_in_a_row", r.failed)), numberFields(r.last)...)...)
 			continue
