@@ -481,6 +481,7 @@ func TestHomeOutsideTheViewIsReported(t *testing.T) {
 		{"the base view is in view", "/usr/share", false},
 		{"a path nothing binds is not", "/opt/app", true},
 		{"the app dir root is not bound", appDir, true},
+		{"an empty HOME names no place in the view", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, outside := homeOutsideView(env(tc.home), sb)
@@ -492,11 +493,15 @@ func TestHomeOutsideTheViewIsReported(t *testing.T) {
 			}
 		})
 	}
-	// The LAST assignment wins, as it does for systemd's Environment=:
-	// buildEnv appends the sandbox HOME first, then env_file, then
-	// inline env, so checking the first one would clear an override.
-	if _, outside := homeOutsideView([]string{"HOME=" + shared, "HOME=/opt/app"}, sb); !outside {
-		t.Fatal("an override appended after the default must be the one checked")
+	// An env_file's HOME, as buildEnv hands it on: the one HOME in the
+	// list is the operator's, not the sandbox default it overrides.
+	spec := testSpec(t)
+	spec.envFile = filepath.Join(t.TempDir(), "app.env")
+	must(t, os.WriteFile(spec.envFile, []byte("HOME=/opt/app\n"), 0o600))
+	built, err := buildEnv(spec, "v1", spec.dirs.socket(recordedNonce), spec.dirs.release("v1"))
+	must(t, err)
+	if got, outside := homeOutsideView(built, spec.sandboxSpecFor(spec.dirs.release("v1"), recordedNonce)); !outside || got != "/opt/app" {
+		t.Fatalf("an env_file's HOME outside the view: homeOutsideView = %q,%v; want \"/opt/app\",true (env %q)", got, outside, built)
 	}
 }
 

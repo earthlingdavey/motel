@@ -199,7 +199,9 @@ Caddy's environment (`PATH`, `LANG`, `TZ`, `LC_*` — nothing else, so
 supervisor credentials like ACME DNS tokens never reach apps) →
 `HOME` set to the app's `shared/` → `env_file` → inline `env` →
 injected `SOCKET`, all layered on the systemd user manager's own
-defaults (`XDG_RUNTIME_DIR`, `INVOCATION_ID`, …). Two of those
+defaults (`XDG_RUNTIME_DIR`, `INVOCATION_ID`, …). A key two layers set
+reaches the app once, with the higher layer's value; of two lines of
+one `env_file` the later counts, and each launch warns naming the key. Two of those
 defaults are **reserved** in a sandboxed unit and cannot be set by
 `env` or `env_file`: `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`
 are unset after everything else, because they name the user manager's
@@ -1536,8 +1538,8 @@ What liveswap does for you:
   or taken out of it, while the app was not launched again stays
   known for as long as the instance that holds it runs; of that
   environment, only what motel puts there
-  itself (the inherited `PATH`, `LANG`, `TZ` and `LC_*`, `HOME`,
-  `SOCKET`) and the inline `env` lines as the config has them now are
+  itself (the inherited `PATH`, `LANG`, `TZ` and `LC_*`, `HOME` as
+  the shared dir, `SOCKET`) and the inline `env` lines as the config has them now are
   not known values. Until that reattach (moteld just started, or its
   user manager not answering), or when the environment the manager
   gives back is not one motel built for that unit (a warning names the

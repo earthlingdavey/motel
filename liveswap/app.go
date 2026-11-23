@@ -1675,8 +1675,10 @@ type launch struct {
 	version, nonce, socket, releaseDir string
 	sock                               *socketRef
 	env                                []string
-	// secrets is the env_file subset of env: what the response filter
-	// must never let out (redact.go).
+	// secrets is every pair the env_file holds, in order, those that
+	// are not in env too (withheld, overridden by a higher layer, or an
+	// earlier line of a key set twice): what the response filter must
+	// never let out (redact.go).
 	secrets []string
 	// envFileMode is the mode of the env_file inode secrets came from,
 	// read off the same descriptor; 0 when the spec names none.
@@ -1712,6 +1714,10 @@ func (spec *appSpec) prepareLaunch(logger *zap.Logger, version string) (launch, 
 	if len(withheld) > 0 {
 		logger.Warn("env_file: NOTIFY_ variables withheld from the app: the env file is in /etc/motel/secrets, where the box writes notify's, and no app is given one; name the variable otherwise if the app needs it",
 			zap.String("env_file", spec.envFile), zap.Strings("withheld", withheld))
+	}
+	if twice := keysSetTwice(l.secrets); len(twice) > 0 {
+		logger.Warn("env_file sets a variable on more than one line: every line but its last is ignored",
+			zap.String("env_file", spec.envFile), zap.Strings("keys", twice))
 	}
 	if spec.envFile != "" {
 		warnEnvFileModeBits(logger, spec.name, spec.envFile, l.envFileMode)
@@ -2149,17 +2155,20 @@ func inheritedEnv() []string {
 // shared dir — the one writable, persistent place in the view. Not a
 // nicety: every runtime that touches $HOME would ENOENT, which is the
 // shape a deny-by-default view fails in. Applied before env_file and
-// env, so an operator can still point it elsewhere.
+// env, so an operator can still point it elsewhere. Each key is in the
+// result once, with its highest layer's value (lastPairWins).
 func buildEnv(spec *appSpec, version, socket, releaseDir string) ([]string, error) {
 	env, _, _, _, err := buildEnvFull(spec, version, socket, releaseDir)
 	return env, err
 }
 
 // buildEnvFull is buildEnv plus the env_file pairs on their own: the
-// values the response filter treats as secrets. Inline `env` is not
-// among them — it lives in the Caddyfile, in a repo, and is not secret
-// by policy — and neither are HOME, SOCKET or the inherited PATH,
-// which a diagnostic has to be able to name.
+// values the response filter treats as secrets, a pair a higher layer
+// overrides too. Inline `env` is not among them — it lives in the
+// Caddyfile, in a repo, and is not secret by policy — and neither are
+// the sandbox HOME, motel's SOCKET or the inherited PATH, LANG, TZ and
+// LC_*, which a diagnostic has to be able to name; a HOME or PATH the
+// env_file sets is, like every value there.
 func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secrets, withheld []string, envFileMode os.FileMode, err error) {
 	env = append(inheritedEnv(), "HOME="+spec.dirs.shared)
 	if spec.envFile != "" {
@@ -2184,7 +2193,49 @@ func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secre
 		env = append(env, k+"="+expandPlaceholders(v, spec, version, socket, releaseDir))
 	}
 	env = append(env, "SOCKET="+socket)
-	return env, secrets, withheld, envFileMode, nil
+	return lastPairWins(env), secrets, withheld, envFileMode, nil
+}
+
+// keysSetTwice names, once each and in the order of each key's second
+// line, the keys that more than one of an env_file's pairs set (secrets is those pairs, every
+// line in order). lastPairWins ignores every line of a key but its
+// last (which a withheld key or one a higher layer sets does not use
+// either), and the operator who wrote the first may expect that one;
+// a launch names them instead.
+func keysSetTwice(pairs []string) []string {
+	seen := make(map[string]bool, len(pairs))
+	var twice []string
+	for _, kv := range pairs {
+		key, _, _ := strings.Cut(kv, "=")
+		if seen[key] && !slices.Contains(twice, key) {
+			twice = append(twice, key)
+		}
+		seen[key] = true
+	}
+	return twice
+}
+
+// lastPairWins returns env with each key once, holding the value of
+// its last pair; a key keeps the place of its first. buildEnvFull
+// appends its layers lowest first, so the last pair is the highest
+// layer's, and of two lines of one env_file the later. Needed because
+// the manager refuses a unit whose Environment= names a key twice
+// ("Invalid environment block.", #666): an env_file's HOME or PATH,
+// or an inline env key the file also sets, would otherwise stop the
+// app from starting.
+func lastPairWins(env []string) []string {
+	out := make([]string, 0, len(env))
+	at := make(map[string]int, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if i, ok := at[key]; ok {
+			out[i] = kv
+			continue
+		}
+		at[key] = len(out)
+		out = append(out, kv)
+	}
+	return out
 }
 
 // envKeyRe is what systemd accepts in Environment=; the exec runner

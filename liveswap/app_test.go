@@ -1297,6 +1297,86 @@ func TestBuildEnvPrecedenceAndPlaceholders(t *testing.T) {
 	}
 }
 
+// Each key reaches the unit once, with its highest layer's value: the
+// manager refuses an Environment= that names a key twice (#666). The
+// file's value a higher layer overrides is still a known value to the
+// response filter.
+func TestBuildEnvSetsEachKeyOnce(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	for _, tc := range []struct {
+		name       string
+		file       string
+		inline     map[string]string
+		key, want  string   // "" want: motel's socket
+		overridden []string // file pairs that lose, still secrets
+	}{
+		{name: "env_file HOME over the sandbox HOME", file: "HOME=/srv/home\n", key: "HOME", want: "/srv/home"},
+		{name: "env_file PATH over the inherited one", file: "PATH=/opt/app/bin:/usr/bin\n", key: "PATH", want: "/opt/app/bin:/usr/bin"},
+		{name: "inline env over env_file", file: "DB=file\n", inline: map[string]string{"DB": "inline"}, key: "DB", want: "inline", overridden: []string{"DB=file"}},
+		{name: "env_file SOCKET loses to motel's", file: "SOCKET=/elsewhere.sock\n", key: "SOCKET", overridden: []string{"SOCKET=/elsewhere.sock"}},
+		{name: "inline SOCKET loses to motel's", inline: map[string]string{"SOCKET": "/inline.sock"}, key: "SOCKET"},
+		{name: "a key twice in one file: the later line", file: "TWICE=first\nTWICE=second\n", key: "TWICE", want: "second", overridden: []string{"TWICE=first"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := testSpec(t)
+			spec.env = tc.inline
+			spec.envFile = filepath.Join(t.TempDir(), "app.env")
+			must(t, os.WriteFile(spec.envFile, []byte(tc.file), 0o600))
+			sock := spec.dirs.socket("0a1b2c3d0a1b2c3d")
+			env, secrets, _, _, err := buildEnvFull(spec, "v1", sock, spec.dirs.release("v1"))
+			must(t, err)
+			want := tc.want
+			if want == "" {
+				want = sock
+			}
+			seen := map[string]int{}
+			for _, kv := range env {
+				k, _ := stringsCut(kv)
+				seen[k]++
+			}
+			for k, n := range seen {
+				if n != 1 {
+					t.Errorf("%s is in the env %d times: %q", k, n, env)
+				}
+			}
+			if !slices.Contains(env, tc.key+"="+want) {
+				t.Errorf("env %q, want %s=%s", env, tc.key, want)
+			}
+			for _, kv := range tc.overridden {
+				if !slices.Contains(secrets, kv) {
+					t.Errorf("the overridden %s is no longer a known value to the filter: %q", kv, secrets)
+				}
+			}
+		})
+	}
+}
+
+// A key an env_file sets on more than one line is named at each launch,
+// its value never: every line but the last is ignored, which the
+// operator who wrote the first may not expect.
+func TestLaunchNamesAKeyAnEnvFileSetsTwice(t *testing.T) {
+	for _, tc := range []struct{ file, want string }{
+		{"A=val-a1\nB=val-b1\nA=val-a2\nB=val-b2\nA=val-a3\nC=val-c1\n", "[A B]"},
+		{"A=val-a1\nB=val-b1\n", ""},
+	} {
+		rig := newTestRig(t)
+		rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
+		must(t, os.WriteFile(rig.spec.envFile, []byte(tc.file), 0o600))
+		core, logs := observer.New(zap.WarnLevel)
+		_, err := rig.spec.prepareLaunch(zap.New(core), "v1")
+		must(t, err)
+		got := logs.FilterMessageSnippet("more than one line").All()
+		switch {
+		case tc.want == "" && len(got) != 0:
+			t.Errorf("%q: warned %v, want no warning", tc.file, got)
+		case tc.want != "" && (len(got) != 1 || fmt.Sprint(got[0].ContextMap()["keys"]) != tc.want):
+			t.Errorf("%q: warned %v, want one warning naming %s", tc.file, got, tc.want)
+		case tc.want != "" && strings.Contains(got[0].Message+fmt.Sprint(got[0].ContextMap()), "val-"):
+			t.Errorf("%q: the warning holds a value of the file: %v", tc.file, got)
+		}
+	}
+}
+
 // A NOTIFY_ variable in an env file the box wrote is a notify channel's
 // URL, from secrets/<app>/NOTIFY_*.age: withheld from the unit's
 // environment, named, and still a value the filter knows. In an env file
