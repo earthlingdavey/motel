@@ -37,8 +37,9 @@ const (
 // LifecycleEvent is one thing that happened to an app. Summary is one
 // line in liveswap's own words over a version, a phase, a count or a
 // refusal's reason, never the app's output, and liveswap tells it as
-// written, with no app's filter (notify's own, which knows the
-// channels' URLs, still runs over every summary it is told).
+// written, with no app's filter (notify's own still runs over every
+// summary it is told, its known values the channels' URLs, with the
+// filter's heuristic layers).
 type LifecycleEvent struct {
 	Name       string
 	App        string

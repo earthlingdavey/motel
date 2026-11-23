@@ -34,8 +34,9 @@ type Alert struct {
 	// Severity is critical, warning or info.
 	Severity string `json:"severity" text:"passes"`
 	// Summary is motel's sentence about it, which the box built from
-	// its own words and names, never the app's output (notify cuts it
-	// and masks its channels' URLs in it); or an operator's rule's, or
+	// its own words and names, never the app's output (notify's own
+	// filter runs over it, its known values the channels' URLs, with
+	// the filter's heuristic layers); or an operator's rule's, or
 	// another program's, as written.
 	Summary string `json:"summary" text:"passes"`
 	// StartsAt is when it began firing, as Alertmanager holds it.

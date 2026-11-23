@@ -314,9 +314,10 @@ Properties that matter to the model:
   deploy, a rollback, a restart loop, a refused relaunch): moteld's
   sentence over a version, a phase, a count or a refusal's reason,
   never the app's output, which meets no app's filter (notify's own
-  still masks its channels' URLs in it and cuts it to 200 runes). A
-  refusal's reason can quote the deployer's
-  version or a path in the release, as the same reason does in
+  filter still runs over it, its known values the channels' URLs,
+  with the filter's heuristic layers, and cuts it to 200 runes). A
+  refusal's reason can quote the deployer's version or a path in the
+  release, as the same reason does in
   `watchdog.last_failure`. None of the seven is the app printing one
   of its values while it runs; the first two are the deployer's, who
   can read the app's environment by deploying.
