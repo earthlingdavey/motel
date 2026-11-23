@@ -43,7 +43,6 @@ func TestLogsKeysByState(t *testing.T) {
 			f.Body("logs/blog.json", `{"kept":"on","lines":[],"more":false,"gap":false}`)
 		}, 30, "holds no line of blog", followWrap},
 		{"lines shown", nil, 30, "── following", all},
-		{"the head fills the page", nil, 1, "", followWrap},
 	} {
 		s, _, now := logsOpen(t, "blog", c.setup)
 		if v := logsText(s, *now, 80, c.height); !strings.Contains(v, c.says) {
@@ -82,9 +81,36 @@ func TestLogsKeysByState(t *testing.T) {
 	if got := s.LogsKeys("blog", *now, 80, 30, runes); got != all {
 		t.Errorf("a failure after lines: %+v, want %+v", got, all)
 	}
-	// That head with only its own rows and the rule's: no row for lines.
-	if got := s.LogsKeys("blog", *now, 80, 2, runes); got != followWrap {
-		t.Errorf("a failure's head filling the page: %+v, want %+v", got, followWrap)
+	// That head on a narrow page, at each height across the point where
+	// it leaves the rule and a row: none of the keys where it fills the
+	// page, all of them where the lines are drawn.
+	sweepHead(t, s, *now, none, all)
+}
+
+// sweepHead lays blog's logs screen, its head a failure's sentence on
+// rows of its own, 30 cells wide at heights 2 to 12, and wants filled
+// where the head leaves the lines no row (the page draws no rule), else
+// drawn; both are seen.
+func sweepHead(t *testing.T, s *model.Session, now time.Time, filled, drawn model.LogsKeysOn) {
+	t.Helper()
+	var seen [2]bool
+	for h := 2; h <= 12; h++ {
+		v := logsText(s, now, 30, h)
+		if !strings.Contains(v, "the last read failed") {
+			t.Fatalf("at 30x%d no failure said:\n%s", h, v)
+		}
+		ruled := strings.Contains(v, "── ")
+		want := filled
+		if ruled {
+			want = drawn
+		}
+		seen[map[bool]int{false: 0, true: 1}[ruled]] = true
+		if got := s.LogsKeys("blog", now, 30, h, runes); got != want {
+			t.Errorf("at 30x%d (rule drawn %v): %+v, want %+v", h, ruled, got, want)
+		}
+	}
+	if !seen[0] || !seen[1] {
+		t.Errorf("heights 2 to 12 at 30 cells: the head filled the page %v, the lines were drawn %v", seen[0], seen[1])
 	}
 }
 
@@ -101,15 +127,18 @@ func TestLogsKeysHeld(t *testing.T) {
 		}
 		return s, f, now
 	}
-	s, _, now := hold(t)
+	s, f, now := hold(t)
 	if got, want := s.LogsKeys("blog", *now, 80, 12, runes), (model.LogsKeysOn{Scroll: true, Follow: true, Wrap: true}); got != want {
 		t.Errorf("held, lines shown: %+v, want %+v", got, want)
 	}
-	if got, want := s.LogsKeys("blog", *now, 80, 1, runes), (model.LogsKeysOn{Follow: true, Wrap: true}); got != want {
-		t.Errorf("held, the head filling the page: %+v, want %+v", got, want)
-	}
+	// A failure's head over the view held: End alone where it fills the
+	// page.
+	f.Set("logs:blog", &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com did not answer"})
+	*now = now.Add(model.LogsEvery)
+	drive(s, f, *now, 5)
+	sweepHead(t, s, *now, model.LogsKeysOn{Follow: true}, model.LogsKeysOn{Scroll: true, Follow: true, Wrap: true})
 	// The grant gone while held: End alone, to let the hold go.
-	s, f, now := hold(t)
+	s, f, now = hold(t)
 	f.Body("whoami.json", viewerOnly)
 	*now = now.Add(model.AgainAfter)
 	s.Engine.Again(*now, model.Job{Kind: model.KWhoAmI})

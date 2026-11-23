@@ -183,8 +183,8 @@ func TestLogsLiveWithNoLine(t *testing.T) {
 
 // TestLogsHoldNotShown: a view held where the screen no longer shows
 // lines (the head filling a short window, the grant gone) is let go by
-// End, which the footer offers; the scroll keys are not offered there
-// and move nothing; with the lines shown again the screen follows.
+// End, which the footer offers alone; the scroll keys are not offered
+// there and move nothing; with the lines shown again the screen follows.
 func TestLogsHoldNotShown(t *testing.T) {
 	h := start(t, 60, 40, func(f *demo.Fake) { f.Body("logs/blog.json", blogLines()) })
 	h.open(app("blog"))
@@ -203,8 +203,8 @@ func TestLogsHoldNotShown(t *testing.T) {
 	if s := h.screen(); strings.Contains(s, "── ") {
 		t.Fatalf("at 60x16 the head leaves the lines a row:\n%s", s)
 	}
-	if got := footer(h); got != footFollowWrap {
-		t.Errorf("held, the head filling the page: the footer %q, want %q", got, footFollowWrap)
+	if got := footer(h); got != footFollow {
+		t.Errorf("held, the head filling the page: the footer %q, want %q", got, footFollow)
 	}
 	h.press(tcell.KeyEnd)
 	h.on(func() { h.scr.(*sizedSim).SetSize(60, 40) })
@@ -272,7 +272,7 @@ func TestLogsFooterByFrame(t *testing.T) {
 	for _, c := range []struct {
 		h    int
 		want string
-	}{{16, footFollowWrap}, {40, footAll}, {16, footFollowWrap}, {30, footAll}} {
+	}{{16, footNone}, {40, footAll}, {16, footNone}, {30, footAll}} {
 		h.on(func() { h.scr.(*sizedSim).SetSize(60, c.h) })
 		if got := footer(h); got != c.want {
 			t.Errorf("at 60x%d the footer %q, want %q", c.h, got, c.want)
@@ -306,5 +306,80 @@ func TestLogsFooterByFrame(t *testing.T) {
 	h.press()
 	if s := h.screen(); !strings.Contains(s, "── following") || footer(h) != footAll {
 		t.Errorf("blog opened again: the footer %q:\n%s", footer(h), s)
+	}
+}
+
+// TestLogsFooterAtTheBoundary: at 70 columns, at each height up across
+// the point where a failure's head leaves the lines' rule and a row, and
+// down again, the footer lists the logs keys exactly when the page draws
+// the rule, and the scroll keys and w act exactly when it lists them: k
+// holds the view there, and nowhere else.
+func TestLogsFooterAtTheBoundary(t *testing.T) {
+	const w = 70
+	h := start(t, w, 40, func(f *demo.Fake) { f.Body("logs/blog.json", blogLines()) })
+	h.open(app("blog"))
+	h.press("l")
+	h.fake.Set("logs:blog", tallFailure)
+	h.now = h.now.Add(model.LogsEvery)
+	h.press()
+	size := func(hh int) { h.on(func() { h.scr.(*sizedSim).SetSize(w, hh) }) }
+	wrap := func() (on bool) { h.on(func() { on = h.u.wrap }); return }
+	var seen [2]bool
+	for _, hh := range []int{16, 17, 18, 19, 20, 21, 22, 23, 24, 23, 22, 21, 20, 19, 18, 17, 16} {
+		size(hh)
+		s := h.screen()
+		if !strings.Contains(s, "the last read failed") {
+			t.Fatalf("at %dx%d no failure said:\n%s", w, hh, s)
+		}
+		ruled := strings.Contains(s, "── ")
+		seen[map[bool]int{false: 0, true: 1}[ruled]] = true
+		want := footNone
+		if ruled {
+			want = footAll
+		}
+		if got := footer(h); got != want {
+			t.Errorf("at %dx%d (rule drawn %v) the footer %q, want %q", w, hh, ruled, got, want)
+		}
+		before := wrap()
+		h.press("w")
+		if got := wrap(); got == before && ruled || got != before && !ruled {
+			t.Errorf("at %dx%d (rule drawn %v) w took the wrap from %v to %v", w, hh, ruled, before, got)
+		}
+		if got := wrap(); got != before {
+			h.press("w")
+		}
+		h.press("k")
+		if ruled {
+			if s := h.screen(); !strings.Contains(s, "── held") {
+				t.Errorf("at %dx%d, the rule drawn, k did not hold:\n%s", w, hh, s)
+			}
+			h.press(tcell.KeyEnd)
+			continue
+		}
+		size(40)
+		if s := h.screen(); !strings.Contains(s, "── following") {
+			t.Errorf("at %dx%d, no rule drawn, k held the view:\n%s", w, hh, s)
+			h.press(tcell.KeyEnd)
+		}
+	}
+	if !seen[0] || !seen[1] {
+		t.Errorf("at %d columns the head filled the page %v, the rule was drawn %v", w, seen[0], seen[1])
+	}
+}
+
+// TestLogsRecordWrapWithoutAGrant: w on a deploy's record wraps its tail
+// for a key with no logs grant on the app, whose logs screen would not
+// take it.
+func TestLogsRecordWrapWithoutAGrant(t *testing.T) {
+	h := start(t, 100, 30, func(f *demo.Fake) { f.Body("whoami.json", whoamiViewer) })
+	h.open(record("blog", "e9a0b3f2c118"))
+	wrap := func() (on bool) { h.on(func() { on = h.u.wrap }); return }
+	h.press("w")
+	if !wrap() {
+		t.Error("w on a record did not wrap its tail")
+	}
+	h.press("w")
+	if wrap() {
+		t.Error("w again on a record did not stop wrapping it")
 	}
 }

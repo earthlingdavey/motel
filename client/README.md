@@ -629,9 +629,10 @@ made by hand. Accepted:
 | Such a row's VERSION says only the version in flight (`stopped  → 9a1b2c3d4e5f`), so the table does not name the version that is stopped, throttled or in backoff, and the row can be read as the new version being the stopped one; the `→` marks it as on its way ("The TUI", below), and the strip and the app's screen name the stopped one | 2 | 4 | 3 | 24 | 1 (keep the running version in VERSION on these rows) | accepted over the bar, pending the owner (the skill's rule 4): VERSION said as a row in flight says it was the owner's chosen fix for #584's item 4 |
 | While whoami lists a `logs` grant on an app and the box still refuses its logs read (403), the read held by that 403 is asked again at each whoami answer that follows it (whoami is asked again by the 403 itself, at most once a minute, else every 5 minutes): a refused read, and a Warn line in the box's journal (which the box writes at most once a minute for a person and an app), each time, for as long as the screen is open. It takes whoami and the logs route disagreeing about one key from one address, which neither does by design: whoami lists the grants that apply from the request's address | 2 | 2 | 1 | 4 | 2 (keep, for each refused app, whether whoami has since not listed the grant, and ask again only after that) | accepted, found by the fourth self-review round of the logs screen: the screen says the refusal and that ctrl-r asks again |
 | A logs read the box answered busy (a `503` with its wait, `FailBusy`) counts as a failed read of its own (its misses), as a refusal does: a box that then stops answering is seen by that read's backoff from the count it reached (4 s, 8 s… instead of 2 s), and the read of another thing is not brought forward for it | 2 | 2 | 1 | 4 | 2 (a branch in `Done` for a busy answer) | accepted: the other reads see the outage at their own pace, and the title bar says it |
-| The logs screen's footer is worked out at its frame, and each logs key when it is pressed, both from the session as it is then: when the head changes between the two by the clock alone (its `ctrl-r asks again.` said or not, as a 429's wait or ctrl-r's 5 s ends) and that leaves the lines one row or none, a scroll key listed does nothing, or one not listed scrolls once, until the next frame (a second at most) | 2 | 2 | 3 | 12 | 2, 2 (the frame's answer kept for the keys: a stored fact, as #662's third attempt was) | accepted: it takes a head one row from the page's foot and a key in the second the hint changes; the next frame's footer is right |
+| The logs screen's footer is worked out at its frame, and each logs key when it is pressed, both from the session as it is then. A head says `ctrl-r asks again.` while the reads are neither stopped nor slowed by a 429 (`Engine.CanAskAgain`), so by the clock alone the hint can only appear, when a 429's wait ends: on a follow the box stopped with lines held, the head then grows by a row, and if that takes the lines' last row a key the frame listed does nothing until the next frame (a second at most). The other way, a key not listed that acts once, takes a 429 or a stop recorded between the frame and the key | 2 | 2 | 3 | 12 | 2, 2 (the frame's answer kept for the keys: a stored fact, as #662's third attempt was) | accepted: it takes a 429 on a follow the box stopped, a head one row from the page's foot, and a key in the second the hint changes; the next frame's footer is right |
 | While every line held fits on the page, the logs screen's footer still lists `↑↓ scroll` and the scroll keys move nothing, as on a record's tail and the other screens when all fits | 2 | 5 | 1 | 10 | 2, 2 (the rows laid out counted against the page's; the full footer and its golden files change) | accepted: every line is in view, so nothing hidden is offered |
 | While the logs screen follows its lines and holds no view, its footer still lists `End follow`, and End changes nothing: the rule above the lines already says `following` | 2 | 5 | 1 | 10 | 1, 2 (End offered only for a hold; the full footer and its golden files change) | accepted: End keeps the follow the rule names, and the full footer stays as #660 made it |
+| Below the TUI's smallest window (60x16) the frame says only `window too small`, and the logs screen's keys still act on what it would show: k, ↑, PgUp and Home hold the view where nobody sees it, and `w` turns the wrap | 2 | 5 | 1 | 10 | 2 (a branch in every logs key for a window the TUI does not draw in) | accepted: the frame says the window is too small and what it needs; once it is large enough the rule says `held`, and End follows |
 | After a read that stopped every read and `r`, a failure the logs screen said before the stop is said again until the next logs answer, 2 s or the read's wait | 2 | 2 | 3 | 12 | 1, 2 (forgetting it on a stop also cleared the failure of another opening's read) | accepted |
 | The logs screen's tail after a skip (a follow more than the 5,000 lines it holds behind, `lines skipped`) leaves out each of its lines at or before the time of the newest line held, so a line of the journal's with that same microsecond, after the last one held, is not shown, nor one stamped earlier after a step of the box's clock back | 2 | 5 | 1 | 10 | 2 (keep the last line's text too, and match on both) | accepted: the skip's note says the lines between were not read, which these are among |
 
@@ -783,16 +784,15 @@ it follows; a row or a page up (↑, k, PgUp, Home) holds the view where it
 is while lines arrive, the rule counting them (`held: 37 new lines since
 · End follows`); End, or scrolling down to the newest row, follows
 again. Of these keys and `w`, the footer lists only those that apply
-to the frame, and one it does not list does nothing: the scroll keys
-while lines are in view; End while the screen follows the app's lines
-(a follow with no line yet too, but not one the box stopped) or holds a
-view, also one it no longer shows (the grant gone, or a head that
-leaves the lines no row); `w` while it holds lines it would show with
-room, follows them, or asks for the first, so the lines that then
-arrive come as `w` left them. While the screen says why it shows no
-line (no grant, whoami not yet answered, a refusal, a first read that
-failed, the output kept on the box with no line held), the footer
-offers none of them.
+to the frame, and one it does not list does nothing. While the page
+draws the lines' rule and a row under it, the scroll keys are listed
+when a line is held, End when the screen follows the lines (a follow
+with no line yet too, not one the box stopped) or holds a view, and
+`w`. While it draws no rule (the screen says why it shows no line, or
+its head leaves the lines no row), End is listed only to let go a view
+held there, which nobody sees (the grant gone, or the head filling the
+page), and `w` only while the first read is asked, so the lines that
+then arrive come as `w` left them.
 It holds the newest 5,000 lines (`LogsKeep`), and at most 16 MiB
 of their text as shown (`LogsKeepBytes`: a line of 4 KiB from the box
 can be four times that made safe, eight with tabs), and says how many

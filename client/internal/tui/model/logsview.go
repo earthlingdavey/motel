@@ -435,22 +435,23 @@ type LogsKeysOn struct {
 // that changed between the two, by the clock, is the accepted row in
 // client/README.md).
 //
-// The lines are live when the screen shows them, or would with room:
-// the scroll keys act when they are and have a row, and at least one
-// item is held; End when they are followed (not a follow the box
-// stopped), or a view held is to be let go (one held where the screen
-// no longer shows it too: the grant gone, the head filling the page); w
-// when they are live, or while the first read is asked, so the lines
-// arrive as it says.
+// The lines are live when the screen draws them: their rule and at
+// least one row under it (a follow with no line yet too). The scroll
+// keys act when they are and at least one item is held; End when they
+// are followed (not a follow the box stopped), or a view held is to be
+// let go (one held where the screen no longer shows it too: the grant
+// gone, the head filling the page); w when they are live, or while the
+// first read is asked, so the lines arrive as it says. A head that
+// fills the page leaves none of them but End for a view held.
 func (s *Session) LogsKeys(app string, now time.Time, width, height int, cells Cells) LogsKeysOn {
 	s.seen(now)
 	_, d, rows := s.logsFit(app, now, width, height, cells)
-	live := d != nil
+	live := d != nil && rows > 0
 	mine := s.logs != nil && s.logs.app == app
 	held := mine && s.logs.pos.held
 	asking := s.LogsGrant(app) == Granted && (!mine || s.logs.got == nil && s.logs.err == nil)
 	return LogsKeysOn{
-		Scroll: live && rows > 0 && len(d.items) > 0,
+		Scroll: live && len(d.items) > 0,
 		Follow: live && !d.stopped || held,
 		Wrap:   live || asking,
 	}

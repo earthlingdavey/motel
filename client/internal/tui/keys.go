@@ -147,11 +147,9 @@ var bindings = []binding{
 		}
 		return nil
 	}},
-	{"End", "the newest line, following again", []model.Screen{model.ScreenLogs}, closed, keys(tcell.KeyEnd), done(func(u *UI, v model.View) {
-		if u.logsKeys(v).Follow {
-			u.S.LogsEnd(v.App)
-		}
-	})},
+	// End asks nothing of LogsKeys: where the footer does not list it no
+	// view is held, and LogsEnd then changes nothing.
+	{"End", "the newest line, following again", []model.Screen{model.ScreenLogs}, closed, keys(tcell.KeyEnd), done(func(u *UI, v model.View) { u.S.LogsEnd(v.App) })},
 	{"PgUp PgDn Home End", "move by a page, to the start or the end", notLogs, either, keys(tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyHome, tcell.KeyEnd), pass},
 	{"PgUp PgDn Home End", "scroll the overlay", []model.Screen{model.ScreenLogs}, open, keys(tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyHome, tcell.KeyEnd), pass},
 	{"↑ ↓", "scroll", []model.Screen{model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenMetrics, model.ScreenHelp, model.ScreenRefused, model.ScreenStopHelp}, closed, keys(tcell.KeyUp, tcell.KeyDown), pass},
