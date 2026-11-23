@@ -1446,6 +1446,82 @@ func TestIntegrationSystemdUnitEnvironmentIsTheBuiltEnv(t *testing.T) {
 	}
 }
 
+// TestIntegrationSystemdEnvFileHomeWins: an env_file that sets HOME, as
+// the README invites, is launched through motel's own path
+// (prepareLaunch, startSpec, Start) and the app gets the file's HOME.
+// The sandbox HOME is set first, so before #666 both pairs reached the
+// manager, which refuses a key twice ("Invalid environment block.").
+func TestIntegrationSystemdEnvFileHomeWins(t *testing.T) {
+	r := integrationRunner(t)
+	root, release, shared := sandboxRoot(t)
+	home := filepath.Join(shared, "home")
+	if err := os.Mkdir(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(root, "itest.env")
+	if err := os.WriteFile(envFile, []byte("HOME="+home+"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(shared, "env.txt")
+	if err := os.WriteFile(filepath.Join(release, "server"), []byte("#!/bin/sh\ntrap 'exit 0' TERM\nenv > "+out+"\nsleep 300 & wait\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := &appSpec{name: "itest", command: []string{"./server"}, envFile: envFile, grace: 2 * time.Second, dirs: newAppDirs(root, "itest")}
+	l, err := spec.prepareLaunch(zap.NewNop(), "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := r.Start(l.startSpec(spec, spec.command))
+	if err != nil {
+		t.Fatalf("start of an app whose env_file sets HOME: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Stop(h, spec.grace) })
+	waitForFile(t, out, 5*time.Second)
+	var got []string // what the app's process was given
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasSuffix(string(b), "\n") || time.Now().After(deadline) {
+			got = strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !slices.Contains(got, "HOME="+home) {
+		t.Errorf("the app's environment has no HOME=%s, the env_file's:\n%s", home, strings.Join(got, "\n"))
+	}
+	// And the unit as the manager holds it: one HOME, the file's.
+	unitEnv := strings.Fields(run(t, "systemctl", "--user", "show", "-p", "Environment", "--value", h.state().Unit))
+	var homes []string
+	for _, kv := range unitEnv {
+		if strings.HasPrefix(kv, "HOME=") {
+			homes = append(homes, kv)
+		}
+	}
+	if len(homes) != 1 || homes[0] != "HOME="+home {
+		t.Errorf("the unit's Environment holds %q, want only HOME=%s", homes, home)
+	}
+	// The transient unit file holds the same pairs: the sandbox HOME the
+	// file overrides is not written there either (DESIGN-threat-model.md,
+	// "Where env_file values sit once the app runs").
+	file, err := os.ReadFile(filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "systemd", "transient", h.state().Unit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envLines []string
+	for _, line := range strings.Split(string(file), "\n") {
+		if strings.HasPrefix(line, "Environment=") {
+			envLines = append(envLines, line)
+		}
+	}
+	if n := strings.Count(strings.Join(envLines, "\n"), "HOME="); n != 1 || !strings.Contains(strings.Join(envLines, "\n"), "HOME="+home) {
+		t.Errorf("the transient unit file's Environment= lines name HOME %d times, want once, the env_file's:\n%s", n, strings.Join(envLines, "\n"))
+	}
+}
+
 // TestIntegrationSystemdPreStartKeepsItsGraceAtDeadline: a pre_start
 // that runs past the unit's own TimeoutStartSec= is stopped by the
 // manager with its grace, the sibling in its cgroup too. Before it, a

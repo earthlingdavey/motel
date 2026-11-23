@@ -705,8 +705,8 @@ func unitSyntaxChar(p string) (string, bool) {
 // — inside the release dir, say — which is deliberate. What is not
 // deliberate is doing it by accident: a HOME that is absent inside the
 // unit surfaces as an ENOENT from whichever runtime touches $HOME
-// first, naming no cause. The last assignment wins, as it does for
-// systemd's Environment=.
+// first, naming no cause. env holds one HOME, the highest layer's:
+// buildEnvFull keeps each key once.
 func homeOutsideView(env []string, s *sandboxSpec) (string, bool) {
 	home := ""
 	for _, kv := range env {

@@ -1765,7 +1765,7 @@ as a path, after `filepath.Clean`, and never quoted back: it may hold a
 | an app whose `env_file` is another app's | `app <b>'s env_file is app <a>'s secrets file` |
 | an app whose `env_file` is anywhere else in `/etc/motel/secrets` — the directory itself, or a name outside the app grammar | `app <app>'s env_file is in /etc/motel/secrets, where the box keeps each app's own file: use /etc/motel/secrets/<app>.env` |
 | an app whose `env_file` is its own, with no secret | `app <app>'s env_file is /etc/motel/secrets/<app>.env, and <host>/secrets/<app>/ holds no secret: add one, or remove the env_file line` |
-| a secret an inline `env` line also sets | `app <app> sets <VAR> with env and as a secret; env wins over env_file, so the secret would never reach it` (`buildEnvFull`, liveswap/app.go, appends inline `env` after the file's lines, and the manager keeps the last) |
+| a secret an inline `env` line also sets | `app <app> sets <VAR> with env and as a secret; env wins over env_file, so the secret would never reach it` (`buildEnvFull`, liveswap/app.go, gives the unit inline `env`'s pair of a key both set, and drops the file's) |
 | a secret named `SOCKET` | `secret SOCKET for app <app>: motel sets SOCKET last, so it would never reach the app` |
 | an app whose `env_file` is `/etc/motel/secrets/_box.env` | `app <app>'s env_file is the box's own secrets file, which notify reads and no app is given: use /etc/motel/secrets/<app>.env` |
 | a file in `secrets/_box/` not named `NOTIFY_` then capitals, digits and underscores | `<host>/secrets/_box/<VAR>.age: the box's own slot holds notify's channel URLs alone, each named NOTIFY_ then capitals, digits and underscores` |

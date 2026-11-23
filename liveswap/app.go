@@ -2087,17 +2087,19 @@ func inheritedEnv() []string {
 // shared dir — the one writable, persistent place in the view. Not a
 // nicety: every runtime that touches $HOME would ENOENT, which is the
 // shape a deny-by-default view fails in. Applied before env_file and
-// env, so an operator can still point it elsewhere.
+// env, so an operator can still point it elsewhere. Each key is in the
+// result once, with its highest layer's value (lastPairWins).
 func buildEnv(spec *appSpec, version, socket, releaseDir string) ([]string, error) {
 	env, _, _, _, err := buildEnvFull(spec, version, socket, releaseDir)
 	return env, err
 }
 
 // buildEnvFull is buildEnv plus the env_file pairs on their own: the
-// values the response filter treats as secrets. Inline `env` is not
-// among them — it lives in the Caddyfile, in a repo, and is not secret
-// by policy — and neither are HOME, SOCKET or the inherited PATH,
-// which a diagnostic has to be able to name.
+// values the response filter treats as secrets, a pair a higher layer
+// overrides too. Inline `env` is not among them — it lives in the
+// Caddyfile, in a repo, and is not secret by policy — and neither are
+// HOME, SOCKET or the inherited PATH, which a diagnostic has to be
+// able to name.
 func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secrets, withheld []string, envFileMode os.FileMode, err error) {
 	env = append(inheritedEnv(), "HOME="+spec.dirs.shared)
 	if spec.envFile != "" {
@@ -2122,7 +2124,30 @@ func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secre
 		env = append(env, k+"="+expandPlaceholders(v, spec, version, socket, releaseDir))
 	}
 	env = append(env, "SOCKET="+socket)
-	return env, secrets, withheld, envFileMode, nil
+	return lastPairWins(env), secrets, withheld, envFileMode, nil
+}
+
+// lastPairWins returns env with each key once, holding the value of
+// its last pair; a key keeps the place of its first. buildEnvFull
+// appends its layers lowest first, so the last pair is the highest
+// layer's, and of two lines of one env_file the later. Needed because
+// the manager refuses a unit whose Environment= names a key twice
+// ("Invalid environment block.", #666): an env_file's HOME or PATH,
+// or an inline env key the file also sets, would otherwise stop the
+// app from starting.
+func lastPairWins(env []string) []string {
+	out := make([]string, 0, len(env))
+	at := make(map[string]int, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if i, ok := at[key]; ok {
+			out[i] = kv
+			continue
+		}
+		at[key] = len(out)
+		out = append(out, kv)
+	}
+	return out
 }
 
 // envKeyRe is what systemd accepts in Environment=; the exec runner
