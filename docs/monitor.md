@@ -1084,8 +1084,10 @@ the store) and missed (the store took no push of motel's for them):
   its checks, reported as post_deploy_regressed`, with the failing
   check's numbers, beside the event's own `monitor: event` line, which
   says what became of it.
-- `monitor rules: a new deploy ends the post-deploy comparison in
-  flight`, naming the release it ended and the `new_release`.
+- `monitor rules: a new deploy, rollback or relaunch ends the
+  post-deploy comparison in flight`, naming the release it ended, the
+  `new_release`, and whether it is a `relaunch` (of a release whose
+  instance had stopped, the same release among them).
 - `monitor rules: the post-deploy comparison ended: the config it now
   follows has no post_deploy rule for the app`, after a reload, or a
   failed reload's return to the config before it.

@@ -276,8 +276,8 @@ func (c *comparator) deployed(ev liveswap.LifecycleEvent) {
 			c.endWindow(r, rule)
 		} else {
 			delete(c.runs, ev.App)
-			c.logger.Info("monitor rules: a new deploy ends the post-deploy comparison in flight",
-				append([]zap.Field{zap.String("app", ev.App), zap.String("release", r.release), zap.String("new_release", ev.Release)}, r.countFields()...)...)
+			c.logger.Info("monitor rules: a new deploy, rollback or relaunch ends the post-deploy comparison in flight",
+				append([]zap.Field{zap.String("app", ev.App), zap.String("release", r.release), zap.String("new_release", ev.Release), zap.Bool("relaunch", ev.Relaunch)}, r.countFields()...)...)
 		}
 	}
 	rule, ok := c.ruleFor(ev.App)

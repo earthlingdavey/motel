@@ -564,7 +564,7 @@ const (
 	lineHeld       = "monitor rules: the post-deploy comparison ended with its window: the release held"
 	lineHeldFailed = "monitor rules: the post-deploy comparison ended with its window: the release held, though its last judged check failed"
 	lineJudgedNone = "monitor rules: the post-deploy comparison ended with its window having judged no check: none weighed a bound"
-	lineReplaced   = "monitor rules: a new deploy ends the post-deploy comparison in flight"
+	lineReplaced   = "monitor rules: a new deploy, rollback or relaunch ends the post-deploy comparison in flight"
 	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config it now follows has no post_deploy rule for the app"
 	lineRegressed  = "monitor rules: the post-deploy comparison ended: the release failed its checks, reported as post_deploy_regressed"
 )
@@ -804,10 +804,18 @@ func TestPostDeployANewDeploySaysWhatItEnded(t *testing.T) {
 	tc.minute()
 	tc.deploy("blog", "v3", "v2")
 	wantFields(t, infoLine(t, tc.logs, lineReplaced), map[string]any{
-		"app": "blog", "release": "v2", "new_release": "v3", "checks_judged": int64(1), "checks_skipped": int64(0), "checks_missed": int64(0),
+		"app": "blog", "release": "v2", "new_release": "v3", "relaunch": false, "checks_judged": int64(1), "checks_skipped": int64(0), "checks_missed": int64(0),
 	})
-	if n := tc.logs.FilterMessage(lineStarts).Len(); n != 2 {
-		t.Errorf("%d start lines for two deploys", n)
+	// v3's instance stops and v3 is relaunched in its window: said as
+	// a relaunch, not a deploy.
+	tc.minute()
+	tc.relaunch("blog", "v3", "")
+	lines := tc.logs.FilterMessage(lineReplaced).AllUntimed()
+	if len(lines) != 2 || lines[1].ContextMap()["relaunch"] != true || lines[1].ContextMap()["new_release"] != "v3" {
+		t.Errorf("the relaunch's line: %+v", lines)
+	}
+	if n := tc.logs.FilterMessage(lineStarts).Len(); n != 3 {
+		t.Errorf("%d start lines for two deploys and a relaunch", n)
 	}
 }
 
