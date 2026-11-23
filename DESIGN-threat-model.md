@@ -677,12 +677,12 @@ is closed by the unit's limit — enforced by the kernel under a file
   `systemctl --user -M motel@ show -p Environment <unit>` (as that
   uid or as root; a bare `--user` targets the caller's own manager). A
   key that inline `env` or the injected `SOCKET` also sets is not
-  here: `buildEnvFull` (liveswap/app.go) emits both and the manager
-  keeps the last.
+  here, nor the earlier line of a key the file sets twice:
+  `buildEnvFull` (liveswap/app.go) hands the manager only a key's
+  last pair, the highest layer's.
 - **The transient unit file** the manager writes under
-  `/run/user/<uid>/systemd/transient/`, which carries the un-merged
-  `Environment=` line — overridden values included — until the unit
-  is garbage-collected.
+  `/run/user/<uid>/systemd/transient/`, which carries the same
+  `Environment=` pairs until the unit is garbage-collected.
 - **The running app's `/proc/<pid>/environ`.** The user-namespace
   closure measured on the spike ("The shared-UID rule", below) runs
   the other way, app to supervisor; this direction follows from the

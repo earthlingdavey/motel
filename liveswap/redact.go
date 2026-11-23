@@ -51,7 +51,10 @@ import (
 //     both alphabets padded and not, hex, URL-escaped) and a URL
 //     value's password on its own. Replaced with [redacted:KEY]; the
 //     keys go to the answer's redacted_env, carried from the door
-//     beside the text.
+//     beside the text. Inline `env` values are not secrets by policy
+//     (the Caddyfile is in a repo); motel's SOCKET, the sandbox HOME
+//     and the inherited PATH are paths a diagnostic needs, and none is
+//     an env_file value (a HOME or PATH the env_file sets is one).
 //  2. A safe list (the app's name, the versions and digests in play,
 //     the app's dirs), exempt from the heuristics below. Never from
 //     layer 1: a safe string equal to a known value is dropped.
@@ -101,10 +104,19 @@ type secretForm struct {
 
 // NewRedactor takes env_file KEY=VALUE pairs and the strings that must
 // survive the heuristics. A safe string equal to a value is dropped:
-// it exempts nothing. A nil *Redactor is usable: layers 3 and 4 only.
-// Build one per set of safe strings and keep it where the values do
-// not change (the box webhook's): every form of every value is
-// computed here.
+// whoever named it, it exempts nothing. A nil *Redactor is usable:
+// layers 3 and 4 only.
+//
+// The box webhook builds its own: the pairs are the caller's choice,
+// as an app's are liveswap's — an app's filter is primed with env_file
+// alone, and motel's SOCKET, the sandbox HOME and the inherited PATH
+// stay readable because a diagnostic needs its paths (a HOME or PATH
+// the env_file sets is one of its values) — so a caller priming with a
+// process environment (the box, whose `caddy validate` quotes expanded
+// values in its errors) will want the same for the variables that are
+// paths. Build one per set of safe strings and keep it: every form of
+// every value is computed here, and a running process's environment
+// does not change.
 func NewRedactor(envFile []string, safe []string) *Redactor {
 	known := make(map[string]bool, len(envFile))
 	for _, kv := range envFile {

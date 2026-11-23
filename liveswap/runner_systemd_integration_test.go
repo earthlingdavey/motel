@@ -1478,6 +1478,123 @@ func TestIntegrationSystemdUnitEnvironmentIsTheBuiltEnv(t *testing.T) {
 	}
 }
 
+// TestIntegrationSystemdEnvFileHomeWins: an env_file that sets HOME, as
+// the README invites, is launched through motel's own path
+// (prepareLaunch, startSpec, Start) and the app gets the file's HOME.
+// The sandbox HOME is set first, so before #666 both pairs reached the
+// manager, which refuses a key twice ("Invalid environment block.").
+func TestIntegrationSystemdEnvFileHomeWins(t *testing.T) {
+	r := integrationRunner(t)
+	root, release, shared := sandboxRoot(t)
+	home := filepath.Join(shared, "home")
+	if err := os.Mkdir(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(root, "itest.env")
+	if err := os.WriteFile(envFile, []byte("HOME="+home+"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(shared, "env.txt")
+	if err := os.WriteFile(filepath.Join(release, "server"), []byte("#!/bin/sh\ntrap 'exit 0' TERM\nenv > "+out+".tmp && mv "+out+".tmp "+out+"\nsleep 300 & wait\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := &appSpec{name: "itest", command: []string{"./server"}, envFile: envFile, grace: 2 * time.Second, dirs: newAppDirs(root, "itest")}
+	l, err := spec.prepareLaunch(zap.NewNop(), "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := r.Start(l.startSpec(spec, spec.command))
+	if err != nil {
+		t.Fatalf("start of an app whose env_file sets HOME: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Stop(h, spec.grace) })
+	waitForFile(t, out, 5*time.Second) // renamed into place whole
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") // what the app's process was given
+	if !slices.Contains(got, "HOME="+home) {
+		t.Errorf("the app's environment has no HOME=%s, the env_file's:\n%s", home, strings.Join(got, "\n"))
+	}
+	// And the unit as the manager holds it: one HOME, the file's.
+	unitEnv := strings.Fields(run(t, "systemctl", "--user", "show", "-p", "Environment", "--value", h.state().Unit))
+	var homes []string
+	for _, kv := range unitEnv {
+		if strings.HasPrefix(kv, "HOME=") {
+			homes = append(homes, kv)
+		}
+	}
+	if len(homes) != 1 || homes[0] != "HOME="+home {
+		t.Errorf("the unit's Environment holds %q, want only HOME=%s", homes, home)
+	}
+	// The transient unit file holds the same pairs: the sandbox HOME the
+	// file overrides is not written there either (DESIGN-threat-model.md,
+	// "Where env_file values sit once the app runs").
+	file, err := os.ReadFile(filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "systemd", "transient", h.state().Unit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envLines []string
+	for _, line := range strings.Split(string(file), "\n") {
+		if strings.HasPrefix(line, "Environment=") {
+			envLines = append(envLines, line)
+		}
+	}
+	if n := strings.Count(strings.Join(envLines, "\n"), "HOME="); n != 1 || !strings.Contains(strings.Join(envLines, "\n"), "HOME="+home) {
+		t.Errorf("the transient unit file's Environment= lines name HOME %d times, want once, the env_file's:\n%s", n, strings.Join(envLines, "\n"))
+	}
+}
+
+// TestIntegrationSystemdEnvFilePathChoosesTheCommand: a command given
+// by name is the one the unit's own PATH finds, an env_file's here,
+// not moteld's. The name is on both: moteld's PATH holds a decoy in the
+// release dir, which ran silently before #666's fix to resolveCommand.
+func TestIntegrationSystemdEnvFilePathChoosesTheCommand(t *testing.T) {
+	r := integrationRunner(t)
+	root, release, shared := sandboxRoot(t)
+	out := filepath.Join(shared, "ran.txt")
+	body := []byte("#!/bin/sh\ntrap 'exit 0' TERM\necho \"$0 $PATH\" > " + out + ".tmp && mv " + out + ".tmp " + out + "\nsleep 300 & wait\n")
+	var tools []string
+	for _, d := range []string{filepath.Join(release, "bin"), filepath.Join(shared, "bin")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		tools = append(tools, filepath.Join(d, "mytool"))
+		if err := os.WriteFile(tools[len(tools)-1], body, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", filepath.Join(release, "bin")+":"+os.Getenv("PATH"))
+	appPath := filepath.Join(shared, "bin") + ":/usr/bin:/bin"
+	envFile := filepath.Join(root, "itest.env")
+	if err := os.WriteFile(envFile, []byte("PATH="+appPath+"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	spec := &appSpec{name: "itest", command: []string{"mytool", "serve"}, envFile: envFile, grace: 2 * time.Second, dirs: newAppDirs(root, "itest")}
+	l, err := spec.prepareLaunch(zap.NewNop(), "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss := l.startSpec(spec, spec.command)
+	if err := r.Preflight(ss); err != nil {
+		t.Fatalf("pre-flight of a command the env_file's PATH finds: %v", err)
+	}
+	h, err := r.Start(ss)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Stop(h, spec.grace) })
+	waitForFile(t, out, 5*time.Second) // renamed into place whole
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(b)), tools[1]+" "+appPath; got != want {
+		t.Errorf("the unit ran %q, want %q: the tool its own PATH finds, with that PATH", got, want)
+	}
+}
+
 // TestIntegrationSystemdPreStartKeepsItsGraceAtDeadline: a pre_start
 // that runs past the unit's own TimeoutStartSec= is stopped by the
 // manager with its grace, the sibling in its cgroup too. Before it, a
