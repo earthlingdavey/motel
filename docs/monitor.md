@@ -1063,10 +1063,10 @@ is one), whether it is judged as a relaunch, the rule's name, its
 and `failures`. A deploy to the release already serving says
 nothing; one whose app no rule covers starts none, and says only the
 end of one in flight. Each end says so once, with how many
-checks it counted: judged (a bound weighed), skipped under
-`min_requests` (responses sent, or for a rule whose only bound is
-`max_p95`, responses timed) and missed (the store took no push of
-motel's for them):
+checks it counted: judged (a bound weighed), skipped (under
+`min_requests` responses sent, or, for a rule whose only bound is
+`max_p95`, with no p95: under `min_requests` timed, or no quantile from
+the store) and missed (the store took no push of motel's for them):
 
 - `monitor rules: the post-deploy comparison ended with its window:
   the release held` (`…, though its last judged check failed` when it
@@ -1077,7 +1077,7 @@ motel's for them):
   was a release before it, and its `previous_5xx_share` and
   `previous_p95` when it sent enough to compare.
 - `monitor rules: the post-deploy comparison ended with its window
-  having judged no check: each was under min_requests, or missed`,
+  having judged no check: none weighed a bound`,
   with the last skipped check's `responses` (and `responses_timed`
   when the rule sets `max_p95`): no verdict, not a pass.
 - `monitor rules: the post-deploy comparison ended: the release failed

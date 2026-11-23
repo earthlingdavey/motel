@@ -563,7 +563,7 @@ const (
 	lineStarts     = "monitor rules: the post-deploy comparison starts"
 	lineHeld       = "monitor rules: the post-deploy comparison ended with its window: the release held"
 	lineHeldFailed = "monitor rules: the post-deploy comparison ended with its window: the release held, though its last judged check failed"
-	lineJudgedNone = "monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed"
+	lineJudgedNone = "monitor rules: the post-deploy comparison ended with its window having judged no check: none weighed a bound"
 	lineReplaced   = "monitor rules: a new deploy ends the post-deploy comparison in flight"
 	lineNoRule     = "monitor rules: the post-deploy comparison ended: the config it now follows has no post_deploy rule for the app"
 	lineRegressed  = "monitor rules: the post-deploy comparison ended: the release failed its checks, reported as post_deploy_regressed"
@@ -729,6 +729,18 @@ func TestPostDeployWindowThatJudgedNothingSaysSo(t *testing.T) {
 		"app": "shop", "release": "s2", "checks_judged": int64(0), "checks_skipped": int64(3), "checks_missed": int64(0),
 		"min_requests": int64(100), "responses": int64(300), "responses_timed": int64(6),
 	})
+	// Over the floor sent and timed, with no quantile from the store:
+	// nothing was under min_requests, and the line does not say so.
+	noq := newTestComparator(t, p95)
+	noq.deploy("shop", "s2", "s1")
+	noq.store.set("s2", 300, 0, 0)
+	noq.store.setTimed("s2", 150)
+	for range 4 {
+		noq.minute()
+	}
+	if got := infoLine(t, noq.logs, lineJudgedNone); got["responses_timed"] != int64(150) || got["checks_skipped"] != int64(3) {
+		t.Errorf("fields = %v", got)
+	}
 }
 
 // A comparison whose every check is made has ended with its window: at

@@ -379,13 +379,14 @@ func (c *comparator) endWindow(r *comparison, rule Rule) {
 	delete(c.runs, r.app)
 	f := append([]zap.Field{zap.String("app", r.app), zap.String("release", r.release)}, r.countFields()...)
 	if r.judged == 0 {
-		// Not a release that held: every check was under
-		// min_requests, or missed.
+		// Not a release that held: every check was under min_requests,
+		// had no p95 for a rule whose only bound is max_p95, or was
+		// missed.
 		f = append(f, zap.Int("min_requests", rule.minRequests()), zap.Int("responses", int(r.skippedLast.sent)))
 		if rule.MaxP95 != 0 {
 			f = append(f, zap.Int("responses_timed", int(r.skippedLast.timed)))
 		}
-		c.logger.Info("monitor rules: the post-deploy comparison ended with its window having judged no check: each was under min_requests, or missed", f...)
+		c.logger.Info("monitor rules: the post-deploy comparison ended with its window having judged no check: none weighed a bound", f...)
 		return
 	}
 	// The last judged check's own verdict: the count in a row can be
