@@ -919,8 +919,8 @@ Far past the limit Alertmanager can take longer to answer than the 2
 seconds motel waits: it builds the whole answer before it sends any of
 it, and 80,000 alerts took about 2 seconds on one CPU (measured with
 Alertmanager 0.28.1). The line then says Alertmanager did not answer
-within 2 s, as when it starts, or holds so many alerts that its answer
-takes that long.
+within 2 s, as when it starts, or holds so many alerts or silences that
+its answer takes that long.
 
 Ask Alertmanager itself, which has no such limit. On every box, over
 its socket, count what it holds by name:
@@ -946,6 +946,9 @@ ip netns exec motel-metrics amtool --alertmanager.url=http://127.0.0.1:9093 aler
 
 Then stop the producer. A one-shot ends five minutes after it was sent;
 a state holds until the producer sends `--state resolved` for its key.
+A silence list past the limit is listed with `curl … /api/v2/silences`
+([Silence an alert](#silence-an-alert)); an expired silence counts until
+Alertmanager drops it, five days after it ends.
 
 ## Silence an alert
 

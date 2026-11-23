@@ -264,7 +264,7 @@ func TestAlertsViewSlowAnswer(t *testing.T) {
 	if _, ok := v.get(context.Background(), zap.New(core)); ok {
 		t.Error("a late answer was answered")
 	}
-	if all := logs.All(); len(all) != 1 || !strings.HasSuffix(all[0].Message, `Alertmanager did not answer within 2 s, as when it starts, or when it holds so many alerts that its answer takes that long; docs/monitor.md, "More alerts than motel reads", says how to see them`) {
+	if all := logs.All(); len(all) != 1 || !strings.HasSuffix(all[0].Message, `Alertmanager did not answer within 2 s, as when it starts, or when it holds so many alerts or silences that its answer takes that long; docs/monitor.md, "More alerts than motel reads", says how to see them`) {
 		t.Errorf("journal %+v", all)
 	}
 }
