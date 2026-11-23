@@ -18,7 +18,7 @@ import (
 // went to the journal, if the budgets let it.
 type Refusal struct {
 	Status  int
-	Message wire.ErrText
+	Message string
 }
 
 // Write answers the refused request with the fixed body through write.

@@ -178,7 +178,7 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 	app, err := h.allowApp(who, rt.action, name)
 	switch {
 	case errors.Is(err, errUnknownApp):
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: wire.OwnText(fmt.Sprintf("unknown app %q", name))})
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)})
 	case err != nil:
 		if rt.action == access.AppLogs && p != nil {
 			h.logsRefused(r, p.Name, name, err)
@@ -193,8 +193,8 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 	q, ok := rt.parseQuery(r)
 	if !ok {
 		// The route's own words, naming the keys it takes, and nothing
-		// of the request's or the app's (wire.OwnText).
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: wire.OwnText(rt.takes())})
+		// of the request's or the app's.
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: rt.takes()})
 	}
 	// After Decide: what the read is about is the app a Start
 	// installed.
@@ -211,7 +211,7 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 // own alerts is in it, not even one that names the app in its
 // instance (backup_stale/<app>), and no silence. Nothing of it is the
 // app's text: an alert motel raised is its own words (a lifecycle
-// event's summary passed the app's door when it was told, lifecycle.go),
+// event's summary passed the app's filter when it was told, lifecycle.go),
 // and a store rule's is the operator's annotation.
 func (h *Handler) appAlerts(w http.ResponseWriter, r *http.Request, app appHandle, _ appQuery) error {
 	return RespondJSON(w, http.StatusOK, app.alerts(r.Context(), h.app.alertsSource))

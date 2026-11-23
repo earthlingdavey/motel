@@ -12,13 +12,13 @@
 // pins every body byte for byte.
 //
 // No filter runs over a body once it is marshalled. The app's text in
-// it was filtered where it entered, and has a type that says so:
-// AppText for what the app wrote, ErrText for an error's text. Every
-// other string field is classed by its `text` tag, which no encoder
-// reads: "moteld" for moteld's own (a name, a version, a word of a
-// closed set, a path or a sentence of its own), "passes" for text that
-// passes as written because it is the caller's, the operator's or
-// another program's. TestEveryStringFieldIsClassed fails for a string
+// it was filtered where it entered, and has a type that says so,
+// AppText. Every other string field is classed by its `text` tag,
+// which no encoder reads: "moteld" for moteld's own (a name, a version,
+// a word of a closed set, a path or a sentence of its own), "passes"
+// for text that passes as written because it is the caller's, the
+// operator's or another program's, or an error's text, which motel
+// sends as it wrote it. TestEveryStringFieldIsClassed fails for a string
 // field that has neither a type nor a tag. A body whose app text the
 // filter changed carries "redacted_env", the env keys whose values it
 // replaced, in the type's own field.
@@ -99,8 +99,8 @@ type Status struct {
 	// alone, and only when the monitor block's metrics line is loaded.
 	Metrics *Metrics `json:"metrics,omitempty"`
 	// RedactedEnv is the env keys whose values the filter replaced in
-	// the app's text this status carries: last_deploy's, and the
-	// watchdog's last failure's. Absent when none was.
+	// the app's text this status carries, last_deploy's. Absent when
+	// none was.
 	RedactedEnv []string `json:"redacted_env,omitempty" text:"moteld"`
 }
 
@@ -137,7 +137,7 @@ type DeploySummary struct {
 type DeployResult struct {
 	Version    string    `json:"version" text:"moteld"`
 	Status     string    `json:"status" text:"moteld"` // "succeeded" | "failed"
-	Error      ErrText   `json:"error,omitempty"`
+	Error      string    `json:"error,omitempty" text:"passes"`
 	Phase      string    `json:"phase,omitempty" text:"moteld"`       // phase reached when it failed
 	By         string    `json:"deployed_by,omitempty" text:"passes"` // the trust source that authorized it, and the token's attribution claims
 	SHA256     string    `json:"sha256,omitempty" text:"moteld"`      // the pin the deployer asserted, the digest of the bytes a push uploaded, or a rollback's carried from the record it replaces; never a hash of an unpinned download
@@ -169,12 +169,6 @@ type DeployResult struct {
 	// RedactedEnv is the env keys whose values the filter replaced in
 	// this result's error and detail, where the app's text entered.
 	RedactedEnv []string `json:"redacted_env,omitempty" text:"moteld"`
-	// FilteredAtEntry is true in a record written by a moteld that
-	// filters the app's text where it enters: its error and detail have
-	// passed the app's filter, and no read filters them again. Absent
-	// from a record an older moteld wrote, whose error and detail are
-	// filtered again when it is read, and from last_deploy.
-	FilteredAtEntry bool `json:"filtered_at_entry,omitempty"`
 }
 
 // DeployInFlight is a deploy the app is running: set when the box takes
@@ -231,7 +225,7 @@ type DeployDetail struct {
 	// should have been one (journalctl missing, the journal unreadable).
 	LogTail          []AppText `json:"log_tail,omitempty"`
 	LogTailTruncated bool      `json:"log_tail_truncated,omitempty"`
-	LogTailError     ErrText   `json:"log_tail_error,omitempty"`
+	LogTailError     string    `json:"log_tail_error,omitempty" text:"passes"`
 }
 
 // ProbeDetail is the last non-2xx health probe answer.
@@ -248,29 +242,6 @@ type ProbeDetail struct {
 // so a field of this type cannot be given the app's bytes as they came.
 type AppText string
 
-// ErrText is an error's text, or a refusal's sentence, as an answer or
-// a deploy's record carries it. On the box one is made from a string
-// that is not a constant in two ways only: through the app's filter, as
-// text (liveswap's errText and door.errText, redact.go), since an
-// error's text can quote what the app answered a probe with or name a
-// path the app made; or by OwnText, for a sentence that holds nothing
-// an app wrote. TestErrTextMakers holds that, so a field of this type
-// cannot be given err.Error() as it came. An untyped constant is
-// assignable to it: moteld's own fixed words need no filter and get
-// none. A string on the wire.
-type ErrText string
-
-// OwnText is s, a sentence of moteld's or the box's own, as an
-// ErrText: words over what the request itself sent (a name, a query
-// that does not parse, a body that did not read), over the box's own
-// figures and names, or over text a door of the box's already filtered.
-// Never an error's text from under an app's directories, and never the
-// app's bytes: those pass the app's filter (liveswap's errText). Its
-// callers are listed in TestErrTextMakers (liveswap) and
-// TestBoxErrTextMakers (box): a new one is a decision someone writes
-// down there.
-func OwnText(s string) ErrText { return ErrText(s) }
-
 // Watchdog is the app's watchdog as the status reports it.
 type Watchdog struct {
 	State            string    `json:"state" text:"moteld"`
@@ -278,18 +249,14 @@ type Watchdog struct {
 	RestartsInWindow int       `json:"restarts_in_window,omitempty"`
 	LastRestartAt    time.Time `json:"last_restart_at,omitzero"`
 	LastRestartCause string    `json:"last_restart_cause,omitempty" text:"moteld"`
-	LastFailure      ErrText   `json:"last_failure,omitempty"`
+	LastFailure      string    `json:"last_failure,omitempty" text:"passes"`
 }
 
 // Error is every refusal's body, and every failure's but a failed
 // deploy's: the 401, 404, 405, 409, 422, 503 and the 500s before a
 // deploy runs.
 type Error struct {
-	Error ErrText `json:"error"`
-	// RedactedEnv is the env keys whose values the app's filter replaced
-	// in Error: a refusal of the deploy pipeline's can name a path in a
-	// release the app wrote. Absent when none was.
-	RedactedEnv []string `json:"redacted_env,omitempty" text:"moteld"`
+	Error string `json:"error" text:"passes"`
 }
 
 // Forbidden is the 403 to a caller whose token the box verified and
@@ -300,9 +267,9 @@ type Error struct {
 // does not. Error comes first, so a client decoding Error reads the
 // sentence.
 type Forbidden struct {
-	Error ErrText `json:"error"`
-	Needs string  `json:"needs" text:"moteld"`
-	Scope string  `json:"scope" text:"moteld"`
+	Error string `json:"error" text:"passes"`
+	Needs string `json:"needs" text:"moteld"`
+	Scope string `json:"scope" text:"moteld"`
 }
 
 // Failure is a deploy that failed once it ran (500): why, and the
@@ -310,8 +277,8 @@ type Forbidden struct {
 // comes first: the examples' deploy.sh reads the cause as the body's
 // first key.
 type Failure struct {
-	Error  ErrText `json:"error"`
-	Status Status  `json:"status"`
+	Error  string `json:"error" text:"passes"`
+	Status Status `json:"status"`
 	// RedactedEnv is the status's, at the body's top, where a client
 	// looks for it.
 	RedactedEnv []string `json:"redacted_env,omitempty" text:"moteld"`
@@ -332,7 +299,7 @@ const (
 // finished body, sent it in place of At when its filter withheld the
 // line.
 type PhaseEvent struct {
-	Error ErrText   `json:"error,omitempty"`
+	Error string    `json:"error,omitempty" text:"passes"`
 	At    time.Time `json:"at,omitzero"`
 	Event string    `json:"event" text:"moteld"` // EventPhase
 	Phase string    `json:"phase" text:"moteld"`
@@ -434,7 +401,7 @@ type AppEntry struct {
 	// person's grants and the box's table falling apart). An older
 	// moteld also said here why its filter withheld the row. Absent when
 	// Summary is there.
-	Error ErrText `json:"error,omitempty"`
+	Error string `json:"error,omitempty" text:"passes"`
 	// Summary is the app's state as GET /<app> gives it at the same
 	// moment, in part: each value is taken from the same status.
 	Summary *AppSummary `json:"summary,omitempty"`

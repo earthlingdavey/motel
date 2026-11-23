@@ -13,7 +13,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/smallhoursorg/motel/liveswap/wire"
 	"go.uber.org/zap"
 )
 
@@ -82,9 +81,8 @@ type watchdogState struct {
 	healthySince     time.Time
 	lastRestartAt    time.Time
 	lastRestartCause string
-	skipGraceFor     handle         // superviseInstance re-arms no grace for this handle
-	lastFailure      wire.ErrText   // through the error net alone (errText, redact.go)
-	lastFailureKeys  []string       // the env keys the app's filter replaced in lastFailure
+	skipGraceFor     handle // superviseInstance re-arms no grace for this handle
+	lastFailure      string
 	jitter           func() float64 // test seam; nil = rand.Float64
 	// What the notify module was told (lifecycle.go): alerted while a
 	// restart loop is reported and not yet over, recovering once its
@@ -366,7 +364,7 @@ func (w *watchdogState) recordHealthy(now time.Time, resetAfter time.Duration) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.failures = 0
-	w.lastFailure, w.lastFailureKeys = "", nil
+	w.lastFailure = ""
 	if w.healthySince.IsZero() {
 		w.healthySince = now
 	}
@@ -375,11 +373,11 @@ func (w *watchdogState) recordHealthy(now time.Time, resetAfter time.Duration) {
 	}
 }
 
-func (w *watchdogState) recordFailure(desc wire.ErrText, keys []string) int {
+func (w *watchdogState) recordFailure(desc string) int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.failures++
-	w.lastFailure, w.lastFailureKeys = desc, keys
+	w.lastFailure = desc
 	w.healthySince = time.Time{}
 	return w.failures
 }
@@ -389,20 +387,10 @@ func (w *watchdogState) recordFailure(desc wire.ErrText, keys []string) int {
 // up. The next launch clears it — recovery's (with ""), a deploy's
 // (reset), or a healthy probe of a later instance — and so does a
 // recovery that finds nothing recorded.
-func (w *watchdogState) setLastFailure(desc wire.ErrText, keys ...string) {
+func (w *watchdogState) setLastFailure(desc string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.lastFailure, w.lastFailureKeys = desc, keys
-}
-
-// probeFailed records a failed probe of the running instance. Its
-// error passes the error net (errText, redact.go): Go's HTTP client
-// quotes a probe answer that is no HTTP into it. The error it returns
-// is the net's (logFields gives the journal the error as it came); the
-// count is the consecutive failures.
-func (ma *managedApp) probeFailed(version string, err error) (int, error) {
-	de := ma.netError(err, true, false, version)
-	return ma.wd.recordFailure(de.msg, de.keys), de
+	w.lastFailure = desc
 }
 
 // noteFlap breaks the continuous-health streak without counting toward
@@ -523,23 +511,15 @@ func (w *watchdogState) reset() {
 	w.restarts = nil
 	w.backoffStep = 0
 	w.healthySince = time.Time{}
-	w.lastFailure, w.lastFailureKeys = "", nil
+	w.lastFailure = ""
 	w.skipGraceFor = nil
 }
 
 func (w *watchdogState) statusSnapshot(now time.Time, window time.Duration) *watchdogSnapshot {
-	s, _ := w.statusWithKeys(now, window)
-	return s
-}
-
-// statusWithKeys is statusSnapshot and the env keys the app's filter
-// replaced in its last_failure, read under one lock so that the two are
-// the same failure's.
-func (w *watchdogState) statusWithKeys(now time.Time, window time.Duration) (*watchdogSnapshot, []string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.state == "" {
-		return nil, nil // watchdog never armed (e.g. before first Start)
+		return nil // watchdog never armed (e.g. before first Start)
 	}
 	inWindow := 0
 	for _, t := range w.restarts {
@@ -554,7 +534,7 @@ func (w *watchdogState) statusWithKeys(now time.Time, window time.Duration) (*wa
 		LastRestartAt:    w.lastRestartAt,
 		LastRestartCause: w.lastRestartCause,
 		LastFailure:      w.lastFailure,
-	}, w.lastFailureKeys
+	}
 }
 
 // watchdogLoop runs until ctx is canceled (Destruct). Each cycle
@@ -682,12 +662,13 @@ func (ma *managedApp) superviseInstance(ctx context.Context, c collaborators, in
 				c.logger.Debug("watchdog: probe failed during grace", zap.Error(err))
 				continue
 			}
-			n, err := ma.probeFailed(inst.version, err)
+			n := ma.wd.recordFailure(err.Error())
 			ma.noteUnhealthy(c, inst.version)
-			c.logger.Warn("watchdog: health probe failed", append([]zap.Field{
+			c.logger.Warn("watchdog: health probe failed",
 				zap.String("kind", classifyProbeErr(err)),
 				zap.Int("consecutive", n),
-				zap.Int("threshold", spec.wdFailures)}, logFields(err)...)...)
+				zap.Int("threshold", spec.wdFailures),
+				zap.Error(err))
 			if n >= spec.wdFailures {
 				return ma.handleFailure(ctx, c, inst, failureHealth)
 			}
@@ -904,10 +885,7 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 		// refusal, until a deploy, or a reload's recovery once the
 		// cause is fixed, launches the app again.
 		ma.dropIf(inst)
-		// Through the error net (errText): the refusal names a path of
-		// a release the app has written, a link's target among them.
-		text, keys := ma.errText(err.Error(), true, inst.version)
-		ma.wd.setLastFailure(text, keys...)
+		ma.wd.setLastFailure(err.Error())
 		// The operator's channels are told the refusal's said where it
 		// has one: its message names a path the release chose
 		// (validationError). Never a log tail; the filter runs over it
@@ -917,7 +895,7 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 			reason = refused.said
 		}
 		if ma.wd.setRefused(inst.version, reason) {
-			ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchRefused, Release: inst.version, quotesError: true,
+			ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchRefused, Release: inst.version,
 				Summary: refusedSummary(inst.version, boundReason(reason))})
 		}
 		c.logger.Error("watchdog: relaunch refused; the app stays down until a deploy of another version (or a rollback to one), or a reload once the cause is fixed, launches it",

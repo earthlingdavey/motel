@@ -134,7 +134,7 @@ func TestRecoveryRemovesTheReleaseOfADeployNoMotelFinished(t *testing.T) {
 		t.Fatal("a settled marker must be removed")
 	}
 	rec := recordOfV2(t, rig)
-	if rec.Status != "failed" || !strings.Contains(string(rec.Error), "moteld") || !rec.StartedAt.Equal(interruptedAt) {
+	if rec.Status != "failed" || !strings.Contains(rec.Error, "moteld") || !rec.StartedAt.Equal(interruptedAt) {
 		t.Fatalf("the cut-short deploy must be recorded failed, naming why, at its own start: %+v", rec)
 	}
 	if last := rig.ma.status().LastDeploy; last == nil || last.Version != "v2" || last.Status != "failed" {
@@ -253,7 +253,7 @@ func TestAReleaseThatCannotBeRemovedEndsAsAFailedDeploysLeftOnDisk(t *testing.T)
 		t.Fatalf("nothing may be removed through the link: %v", err)
 	}
 	rec := recordOfV2(t, rig)
-	if rec.Status != "failed" || !strings.Contains(string(rec.Error), "release v2 left on disk") || !strings.Contains(string(rec.Error), "cut short") {
+	if rec.Status != "failed" || !strings.Contains(rec.Error, "release v2 left on disk") || !strings.Contains(rec.Error, "cut short") {
 		t.Fatalf("the record must name the restart and the release left: %+v", rec)
 	}
 }
@@ -355,7 +355,7 @@ func TestAStateThatCannotBeReadVouchesForNothing(t *testing.T) {
 	if releasePresent(t, rig, "v2") || markerPresent(t, rig) {
 		t.Fatal("the release of the cut-short deploy must be removed and the marker cleared")
 	}
-	if rec := recordOfV2(t, rig); rec.Status != "failed" || !strings.Contains(string(rec.Error), "cut short") {
+	if rec := recordOfV2(t, rig); rec.Status != "failed" || !strings.Contains(rec.Error, "cut short") {
 		t.Fatalf("the cut-short deploy must be recorded: %+v", rec)
 	}
 }

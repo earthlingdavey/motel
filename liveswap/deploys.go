@@ -1,7 +1,6 @@
 package liveswap
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,13 +28,11 @@ import (
 //  1. A record is bytes motel wrote once into a directory it verified
 //     as its own: the deploy's result as the answer carried it, the
 //     app's text in it already through the app's filter where it
-//     entered (redact.go), and marked so (filtered_at_entry). Anything
-//     read back is text from disk: it is served only when it proves
-//     itself a record (a regular file, under a valid version name,
-//     whose object names that version and an outcome of the
-//     vocabulary), as it stands when it bears the mark, and with its
-//     error and detail through the app's filter when it does not
-//     (servedRecord); and it is trusted for nothing else. One
+//     entered (redact.go). Anything read back is text from disk: it is
+//     served, as it stands, only when it proves itself a record (a
+//     regular file, under a valid version name, whose object names
+//     that version and an outcome of the vocabulary), and it is
+//     trusted for nothing else. One
 //     value of a record is read back as a value: the pin, which a
 //     rollback carries into the record that replaces it (recordedPin),
 //     only a digest-shaped string. And one fact about a record is read
@@ -58,11 +55,9 @@ import (
 // The file holds the result with the env_file values known at the
 // deploy already replaced in the app's text: a secret rotated later is
 // not in an old record. A value added to env_file later is, if the app
-// had printed it: no read filters a marked record again (an accepted
-// row, DESIGN-liveswap.md). A record an older moteld wrote has no mark:
-// that moteld filtered it whole when it wrote it and again at each
-// read, so it is filtered when read here too, its error and detail
-// alone. Records
+// had printed it: no read filters a record again (an accepted row,
+// DESIGN-liveswap.md). A record an older moteld wrote was filtered
+// whole when it was written. Records
 // are pruned with the releases: one is kept for every version still on
 // disk, plus the newest `keep` others — failed deploys, whose release
 // is removed at once, and versions release GC has pruned — so the
@@ -81,12 +76,10 @@ func summaryPin(s deploySummary) string {
 	return d
 }
 
-// recordDeploy writes result as the record of its version, marked as
-// filtered where its app text entered, then prunes. Failures are
-// logged, not fatal: the deploy's outcome is already known and the
-// response must say it.
+// recordDeploy writes result as the record of its version, then
+// prunes. Failures are logged, not fatal: the deploy's outcome is
+// already known and the response must say it.
 func (ma *managedApp) recordDeploy(c collaborators, result deployResult) {
-	result.FilteredAtEntry = true
 	dir, err := recordsDir(c.spec.dirs, true)
 	if err != nil {
 		c.logger.Warn("deploy record: not written", zap.Error(err))
@@ -103,8 +96,7 @@ func (ma *managedApp) recordDeploy(c collaborators, result deployResult) {
 		envelope := map[string]any{
 			"version": result.Version, "status": result.Status,
 			"started_at": result.StartedAt, "finished_at": result.FinishedAt,
-			"error":             "record withheld: larger than a record can be",
-			"filtered_at_entry": true,
+			"error": "record withheld: larger than a record can be",
 		}
 		if result.Phase != "" { // absent, as a marshalled result has it, not ""
 			envelope["phase"] = result.Phase
@@ -147,67 +139,6 @@ func releaseNames(releasesDir string) ([]string, error) {
 		}
 	}
 	return names, nil
-}
-
-// servedRecord is rec, the bytes of version's record as
-// readDeployRecord proved them one, as GET /<app>?deploy= sends them.
-// A record that bears the mark (filtered_at_entry) is sent as it
-// stands. One an older moteld wrote does not: that moteld filtered a
-// record whole when it wrote it and again whenever it was read, so its
-// error and detail pass the app's filter here, as the app's text and
-// an error's text do where they enter now, with what the filter knows
-// today (a value learnt since the record was written is hidden). Its
-// other fields are sent as they stand, its keys in sorted order, and
-// the keys the filter replaced are added to its redacted_env. An error
-// or a detail that is not of its type in such a record is not sent:
-// it could not be filtered as one.
-func (ma *managedApp) servedRecord(rec []byte, version string) []byte {
-	rec = bytes.TrimSuffix(rec, []byte("\n")) // the file's own, which the answer adds again
-	var top map[string]json.RawMessage
-	if json.Unmarshal(rec, &top) != nil {
-		return rec // readDeployRecord parsed it: not reached
-	}
-	if marked, ok := top["filtered_at_entry"]; ok && string(marked) == "true" {
-		return rec
-	}
-	names := []string{version}
-	var pin string
-	if json.Unmarshal(top["sha256"], &pin) == nil {
-		names = append(names, pin)
-	}
-	d := ma.door(names...)
-	if raw, ok := top["error"]; ok {
-		var e string
-		if json.Unmarshal(raw, &e) != nil {
-			delete(top, "error")
-		} else {
-			top["error"], _ = json.Marshal(d.errText(e)) // a string: nothing to fail
-		}
-	}
-	if raw, ok := top["detail"]; ok {
-		var det deployDetail
-		if json.Unmarshal(raw, &det) != nil {
-			delete(top, "detail")
-		} else {
-			top["detail"], _ = json.Marshal(d.again(det)) // strings, bools, an int: nothing to fail
-		}
-	}
-	// The keys the older moteld listed pass layer 1 too, as the door's
-	// own do (door.keys): a name that is the value of a key learnt
-	// since is that value's marker.
-	var had []string
-	_ = json.Unmarshal(top["redacted_env"], &had) // a key that is not a list is replaced
-	for i, k := range had {
-		had[i] = d.r.replaceKnown(k, map[string]bool{})
-	}
-	if keys := d.keys(); len(keys) > 0 || len(had) > 0 {
-		top["redacted_env"], _ = json.Marshal(union(had, keys))
-	}
-	out, err := json.Marshal(top)
-	if err != nil {
-		return rec // raw values that parsed: not reached
-	}
-	return out
 }
 
 // recordNames is the versions and the pins the app's deploy records

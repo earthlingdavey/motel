@@ -520,7 +520,7 @@ func (c *Client) Read(ans *Answer, v any) error {
 	if decodeObject(ans, &e) != nil || e.Error == "" {
 		return c.notMotel(ans, "")
 	}
-	said := termtext.Quote(string(e.Error))
+	said := termtext.Quote(e.Error)
 	if ans.Code == http.StatusNotFound {
 		return &Failure{Exit: ExitNotFound, Status: ans.Code, Message: fmt.Sprintf("%s answered 404; the box says: %s", c.Box.Host, said), Body: ans.Body}
 	}
@@ -1157,7 +1157,7 @@ func (c *Client) forbidden(ans *Answer) *Failure {
 	if needs == "" || on == "" {
 		said := "."
 		if f.Error != "" {
-			said = "; the box says: " + termtext.Quote(string(f.Error)).String() + "."
+			said = "; the box says: " + termtext.Quote(f.Error).String() + "."
 		}
 		return &Failure{Exit: ExitForbidden, Status: ans.Code, Body: body, Message: fmt.Sprintf(
 			"%s refused this (HTTP 403) and did not say what it needs%s%s", c.Box.Host, said, whoami)}
@@ -1192,10 +1192,10 @@ func (c *Client) NotMotel(ans *Answer, why string) error { return c.notMotel(ans
 // Any other 200 without the answer's fields is still not moteld's.
 func withheld(ans *Answer) (termtext.Text, bool) {
 	var e wire.Error
-	if decodeObject(ans, &e) != nil || !opensWithheld(string(e.Error)) {
+	if decodeObject(ans, &e) != nil || !opensWithheld(e.Error) {
 		return termtext.Text{}, false
 	}
-	return termtext.Quote(string(e.Error)), true
+	return termtext.Quote(e.Error), true
 }
 
 // opensWithheld says whether s, the one sentence of such a body, opens

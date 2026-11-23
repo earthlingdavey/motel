@@ -1,6 +1,7 @@
 package liveswap
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -184,7 +185,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		// A global source verified the token: a deployer of no app
 		// here, which may take no action on this name. The name is
 		// answered 404 whatever the method, before the route table.
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: wire.OwnText(fmt.Sprintf("unknown app %q", name))})
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)})
 	}
 	if !h.awaitInstalled(r, ma, who.By) {
 		return h.installing(w)
@@ -323,7 +324,7 @@ func (h *Handler) allowApp(p access.Principal, a access.Action, name string) (ap
 func ForbiddenBody(err error) any {
 	var f *access.Forbidden
 	if errors.As(err, &f) {
-		return wire.Forbidden{Error: wire.OwnText(f.Error()), Needs: f.Needs, Scope: f.Scope}
+		return wire.Forbidden{Error: f.Error(), Needs: f.Needs, Scope: f.Scope}
 	}
 	return wire.Error{Error: "forbidden"}
 }
@@ -356,7 +357,7 @@ func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name strin
 	app, err := h.allowApp(p.Principal, rt.action, name)
 	switch {
 	case errors.Is(err, errUnknownApp):
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: wire.OwnText(fmt.Sprintf("unknown app %q", name))})
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)})
 	case err != nil:
 		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err))
 	}
@@ -450,7 +451,7 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandl
 	// query is refused here rather than read as no query.
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: wire.OwnText("malformed query: " + err.Error())})
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()})
 	}
 	window := wire.MetricsRanges[0]
 	if q.Has("range") {
@@ -458,7 +459,7 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandl
 		// the same on every box.
 		if window = q.Get("range"); !slices.Contains(wire.MetricsRanges, window) {
 			return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{
-				Error: wire.OwnText("range must be one of " + strings.Join(wire.MetricsRanges, ", "))})
+				Error: "range must be one of " + strings.Join(wire.MetricsRanges, ", ")})
 		}
 	}
 	s := ma.status()
@@ -480,15 +481,15 @@ func (h *Handler) deployURL(w http.ResponseWriter, r *http.Request, app appHandl
 	// would surface as a misleading "invalid JSON" 400.
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadBytes+1))
 	if err != nil {
-		return RespondJSON(w, http.StatusBadRequest, wire.Error{Error: wire.OwnText("reading body: " + err.Error())})
+		return RespondJSON(w, http.StatusBadRequest, wire.Error{Error: "reading body: " + err.Error()})
 	}
 	if len(body) > maxPayloadBytes {
 		return RespondJSON(w, http.StatusRequestEntityTooLarge, wire.Error{
-			Error: wire.OwnText(fmt.Sprintf("payload exceeds %d bytes", maxPayloadBytes))})
+			Error: fmt.Sprintf("payload exceeds %d bytes", maxPayloadBytes)})
 	}
 	p, status, msg := parseDeployPayload(body)
 	if status != 0 {
-		return RespondJSON(w, status, wire.Error{Error: wire.OwnText(msg)})
+		return RespondJSON(w, status, wire.Error{Error: msg})
 	}
 	return h.runDeploy(w, r, ma, p.request(), by)
 }
@@ -534,7 +535,7 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 	ma := app.ma
 	version := r.URL.Query().Get("version")
 	if !validVersion(version) {
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: wire.OwnText(fmt.Sprintf("version query param must match %s", versionRe))})
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("version query param must match %s", versionRe)})
 	}
 	// Acquire the per-app deploy lock BEFORE staging the upload: a
 	// concurrent push then gets an immediate 409 instead of streaming a
@@ -564,8 +565,7 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 		// The refusal alone, as the staging failure below is answered:
 		// the status's last_deploy and deploys describe other deploys,
 		// which a client would read as this one's (#533).
-		text, keys := ma.outcomeText(err)
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: text, RedactedEnv: keys})
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: err.Error()})
 	}
 	// In flight from here, its upload included: each way out before the
 	// pipeline ends it before its response is written, which the status
@@ -583,23 +583,17 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 	switch {
 	case errors.Is(err, errArtifactTooLarge):
 		return RespondJSON(w, http.StatusRequestEntityTooLarge, wire.Error{
-			Error: wire.OwnText(fmt.Sprintf("uploaded artifact exceeds max_artifact_size (%d bytes)", spec.maxArtifactSize))})
+			Error: fmt.Sprintf("uploaded artifact exceeds max_artifact_size (%d bytes)", spec.maxArtifactSize)})
 	case errors.As(err, &stgErr):
 		// A local filesystem failure (mkdir/create/write/close, e.g. a
 		// full disk) is a server error, like a failed URL download, and
 		// reported as one: the pipeline's own report never runs.
 		ma.lifecycle(c, LifecycleEvent{Name: EventDeployFailed, Release: version, DeployedBy: by,
 			Summary: "deploy of " + version + " failed before it began: the upload could not be staged on the box"})
-		// The error as it came, in the journal: the answer's text passes
-		// the net, and may be withheld.
-		c.logger.Error("deploy failed", zap.String("version", version), zap.String("via", by),
-			zap.String("source", "push"), zap.String("remote", r.RemoteAddr), zap.Error(err))
-		text, keys := ma.errText("staging upload: "+err.Error(), true)
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: text, RedactedEnv: keys})
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "staging upload: " + err.Error()})
 	case err != nil:
-		// Otherwise the body read itself failed — a bad request. The
-		// connection's words, as a URL deploy's body read says them.
-		return RespondJSON(w, http.StatusBadRequest, wire.Error{Error: wire.OwnText("reading upload: " + err.Error())})
+		// Otherwise the body read itself failed — a bad request.
+		return RespondJSON(w, http.StatusBadRequest, wire.Error{Error: "reading upload: " + err.Error()})
 	}
 	// Backstop cleanup: fetch removes the archive once it extracts it,
 	// but if the pipeline returns before fetch it would leak.
@@ -621,7 +615,7 @@ func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, app app
 	ma := app.ma
 	version := r.URL.Query().Get("rollback")
 	if !validVersion(version) {
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: wire.OwnText(fmt.Sprintf("rollback version must match %s", versionRe))})
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("rollback version must match %s", versionRe)})
 	}
 	return h.runDeploy(w, r, ma, deployRequest{version: version, rollback: true}, by)
 }
@@ -630,7 +624,7 @@ func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, app app
 // outcome of that version's latest deploy (deploys.go).
 func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version string) error {
 	if !validVersion(version) {
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: wire.OwnText(fmt.Sprintf("deploy query param must match %s", versionRe))})
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("deploy query param must match %s", versionRe)})
 	}
 	c := ma.snapshot()
 	if c.spec == nil {
@@ -641,17 +635,15 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 	rec, err := readDeployRecord(c.spec.dirs, version)
 	if err != nil {
 		if errors.Is(err, errNoDeployRecord) {
-			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: wire.OwnText(fmt.Sprintf("no deploy recorded for version %s", version))})
+			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)})
 		}
 		// The error names the app's directories; the journal has it.
 		c.logger.Error("reading a deploy record", zap.String("version", version), zap.Error(err))
 		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "this deploy's record could not be read; the box's journal says why (journalctl -u moteld)"})
 	}
-	// The record as it was written when it bears the mark: the app's
-	// text in it passed the app's filter when the deploy ended, and
-	// nothing filters it again. An older moteld's record has its error
-	// and detail filtered now (servedRecord, deploys.go).
-	return respondBytes(w, http.StatusOK, ma.servedRecord(rec, version))
+	// The record as it was written: the app's text in it passed the
+	// app's filter when the deploy ended, and nothing filters it again.
+	return respondBytes(w, http.StatusOK, bytes.TrimSuffix(rec, []byte("\n")))
 }
 
 // runDeploy records who authorized it, runs the pipeline, and maps
@@ -705,8 +697,7 @@ func (h *Handler) mapDeployResult(w http.ResponseWriter, ma *managedApp, err err
 
 // deployOutcome is the status code and body a pipeline outcome maps
 // to; a nil body is a client that hung up, which nothing is written
-// for. An error of a deploy whose units ran has passed the app's door
-// already (deployLocked): its text here is the filtered one.
+// for.
 func deployOutcome(ma *managedApp, err error) (int, any) {
 	status := ma.status()
 	var vErr validationError
@@ -714,26 +705,16 @@ func deployOutcome(ma *managedApp, err error) (int, any) {
 	case err == nil:
 		return http.StatusOK, status
 	case errors.Is(err, errDeployInProgress):
-		// motel's own fixed words: a constant, which needs no net.
-		return http.StatusConflict, wire.Error{Error: deployInProgress}
+		return http.StatusConflict, wire.Error{Error: err.Error()}
 	case errors.As(err, &vErr):
-		// A refusal's text passed the net where the pipeline ended: a
-		// rollback's pre-flight names a path of a release the app has
-		// written.
-		text, keys := ma.outcomeText(err)
-		return http.StatusUnprocessableEntity, wire.Error{Error: text, RedactedEnv: keys}
+		return http.StatusUnprocessableEntity, wire.Error{Error: err.Error()}
 	case errors.Is(err, context.Canceled):
 		return 0, nil
 	default:
-		// The keys the net replaced in this error's text, and those of
-		// the status beside it (its last_deploy's detail, the watchdog's
-		// failure): the status is read after the pipeline let go of the
-		// lock, so its last_deploy may already be another deploy's.
-		text, keys := ma.outcomeText(err)
 		return http.StatusInternalServerError, wire.Failure{
-			Error:       text,
+			Error:       err.Error(),
 			Status:      status, // shows the old version still serving
-			RedactedEnv: union(status.RedactedEnv, keys),
+			RedactedEnv: status.RedactedEnv,
 		}
 	}
 }

@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-
-	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // A record is written for every deploy — a failure with its detail, a
@@ -371,28 +369,6 @@ func TestDeployRecordsRefuseAPlantedAncestorLink(t *testing.T) {
 	}
 }
 
-// A deploy that failed before its launch remembered no env_file
-// values, and its error can still carry one: the record's filter
-// reads the deploy's own env_file, so the value is not written.
-func TestDeployRecordFiltersACurrentValueBeforeAnyLaunch(t *testing.T) {
-	rig := newTestRig(t)
-	secret := "q7Wm2xK9pL4vB8nR3tY6zH5c" // gitleaks:allow — a made-up value for this test
-	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
-	must(t, os.WriteFile(rig.spec.envFile, []byte("TOKEN="+secret+"\n"), 0o600))
-	rig.fetch.err = errors.New("download https://x/a.tgz?sig=" + secret + ": HTTP 403")
-	if err := deployOnceV1(t, rig); err == nil {
-		t.Fatal("the download should have failed")
-	}
-	rec, err := readDeployRecord(rig.spec.dirs, "v1")
-	must(t, err)
-	// The value is gone and the key reported; which layer took it (the
-	// query-string rule reaches a URL's query before the marker does)
-	// is not the point.
-	if s := string(rec); strings.Contains(s, secret) || !strings.Contains(s, `"redacted_env":["TOKEN"]`) {
-		t.Fatalf("a current value reached the record of a pre-launch failure: %s", s)
-	}
-}
-
 // A known value that is a fragment of the record's own JSON (which
 // made an older moteld's whole-body filter withhold the record) changes
 // nothing of it: the record is the result as marshalled, its error
@@ -412,7 +388,7 @@ func TestDeployRecordIsWholeWhateverAValueSpells(t *testing.T) {
 	}
 	var got deployResult
 	must(t, json.Unmarshal(rec, &got))
-	if got.Version != "v1" || got.Status != "failed" || got.Error != "start failed: boom" || got.By != label || !got.FilteredAtEntry {
+	if got.Version != "v1" || got.Status != "failed" || got.Error != "start failed: boom" || got.By != label {
 		t.Fatalf("record = %s", rec)
 	}
 	if d := rig.ma.status().Deploys; len(d) != 1 || d[0].Version != "v1" || d[0].Status != "failed" {
@@ -501,7 +477,7 @@ func TestDeployRecordTooLargeIsAnEnvelope(t *testing.T) {
 	t.Parallel()
 	rig := newTestRig(t)
 	rig.ma.recordDeploy(rig.ma.snapshot(), deployResult{Version: "v1", Status: "failed", Phase: "starting",
-		Error: wire.ErrText("boom: " + strings.Repeat("x", 2*deployRecordMaxBytes))})
+		Error: "boom: " + strings.Repeat("x", 2*deployRecordMaxBytes)})
 	rec, err := readDeployRecord(rig.spec.dirs, "v1")
 	if err != nil {
 		t.Fatalf("an oversized outcome must still leave a readable record: %v", err)
@@ -564,57 +540,13 @@ func TestDeployRecordSizeBoundCountsTheNewline(t *testing.T) {
 	t.Parallel()
 	rig := newTestRig(t)
 	// Pad the error so the JSON lands on the bound exactly.
-	probe := deployResult{Version: "v1", Status: "failed", By: "test", FilteredAtEntry: true}
+	probe := deployResult{Version: "v1", Status: "failed", By: "test"}
 	base, err := json.Marshal(probe)
 	must(t, err)
-	probe.FilteredAtEntry = false
-	probe.Error = wire.ErrText(strings.Repeat("x", deployRecordMaxBytes-len(base)-len(`,"error":""`)))
+	probe.Error = strings.Repeat("x", deployRecordMaxBytes-len(base)-len(`,"error":""`))
 	rig.ma.recordDeploy(rig.ma.snapshot(), probe)
 	if _, err := readDeployRecord(rig.spec.dirs, "v1"); err != nil {
 		t.Fatalf("a record at the bound must be readable (as itself or as the envelope): %v", err)
-	}
-}
-
-// An env_file that cannot be parsed whole leaves the values before the
-// bad line unknown to the filter, and the error that says so can carry
-// one (a short name-shaped one, invalidEnvKeyMsg's residual): its text
-// is then the filter's sentence, in the answer and the record alike,
-// and the record is whole otherwise.
-func TestDeployErrorOfAnEnvFileThatWillNotParseWhole(t *testing.T) {
-	rig := newTestRig(t)
-	secret := "q7Wm2xK9pL4vB8nR3t" // gitleaks:allow — a made-up value for this test
-	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
-	must(t, os.WriteFile(rig.spec.envFile, []byte("TOKEN="+secret+"\n"+secret+"-=x\n"), 0o600))
-	err := deployOnceV1(t, rig)
-	if err == nil || strings.Contains(err.Error(), secret) || !strings.HasPrefix(err.Error(), "[withheld: the app's env_file could not be read") {
-		t.Fatalf("the deploy fails on the bad line, its text withheld: %v", err)
-	}
-	if errors.Unwrap(err) == nil || !strings.Contains(errors.Unwrap(err).Error(), secret) {
-		t.Fatalf("the premise: the chain under the text names the bad line: %v", errors.Unwrap(err))
-	}
-	rec, rerr := readDeployRecord(rig.spec.dirs, "v1")
-	must(t, rerr)
-	if s := string(rec); strings.Contains(s, secret) || strings.Contains(s, "record withheld") || !strings.Contains(s, `"status":"failed"`) || !strings.Contains(s, `"error":"[withheld: the app's env_file could not be read`) {
-		t.Fatalf("record = %s", s)
-	}
-}
-
-// With the env_file unread past a bad line, the values are not all
-// known: the error is the filter's sentence, and the pin, moteld's own
-// data, is kept as the deployer gave it, whatever value it equals.
-func TestDeployRecordKeepsThePinWhenValuesAreUnknown(t *testing.T) {
-	rig := newTestRig(t)
-	sum := sha256.Sum256([]byte("a digest that is also a secret"))
-	pin := hex.EncodeToString(sum[:])
-	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
-	must(t, os.WriteFile(rig.spec.envFile, []byte("TOKEN="+pin+"\nnot a line\n"), 0o600))
-	if err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://example.test/v1.tgz", version: "v1", sha256: pin, by: "test"}); err == nil {
-		t.Fatal("v1 should have failed on the bad line")
-	}
-	rec, err := readDeployRecord(rig.spec.dirs, "v1")
-	must(t, err)
-	if s := string(rec); !strings.Contains(s, `"sha256":"`+pin+`"`) || !strings.Contains(s, `"error":"[withheld:`) {
-		t.Fatalf("record = %s", s)
 	}
 }
 
@@ -640,7 +572,7 @@ func TestDeployRecordEnvelopeKeepsThePin(t *testing.T) {
 			rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
 			must(t, os.WriteFile(rig.spec.envFile, []byte(tc.env), 0o600))
 			rig.ma.recordDeploy(rig.ma.snapshot(), deployResult{Version: "v1", Status: "failed", SHA256: pin,
-				Error: wire.ErrText("boom: " + strings.Repeat("x", 2*deployRecordMaxBytes))})
+				Error: "boom: " + strings.Repeat("x", 2*deployRecordMaxBytes)})
 			rec, err := readDeployRecord(rig.spec.dirs, "v1")
 			must(t, err)
 			if s := string(rec); !strings.Contains(s, "larger than a record can be") || strings.Contains(s, pin) != tc.want {

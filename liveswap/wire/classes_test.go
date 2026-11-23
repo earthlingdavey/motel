@@ -15,14 +15,13 @@ import (
 
 // textClasses are the values a `text` tag may have (the package doc):
 // moteld's own, or text that passes as written because it is the
-// caller's, the operator's or another program's. The app's text and an
-// error's text are classed by their types, AppText and ErrText, and
-// carry no tag.
+// caller's, the operator's or another program's, or an error's text,
+// sent as motel wrote it. The app's text is classed by its type,
+// AppText, and carries no tag.
 var textClasses = map[string]bool{"moteld": true, "passes": true}
 
 // classed is every field of the package's struct types that holds text
-// on the wire, by Type.Field, with its class: "AppText", "ErrText", or
-// the tag's. A field that holds text and has neither a type that says
+// on the wire, by Type.Field, with its class: "AppText", or the tag's. A field that holds text and has neither a type that says
 // so nor a tag is "", which the test reports.
 func classed(t *testing.T) map[string]string {
 	t.Helper()
@@ -180,7 +179,7 @@ func text(e ast.Expr) (holds bool, typed string, inline *ast.StructType) {
 		switch x.Name {
 		case "string":
 			return true, "", nil
-		case "AppText", "ErrText":
+		case "AppText":
 			return true, x.Name, nil
 		}
 	case *ast.SelectorExpr:
@@ -219,7 +218,7 @@ func TestEveryStringFieldIsClassed(t *testing.T) {
 	}
 	sort.Strings(none)
 	for _, k := range none {
-		t.Errorf(`%s holds text and is not classed: type it AppText or ErrText, or tag it text:"moteld" or text:"passes"`, k)
+		t.Errorf(`%s holds text and is not classed: type it AppText, or tag it text:"moteld" or text:"passes"`, k)
 	}
 	for k, v := range got {
 		if v == "?" {
@@ -231,14 +230,14 @@ func TestEveryStringFieldIsClassed(t *testing.T) {
 	for k, want := range map[string]string{
 		"DeployDetail.LogTail":   "AppText", // a slice
 		"ProbeDetail.Body":       "AppText", // the type itself
-		"Watchdog.LastFailure":   "ErrText", // the type itself
-		"Error.Error":            "ErrText", // every refusal: never a plain string
+		"Watchdog.LastFailure":   "passes",  // an error's text
+		"Error.Error":            "passes",  // every refusal
 		"Status.App":             "moteld",  // a string
 		"Status.Command":         "passes",  // a slice of strings
 		"DeploySummary.SHA256":   "moteld",  // json.RawMessage
 		"RequestSummary.ByClass": "moteld",  // a map's key
 		"LogLine.Text":           "AppText", // another file
-		"DeployResult.Error":     "ErrText", // the record's
+		"DeployResult.Error":     "passes",  // the record's
 		"Status.LastDeploy":      "",        // a pointer to a struct: not text
 	} {
 		if v, ok := got[k]; want == "" && ok || want != "" && v != want {

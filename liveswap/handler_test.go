@@ -873,9 +873,8 @@ func TestWantsStreamReadsAcceptExactly(t *testing.T) {
 
 // With the app's env_file not there and no value remembered (no launch
 // in this process), the last line is the failure with its status whole,
-// moteld's own, and an error whose text is the filter's sentence; the
-// phase lines are moteld's own words. An older moteld withheld the
-// whole body of each line.
+// moteld's own; the phase lines are moteld's own words. An older moteld
+// withheld the whole body of each line.
 func TestWebhookStreamLastLineWithAMissingEnvFile(t *testing.T) {
 	h, rig := newTestHandler(t)
 	rig.spec.envFile = filepath.Join(t.TempDir(), "missing.env")
@@ -886,9 +885,6 @@ func TestWebhookStreamLastLineWithAMissingEnvFile(t *testing.T) {
 	}
 	if st, ok := last["status"].(map[string]any); !ok || st["app"] != "demo" {
 		t.Fatalf("the status is moteld's own and is sent: %v", last)
-	}
-	if e, _ := last["error"].(string); !strings.HasPrefix(e, "[withheld: the app's env_file could not be read") {
-		t.Fatalf("error = %q", e)
 	}
 	for _, l := range lines[:len(lines)-1] {
 		if l["event"] != "phase" || l["phase"] == nil || l["at"] == nil {
@@ -1001,19 +997,6 @@ func TestWebhookDeployRecordWithoutASpecIs503(t *testing.T) {
 	}
 }
 
-// A record read back through the live filter keeps the keys it was
-// recorded with, and gains any the live filter redacts now.
-func TestWebhookDeployRecordKeepsItsRecordedKeys(t *testing.T) {
-	h, rig := newTestHandler(t)
-	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
-	must(t, os.WriteFile(rig.spec.envFile, []byte("NEW=newvaluenewvalue1234\n"), 0o600))
-	must(t, writeDeployRecord(rig.spec.dirs, "v1", []byte(`{"version":"v1","status":"failed","error":"[redacted:OLD] then newvaluenewvalue1234","redacted_env":["OLD"]}`)))
-	w := do(t, h, http.MethodGet, "/demo?deploy=v1", appToken(t), "")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"redacted_env":["NEW","OLD"]`) || strings.Contains(w.Body.String(), "newvaluenewvalue1234") {
-		t.Fatalf("record: %d %s", w.Code, w.Body.String())
-	}
-}
-
 // A failed deploy whose only known value was in its detail — replaced
 // as the detail was built, so the response filter finds nothing — still
 // answers with the body's own top-level redacted_env, in the failure
@@ -1041,28 +1024,19 @@ func TestWebhookFailureBodyReportsTheDetailsKeys(t *testing.T) {
 
 // The examples' deploy.sh reads a failure body, the stream's last line,
 // by its own functions: the cause, and last_deploy's phase, with an
-// older failed record listed in the status. A redaction does not move
-// them: the redacted_env it adds re-marshals only the body's top level,
-// sorted, which keeps error first.
+// older failed record listed in the status.
 func TestFailureBodyReadsLastDeploysPhase(t *testing.T) {
 	for _, tc := range []struct {
-		name           string
-		secret, stream bool
+		name   string
+		stream bool
 	}{
-		{"single", false, false},
-		{"stream", false, true},
-		{"single redacted", true, false},
-		{"stream redacted", true, true},
+		{"single", false},
+		{"stream", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, rig := newTestHandler(t)
 			must(t, writeDeployRecord(rig.spec.dirs, "v0", []byte(`{"version":"v0","status":"failed","phase":"soaking"}`)))
 			rig.runner.startErr = errors.New("boom")
-			if tc.secret {
-				rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
-				must(t, os.WriteFile(rig.spec.envFile, []byte("SECRET=hunter2hunter2\n"), 0o600))
-				rig.runner.startErr = errors.New("boom hunter2hunter2")
-			}
 			var code int
 			var body string
 			if tc.stream {
@@ -1074,25 +1048,16 @@ func TestFailureBodyReadsLastDeploysPhase(t *testing.T) {
 				w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/a.tgz","version":"v1"}`)
 				code, body = w.Code, w.Body.String()
 			}
-			want := "start failed: boom"
-			if tc.secret {
-				want += " [redacted:SECRET]"
-			}
-			if phase, why := deployShReads(t, body, "v1"); code != 500 || phase != "starting" || why != want {
+			if phase, why := deployShReads(t, body, "v1"); code != 500 || phase != "starting" || why != "start failed: boom" {
 				t.Fatalf("status %d, deploy.sh reads phase %q and cause %q: %s", code, phase, why, body)
-			}
-			// Each case takes the path it names: withField ran exactly
-			// when a known value was in the body.
-			if strings.Contains(body, `"redacted_env":["SECRET"]`) != tc.secret || strings.Contains(body, "hunter2hunter2") {
-				t.Fatalf("redaction: %s", body)
 			}
 		})
 	}
 }
 
-// Rule 3 over HTTP, on the bodies that are not a record: the status
-// GET's last_deploy and deploys, and a failed POST's body, keep their
-// outcome words while the same words in the error are redacted.
+// Over HTTP, on the bodies that are not a record: the status GET's
+// last_deploy and deploys, and a failed POST's body, keep their outcome
+// words whatever value equals one: no filter meets them.
 func TestWebhookOutcomeWordsSurviveInEveryBody(t *testing.T) {
 	h, rig := newTestHandler(t)
 	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
@@ -1105,7 +1070,7 @@ func TestWebhookOutcomeWordsSurviveInEveryBody(t *testing.T) {
 	get := do(t, h, http.MethodGet, "/demo", appToken(t), "")
 	for name, w := range map[string]*httptest.ResponseRecorder{"POST 500": post, "GET": get} {
 		body := w.Body.String()
-		for _, want := range []string{`"status":"failed"`, `"phase":"starting"`, `"status":"succeeded"`, `"name":"starting"`, `[redacted:PHASE] [redacted:WORD]? no`} {
+		for _, want := range []string{`"status":"failed"`, `"phase":"starting"`, `"status":"succeeded"`, `"name":"starting"`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: missing %s in %d %s", name, want, w.Code, body)
 			}

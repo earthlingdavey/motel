@@ -26,7 +26,7 @@ type Metrics struct {
 	MemoryMax *float64        `json:"memory_max_bytes,omitempty"`
 	CPU       *CPUSummary     `json:"cpu_cores,omitempty"`
 	Requests  *RequestSummary `json:"requests,omitempty"`
-	Error     ErrText         `json:"error,omitempty"`
+	Error     string          `json:"error,omitempty" text:"passes"`
 }
 
 // MemorySummary is the app's memory over the window, in bytes.

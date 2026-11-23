@@ -366,11 +366,7 @@ func (h *Handler) logStateError(what string, err error) {
 	h.logger.Error("box webhook could not read its state", zap.String("reading", what), zap.String("error", proof.Bound(err.Error())))
 }
 
-// errorBody is a refusal or a failure of the box webhook's: a sentence
-// of its catalogue, or one over the push's own id, a path of the box's
-// state and the system's words about it. Nothing an app wrote, and no
-// secret's value (secrets.go never quotes one back).
-func errorBody(msg string) wire.Error { return wire.Error{Error: wire.OwnText(msg)} }
+func errorBody(msg string) wire.Error { return wire.Error{Error: msg} }
 
 // respond writes body. What a result holds of the pusher's text was
 // filtered when the result was made (diff.go, validate.go).

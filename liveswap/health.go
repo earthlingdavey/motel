@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"time"
 )
 
@@ -140,7 +139,7 @@ func (p *httpProber) probeOnce(ctx context.Context, sock *socketRef, path string
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return withoutProbeURL(err)
+		return err
 	}
 	// Read a bounded slice of the body before closing: a huge body is
 	// discarded, never buffered.
@@ -211,30 +210,3 @@ type probeError struct {
 func (e *probeError) Error() string { return fmt.Sprintf("health check returned %d", e.status) }
 
 var _ prober = (*httpProber)(nil)
-
-// withoutProbeURL is the probe's error for a request that got no
-// answer, in motel's sentence without motel's own URL. Go's client says
-// `Get "http://localhost/health": <why>`; the host is a fixed word of
-// motel's that the app sees as its Host header, the path is the
-// config's health_path, which the status shows, and neither says why.
-// The error's text passes the app's filter (errText, redact.go), and
-// there both would meet the app's values (DB_HOST=localhost is common)
-// in words that hold nothing of the app's. The chain is kept for
-// errors.Is and errors.As.
-func withoutProbeURL(err error) error {
-	var ue *url.Error
-	if !errors.As(err, &ue) {
-		return err
-	}
-	return &probeTransportError{err: err, why: ue.Err}
-}
-
-// probeTransportError is a probe that got no answer: why, without the
-// request's URL.
-type probeTransportError struct {
-	err error // Go's client's error, whole
-	why error // what it wraps
-}
-
-func (e *probeTransportError) Error() string { return "health check got no answer: " + e.why.Error() }
-func (e *probeTransportError) Unwrap() error { return e.err }

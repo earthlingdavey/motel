@@ -63,21 +63,15 @@ func FuzzDoorText(f *testing.F) {
 			if keys := d.keys(); len(keys) != 1 || keys[0] != "SECRET" {
 				t.Fatalf("form %q: keys = %v", form, keys)
 			}
-			// And the error net, which also reads each run Go quoted as
-			// the bytes it quotes.
-			et := d.errText("net/http: malformed HTTP response " + `"` + prefix + form + suffix + `"`)
-			if strings.Contains(string(et), form) {
-				t.Fatalf("form %q of %q survived the net in %q", form, value, et)
-			}
 			// Marshalled in the answer that carries it: the JSON encoder
 			// escapes the text once, which makes no form of the value
 			// from text that holds none.
-			body, err := json.Marshal(wire.DeployDetail{LogTail: []wire.AppText{text}, LogTailError: et})
+			body, err := json.Marshal(wire.DeployDetail{LogTail: []wire.AppText{text}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, f := range []string{form, string(mustQuote(t, form))} {
-				if f != "" && strings.Contains(string(body), f) && !strings.Contains(string(text)+string(et), f) {
+				if f != "" && strings.Contains(string(body), f) && !strings.Contains(string(text), f) {
 					t.Fatalf("form %q: the encoder made it in %s", f, body)
 				}
 			}

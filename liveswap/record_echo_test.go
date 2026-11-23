@@ -61,7 +61,7 @@ func TestRecordNotFoundIsThePlainSentence(t *testing.T) {
 // TestRecordNotReadTellsNothingOfTheEnv: when GET /<app>?deploy=<version>
 // reads no record, its answer is the handler's words and the version
 // as it was asked, whoever asks and whatever the app's env_file holds
-// (wire.OwnText: no app's filter sees it): the same bytes for an app that holds the values
+// (no filter meets it): the same bytes for an app that holds the values
 // guessed and for one that holds none. Through the app's filter the
 // version came back as a marker naming the key whenever it held one of
 // the app's values, as written, inside a longer string, as base64 or
@@ -152,23 +152,5 @@ func TestRecordNotReadTellsNothingOfTheEnv(t *testing.T) {
 		if code != http.StatusUnprocessableEntity || !strings.HasPrefix(body, `{"error":"malformed query: `) || strings.Contains(body, "redacted") {
 			t.Errorf("%s, a query that does not parse: %d %s", who, code, body)
 		}
-	}
-
-	// A version an earlier request stored, here one named after a
-	// value, is the deployer's text, which no filter meets: the status
-	// and the record name it as named (an older moteld replaced it). A
-	// deploy's refusal that names it is an error's text, which passes
-	// the app's filter (the error net): only a deploy token reads it.
-	must(t, ma.Deploy(context.Background(), deployRequest{url: "https://x/2.tgz", version: "correcthorse", by: "ci"}))
-	for who, ask := range callers {
-		for _, target := range []string{"/" + secret, "/" + secret + "?deploy=correcthorse"} {
-			code, body := ask(http.MethodGet, target, "")
-			if code != http.StatusOK || !strings.Contains(body, `"version":"correcthorse"`) || strings.Contains(body, "redacted") {
-				t.Errorf("%s, GET %s after a deploy named for a value: %d %s, want the version as named", who, target, code, body)
-			}
-		}
-	}
-	if code, body := callers["a deploy token"](http.MethodPost, "/"+secret, `{"url":"https://x/3.tgz","version":"correcthorse"}`); code != http.StatusUnprocessableEntity || strings.Contains(body, "correcthorse") || !strings.Contains(body, "[redacted:DB_PASSWORD]") {
-		t.Errorf("a deploy of that version again: %d %s, want a 422 with the value replaced", code, body)
 	}
 }

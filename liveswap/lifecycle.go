@@ -35,8 +35,8 @@ const (
 )
 
 // LifecycleEvent is one thing that happened to an app. Summary is one
-// line in liveswap's own words, through the app's filter as it is told
-// (tell): no secret and no log tail.
+// line in liveswap's own words, through the app's filter: no secret and
+// no log tail.
 type LifecycleEvent struct {
 	Name       string
 	App        string
@@ -72,10 +72,6 @@ type LifecycleEvent struct {
 	// it, and one that does not (a moteld restarted since) takes it as
 	// told — firing, or, for a recovery, held.
 	Standing bool
-	// quotesError is set where Summary quotes an error's text (a
-	// refusal's reason), which can name a path the app wrote: tell
-	// withholds such a summary while the app's env_file cannot be read.
-	quotesError bool
 }
 
 // Notifier is told each lifecycle event, on the goroutine where it
@@ -110,20 +106,9 @@ func (ma *managedApp) tell(n Notifier, ev LifecycleEvent) {
 	ev.App = ma.name
 	if ev.Summary != "" {
 		// The release is a name, which the entropy layer would mask when
-		// it is a git sha (a version is high-entropy by design); it is a
-		// label beside the summary anyway. The app's filter as text, as
-		// it always ran here: a summary is sent whatever the env_file's
-		// state, and a refusal's reason in it is an error's text.
-		// While the env_file cannot be read the values are unknown, and
-		// a refusal's reason can name a path the app wrote: such a
-		// summary is the filter's sentence, which the alerts routes then
-		// send as Alertmanager holds it. One made of motel's words alone
-		// is filtered as always.
-		if d := ma.door(ev.Release); d.unread != "" && ev.quotesError {
-			ev.Summary = d.mixed(ev.Summary)
-		} else {
-			ev.Summary, _ = d.r.Redact(ev.Summary)
-		}
+		// it is a git sha (redact.go: a version is high-entropy by
+		// design); it is a label beside the summary anyway.
+		ev.Summary, _ = ma.doorKnowing(nil, true, ev.Release).r.Redact(ev.Summary)
 	}
 	n.Lifecycle(ev)
 }
@@ -196,7 +181,7 @@ func (ma *managedApp) reportStanding(n Notifier, spec *appSpec) {
 		if refusedRel == "" {
 			refusedRel = release // a file written before they were kept
 		}
-		ma.tell(n, LifecycleEvent{Name: EventRelaunchRefused, Release: refusedRel, Standing: true, quotesError: true,
+		ma.tell(n, LifecycleEvent{Name: EventRelaunchRefused, Release: refusedRel, Standing: true,
 			Summary: refusedSummary(refusedRel, reason) + "; still reported until an instance runs again"})
 	}
 }
