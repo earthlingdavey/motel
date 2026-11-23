@@ -8,10 +8,13 @@ backup program Debian ships; `motel-backup` runs it and never links
 it.
 
 `motel-backup` is a program of its own, and not part of the
-server: motel validates a declaration and does nothing else with it,
-and nothing here talks to motel. The two share a declaration format
-(`liveswap/backupdecl`) and nothing more — `motel-backup` links no
-Caddy.
+server: nothing here talks to motel, and `motel-backup` links no
+Caddy. Of the server it takes the declaration format
+(`liveswap/backupdecl`) and the wire types (`liveswap/wire`). The
+server validates a declaration, and beyond that only reads: the
+record, with `status`'s verdict on it, for the alerts its monitor
+raises, and the look `status` takes (`backups/look`) for a person who
+may read the box.
 
 **This release carries setup, the engine, restore, the restore drill,
 the repository check, what says how they are doing, and the

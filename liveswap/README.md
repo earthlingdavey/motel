@@ -1528,7 +1528,20 @@ What liveswap does for you:
   of 8+ characters is scrubbed from the app's text, so a non-secret
   there (a path, a hostname) gets scrubbed too and belongs in inline
   `env` instead; and inline `env` values are never treated as secrets,
-  because the Caddyfile lives in a repo. While an app's `env_file`
+  because the Caddyfile lives in a repo. The filter also knows the
+  values the running app was launched with, which the file may no
+  longer hold: moteld remembers what each launch read, and after a
+  moteld restart it reads the running unit's environment back from
+  systemd when it reattaches to it. So a value changed in `env_file`,
+  or taken out of it, while the app was not launched again stays
+  known for as long as the instance that holds it runs; of that
+  environment, only what motel puts there
+  itself (the inherited `PATH`, `LANG`, `TZ` and `LC_*`, `HOME`,
+  `SOCKET`) and the inline `env` lines as the config has them now are
+  not known values. Until that reattach (moteld just started, or its
+  user manager not answering), or when the environment the manager
+  gives back is not one motel built for that unit (a warning names the
+  unit), the filter knows the file only as it is now. While an app's `env_file`
   cannot be read (a rewrite mid-flight, a mode not yet fixed), the
   app's text and the error text in a response about that app are the
   filter's sentence, since its values are unknown to the filter, and

@@ -686,8 +686,10 @@ is closed by the unit's limit — enforced by the kernel under a file
   same `ptrace_may_access` rule, since the app's namespace is owned by
   the motel uid, which holds `CAP_SYS_PTRACE` in it. Not measured.
 - **moteld's own memory**, which keeps every value it has read — for
-  a launch, or for the app's filter, which reads the file without one
-  (`managedApp.secrets` and `managedApp.door`, liveswap/app.go) — for
+  a launch, for the app's filter, which reads the file without one
+  (`managedApp.secrets` and `managedApp.door`, liveswap/app.go), or
+  from the unit's property above at a reattach after a moteld restart
+  (`rememberRunningEnv`, the same read of the first route) — for
   as long as the app stays configured, behind the non-dumpable floor.
 - **Not a core dump.** App units run with `LimitCORE=0` on both the
   soft and the hard limit (`unitProperties`, liveswap/systemd_dbus.go),
@@ -1111,8 +1113,9 @@ dump or a restore under it shows it nothing new; it can change what the
 next snapshot holds, as T1 can of its own app, and no earlier one.
 Skipping the handler's `motel-backup validate` installs a signed
 file that the next run refuses, red and named ("Config webhook").
-motel validates a declaration and does nothing else with it; the
-supervisor still holds no grant.
+motel validates a declaration, and beyond that only reads what
+`motel-backup status` reads as any account, for its alerts and for a
+person who may read the box; the supervisor still holds no grant.
 
 **Measured on a real provider.** `v0.5.0-rc1` ran the release-candidate
 checks on 2026-11-02 through B2's S3-compatible endpoint, the door the
@@ -1650,7 +1653,7 @@ does not isolate the runtime.
   `env_file` values in the forms it knows and some shapes of
   credential, and nothing else (a value escaped as another runtime
   escapes it, one split across two lines, journald's 48 KiB split
-  among them, one under 8 characters, another app's, and a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started)):
+  among them, one under 8 characters, another app's, and a value no instance running now was launched with and the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows the file's values now, those moteld has read since it started, and those of the instance it reattached to)):
   changing a value does not hide it in lines already written, so
   revoke the old credential. Who reads is the
   safeguard: the operator's grant, its `from` list, and the journal

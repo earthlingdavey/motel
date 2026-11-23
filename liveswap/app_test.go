@@ -106,8 +106,13 @@ type fakeHandle struct {
 	// unit is the unit's name, when a test gives the handle one: the
 	// real handle's is motel-<app>.<version>.<nonce>.service.
 	unit string
-	mu   sync.Mutex
+	// env is what launchEnv reports: the unit's environment as the
+	// manager would give it back at a reattach (fakeRunner.reattachEnv).
+	env []string
+	mu  sync.Mutex
 }
+
+func (h *fakeHandle) launchEnv() []string { return h.env }
 
 func (h *fakeHandle) state() handleState {
 	h.mu.Lock()
@@ -159,6 +164,7 @@ type fakeRunner struct {
 	reattachErrs    []error // consumed one per Reattach call before reattachOK applies
 	reattachCalls   int
 	reattachSeen    []handleState
+	reattachEnv     []string
 	stopErr         error  // Stop returns this
 	stopLeavesAlive bool   // Stop does not actually kill the handle
 	startDies       string // when set, Start's handle is already dead with this exit
@@ -300,7 +306,7 @@ func (r *fakeRunner) Reattach(st handleState) (handle, bool, error) {
 	if !r.reattachOK || st.Unit == "" {
 		return nil, false, nil
 	}
-	h := &fakeHandle{id: "reattached", alive: true}
+	h := &fakeHandle{id: "reattached", alive: true, env: r.reattachEnv}
 	r.handles = append(r.handles, h)
 	return h, true, nil
 }

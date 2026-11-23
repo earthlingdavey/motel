@@ -286,12 +286,12 @@ type managedApp struct {
 	wd           watchdogState
 
 	// secrets is every env_file KEY=VALUE pair this process has
-	// rendered for a launch, or read for the filter after a restart,
-	// kept for the life of the process so a value rotated since stays
-	// redacted from responses. What a still-running instance was
-	// launched with before a restart is not known: only the file as it
-	// is now. Under secretsMu; read by the handler's response path,
-	// written by deploys, relaunches and configure.
+	// rendered for a launch, or read for the filter, and every pair of
+	// a reattached instance's environment that motel did not put there
+	// itself (rememberRunningEnv), kept for the life of the process so
+	// a value rotated since stays redacted from responses. Under
+	// secretsMu; read by the handler's response path, written by
+	// deploys, relaunches, reattaches and configure.
 	secretsMu sync.Mutex
 	secrets   []string
 	// secretsFrom is the env_file path whose contents are in secrets
@@ -333,7 +333,9 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 // reattached without a launch, and a reload can name another env_file
 // than the last launch rendered. A file that cannot be read then leaves
 // the values unknown, and the door withholds the app's text
-// (door.unread), that text alone. (A deploy's failed detail does not
+// (door.unread), that text alone. The values the reattached instance
+// was launched with, which the file may no longer hold, the reattach
+// read back from the manager (rememberRunningEnv). (A deploy's failed detail does not
 // read it: its launch rendered the file and remembered the values,
 // failureDetail.)
 func (ma *managedApp) door(names ...string) *door {
@@ -427,6 +429,55 @@ func mergeSecrets(have, add []string) []string {
 		}
 	}
 	return have
+}
+
+// rememberRunningEnv is rememberSecrets for an instance this process
+// did not launch (#657): env is its environment as the manager reports
+// it (handle.launchEnv), read at reattach, and version, socket and
+// releaseDir are the instance's. A launch's environment is built by
+// buildEnvFull; the manager keeps no word of which pairs came from the
+// env_file, so every pair is remembered as a known value except one
+// that is exactly what motel itself puts there — an inherited pair
+// (PATH, LANG, TZ, LC_*) as moteld's environment has it now, HOME=
+// the shared dir, SOCKET= the socket — and an inline env pair of the
+// current spec that expands, for this instance, to the same value
+// (inline env is not secret by policy). So a value changed in the
+// env_file, a key taken out of it, a file now missing or unreadable,
+// and a spec now naming another file all leave the running instance's
+// value known (while the file cannot be read, redactorFor withholds
+// every body all the same). What it costs: an inline env value, or an
+// inherited one, that changed since the launch is a known value for
+// the rest of this moteld's life, as every value it has read is
+// (mergeSecrets only adds): past the app's next launch, until moteld
+// restarts again (DESIGN-liveswap.md, Accepted residuals). Nothing is
+// logged and nothing written: the values stay in memory, as every
+// launch's do.
+//
+// An environment without the instance's own SOCKET pair is not one
+// motel built for this instance (the manager reported none, or a
+// shape not read): nothing is remembered and false is returned, so
+// the filter knows the file as it is now.
+func (ma *managedApp) rememberRunningEnv(spec *appSpec, version, socket, releaseDir string, env []string) bool {
+	if !slices.Contains(env, "SOCKET="+socket) {
+		return false
+	}
+	own := map[string]bool{"HOME=" + spec.dirs.shared: true, "SOCKET=" + socket: true}
+	for _, kv := range inheritedEnv() {
+		own[kv] = true
+	}
+	for k, v := range spec.env {
+		own[k+"="+expandPlaceholders(v, spec, version, socket, releaseDir)] = true
+	}
+	var held []string
+	for _, kv := range env {
+		if !own[kv] {
+			held = append(held, kv)
+		}
+	}
+	ma.secretsMu.Lock()
+	defer ma.secretsMu.Unlock()
+	ma.secrets = mergeSecrets(ma.secrets, held)
+	return true
 }
 
 // configure installs the latest spec and (re)wires collaborators. On
@@ -1457,6 +1508,13 @@ func (ma *managedApp) ensureRunning() error {
 		sock.retire() // pinned above but definitively not adopted; the relaunch gets its own
 	}
 	if attached {
+		// Before the instance is current: from the moment it is, a
+		// response about it is filtered with what it holds, not the
+		// env_file as it is now (#657).
+		if !ma.rememberRunningEnv(spec, st.CurrentVersion, socket, releaseDir, h.launchEnv()) {
+			c.logger.Warn("the reattached unit's environment, as the manager reports it, is not one motel built for this instance (no SOCKET of its own); the response filter knows its env_file only as the file is now",
+				zap.String("unit", st.Handle.Unit))
+		}
 		inst := &instance{version: st.CurrentVersion, nonce: st.Nonce, socket: socket, sock: sock, handle: h}
 		ma.mu.Lock()
 		ma.current = inst

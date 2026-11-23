@@ -211,6 +211,15 @@ type handle interface {
 	// state returns the serializable form persisted in state.json so a
 	// runner can attempt Reattach after a restart.
 	state() handleState
+	// launchEnv is the environment the instance was launched with, as
+	// the manager reports it, for a handle Reattach adopted: the values
+	// the running app holds, which the response filter must know
+	// (managedApp.rememberRunningEnv). nil for a handle this process
+	// started, whose launch remembered what it rendered, and when the
+	// manager reported none. Never in handleState: that is read by
+	// status and written to state.json, and this holds the app's
+	// env_file values.
+	launchEnv() []string
 }
 
 // handleState is what a runner reports about a running instance —
