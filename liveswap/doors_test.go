@@ -206,7 +206,7 @@ func TestCanaryAtEveryDoor(t *testing.T) {
 	}
 }
 
-// A safe name exempts nothing from the known values (rule 1 of the
+// A safe name exempts nothing from the known values (layer 2 of the
 // filter's header): the app's text that holds a version, a pin or a
 // release on disk equal to an env value has it replaced, though such a
 // name is left alone by the heuristics.

@@ -12,8 +12,8 @@ import (
 // step. The source is asked for that app alone, by the handle's name,
 // and builds every query itself: nothing of the request's reaches the
 // store but the window, one of a closed set. "store":"off" with no
-// source (no metrics line). The body is about one app, so its words
-// pass that app's filter; its numbers pass none (filterSeries).
+// source (no metrics line). Nothing in it is the app's text: the
+// store's figures and moteld's words, which no filter meets.
 func (h *Handler) appSeries(w http.ResponseWriter, r *http.Request, app appHandle, q appQuery) error {
 	// The window as the set spells it: parseQuery took one of it.
 	window := wire.SeriesRanges[0]

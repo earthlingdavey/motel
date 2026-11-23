@@ -1331,7 +1331,9 @@ through with how long it took — and, once a launch happened, `detail`:
   the account, so the apps do not get it). A raw-binary install
   without that grant gets `log_tail_error` instead of a tail.
 
-Every string in it but `exit` passes the app's filter as it is gathered
+Its app text (`log_tail`, the probe's `body` and `location`) passes
+the app's filter as it is gathered (`exit` and `log_tail_error` are
+motel's and journalctl's words, sent as written)
 — `[redacted:KEY]` where an `env_file` value was, and `redacted_env`
 naming the keys — because the response lands in a CI log, and
 `deploy_log_lines 0`
@@ -1522,7 +1524,8 @@ What liveswap does for you:
   own, or the deployer's, the operator's or another program's text,
   and passes as written: an error's text too, which can quote an
   `env_file` value only where the app named a file after one, answered
-  its health probe with something that is no HTTP, or the operator
+  its health probe with something that is no HTTP or with a redirect
+  to a `Location` that does not parse, or the operator
   wrote a line that is no assignment into `env_file` (its parse error
   quotes it). No filter runs over a finished response, so a
   version, a name, a word of motel's, a figure or a time is never
@@ -1547,7 +1550,8 @@ What liveswap does for you:
   unit), the filter knows the file only as it is now. While an app's `env_file`
   cannot be read (a rewrite mid-flight, a mode not yet fixed), the
   app's text in a response about that app is the filter's sentence,
-  since its values are unknown to the filter, and the rest is sent; the
+  which names why the file did not read, since its values are unknown
+  to the filter, and the rest is sent; the
   next response after the file reads is normal.
   Past the first layer it is best effort, and the limits are in
   DESIGN-threat-model.md.

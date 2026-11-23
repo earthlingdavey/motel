@@ -41,8 +41,9 @@ import (
 // the wire package's `text` tags, held by TestEveryStringFieldIsClassed.
 // An error's text is not searched: the filter is for an app that prints
 // a value by accident, and an error that quotes one (a file the app
-// named after a value, a probe answer that is no HTTP, a malformed
-// env_file line) is accepted as sent (DESIGN-threat-model.md).
+// named after a value, a probe answer that is no HTTP, a redirect whose
+// Location does not parse, a malformed env_file line) is accepted as
+// sent (DESIGN-threat-model.md).
 //
 // The layers, over one text:
 //
@@ -87,7 +88,7 @@ type Redactor struct {
 	// a value that contains another is replaced whole.
 	secrets []*secretForm
 	// safeExact is the safe strings as given, none equal to a known
-	// value (rule 1): held out of the heuristics as spans. safeTokens
+	// value (layer 2): held out of the heuristics as spans. safeTokens
 	// is those strings and every layer-4 token inside them: exempt
 	// from the entropy heuristic.
 	safeExact, safeTokens map[string]bool

@@ -199,9 +199,9 @@ func TestLogsKeptOff(t *testing.T) {
 }
 
 // TestLogsLineFilteredBeforeItIsCut: each line passes the app's filter
-// on its own, before it is cut to 4 KiB, and the body the final pass:
-// a value the app logged JSON-escaped (a quote in it) is replaced, which
-// the whole body's filter misses; a value the 4 KiB cut falls inside is
+// on its own, before it is cut to 4 KiB, and no pass over the body
+// follows: a value the app logged JSON-escaped (a quote in it) is
+// replaced; a value the 4 KiB cut falls inside is
 // replaced whole, never sent as a piece, which a cut before the filter
 // sends; a value past the cut is not sent; a line over the cut ends in
 // "…" within 4 KiB; and redacted_env names every key any line replaced.
@@ -248,9 +248,8 @@ func TestLogsLineFilteredBeforeItIsCut(t *testing.T) {
 // TestLogsBodyTimesAndCursorPassNoFilter: an env_file value that is the
 // lines' date is replaced in their text and leaves every at whole; the
 // cursor, whose ids layer 4 masks, comes back as the journal gave it;
-// and a body whose final pass changed its shape (a value of JSON's
-// punctuation across two lines) goes whole through the filter, the
-// value not sent, the times and the cursor kept.
+// and a value of JSON's punctuation across two lines is not sent, the
+// times and the cursor kept.
 func TestLogsBodyTimesAndCursorPassNoFilter(t *testing.T) {
 	j := demoJournal(2, func(i int) string { return fmt.Sprintf("2026-11-20 entry %d", i) })
 	h, people, _, _ := logsRig(t, j)
@@ -475,9 +474,9 @@ func TestLogsRefusedLine(t *testing.T) {
 }
 
 // TestLogsFinalPassLengthensNoText: a value that is a word of the
-// outcome vocabulary stands in a text's own "status" pair through the
-// line's filter (rule 3) and is replaced by the body's final pass, which
-// lengthens the text; a text over 4 KiB is not sent, but cut.
+// outcome vocabulary, in a line of 4 KiB, is replaced by the line's
+// filter, which lengthens the text; the line is sent cut to 4 KiB and
+// valid UTF-8, and no pass over the body follows.
 func TestLogsFinalPassLengthensNoText(t *testing.T) {
 	text := strings.Repeat("{", logsLineMax-len(`"status":"succeeded"`)) + `"status":"succeeded"`
 	h, people, _, _ := logsRig(t, demoJournal(2, func(i int) string { return []string{text, "short"}[i] }))
@@ -494,9 +493,9 @@ func TestLogsFinalPassLengthensNoText(t *testing.T) {
 	}
 }
 
-// TestLogsCursorPassesNoFilterInTheCheck: the check that one more pass
-// changes nothing is of the body without its cursor, which passes no
-// filter: an env_file value inside a cursor's id withholds nothing.
+// TestLogsCursorPassesNoFilterInTheCheck: the cursor is moteld's own
+// and passes no filter: an env_file value inside a cursor's id leaves
+// it whole and withholds nothing.
 func TestLogsCursorPassesNoFilterInTheCheck(t *testing.T) {
 	h, people, _, _ := logsRig(t, demoJournal(2, lineN))
 	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K=0123456789abcdef\n"), 0o600))

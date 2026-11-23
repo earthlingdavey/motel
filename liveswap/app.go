@@ -292,7 +292,7 @@ type managedApp struct {
 	// secretsFrom is the env_file path whose contents are in secrets
 	// (rendered by a launch, or read for the filter); a spec naming a
 	// different path — a reload, or a rollback of one — is unread
-	// until the next response's filter reads it. "" with
+	// until the next door reads it (managedApp.door). "" with
 	// secretsLoaded set means the spec has no env_file.
 	secretsFrom   string
 	secretsLoaded bool

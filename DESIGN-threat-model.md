@@ -246,7 +246,8 @@ Properties that matter to the model:
   now), in memory only.
   While an app's `env_file` cannot be read (after a restart, or a
   reload to another file), its values are unknown to the filter: each
-  text of the app's is the filter's sentence (`[withheld: …]`), and
+  text of the app's is the filter's sentence (`[withheld: …]`, with the
+  file's read error, which names why), and
   moteld's own fields and every error are sent. A failed deploy's
   detail is filtered with the values its launch rendered and every
   launch remembered, reading no file. A deploy's record holds the
@@ -261,12 +262,15 @@ Properties that matter to the model:
   above. An error's text is motel's words over what failed, and is sent
   as moteld wrote it, in every answer, record, `last_deploy`,
   `watchdog.last_failure` and alert, whatever the env_file's state.
-  Three cases put a value there, accepted by the owner on 2026-11-23:
+  Four cases put a value there, accepted by the owner on 2026-11-23:
   a file the app named after one of its values, quoted in a cleanup's
   or a pre-flight's error (it takes an app that works at leaking its
   own secret, which can send it anywhere already); a health probe's
   answer that is no HTTP, which Go's client quotes into the error (an
-  app that answers its probe with junk); and a malformed `env_file`
+  app that answers its probe with junk); a probe answered with a
+  redirect whose `Location` does not parse, which Go's client quotes
+  into its error (`failed to parse Location header "…"`: a health path
+  that redirects to a malformed URL holding a value); and a malformed `env_file`
   line quoted in its parse error, as main's answer already did (the
   operator's own mistake, which the deployer reads).
   A refusal made only of moteld's words and what the request itself
@@ -339,8 +343,7 @@ Properties that matter to the model:
   a door, in its text and in the answer that carries it
   (`FuzzDoorText`); a canary that two values an app prints at every
   place its bytes reach are in no answer of any reader and no record
-  (`TestCanaryAtEveryDoor`); the attack's three leaks in error strings
-  (`TestErrorNet*`); and a corpus that the diagnostics a reader needs
+  (`TestCanaryAtEveryDoor`); and a corpus that the diagnostics a reader needs
   survive (`TestRedactorCorpus`), because a filter with only the first
   test drifts toward blanking everything.
 - **Auth failures are throttled in the journal**
@@ -1887,17 +1890,16 @@ does not isolate the runtime.
 - **The deploy record store is a trust boundary in both directions**
   (liveswap/deploys.go states its three rules; every function there
   holds them). A record is written once, into a directory verified as
-  the app's own, as the deploy's result: its app text and error text
-  passed the app's filter where they entered, so no known secret the
-  app printed is on disk in it, and a secret rotated later is not in an
+  the app's own, as the deploy's result: its app text passed the app's
+  filter where it entered (its error's text is not searched, above),
+  so no known secret the app printed in that text is on disk in it, and
+  a secret rotated later is not in an
   old record for the new filter to miss (one added to `env_file` later
   is, if the app had printed it). Anything read back is text from disk,
   trusted for nothing unless it proves itself a record (a regular file,
   a valid version name, an object naming that version and an outcome),
-  and then served as written when it bears the mark of a record
-  filtered where its text entered; an older moteld's record, filtered
-  whole when it was written, has its error and detail filtered again
-  when read. One that does orders
+  and then served as stored; an older moteld's record was filtered
+  whole when it was written. One that does orders
   the releases: its write time is its version's deploy time, which
   release GC and `available_versions` follow, since a release dir's
   own mtime is the running app's to set (liveswap/state.go, "Release

@@ -70,7 +70,7 @@ func TestDoorLoadsEnvFileWithoutALaunch(t *testing.T) {
 
 	// A value equal to one of the app's own paths, or its name, is a
 	// secret like any other value, and the path is no longer a safe
-	// string (rule 1): the door's safe list exempts nothing.
+	// string (layer 2): the door's safe list exempts nothing.
 	spec3 := testSpec(t)
 	spec3.envFile = filepath.Join(t.TempDir(), "paths.env")
 	if err := os.WriteFile(spec3.envFile, []byte("APP_ROOT="+spec3.dirs.app+"\nNAME="+spec3.name+"-is-short\n"), 0o600); err != nil {

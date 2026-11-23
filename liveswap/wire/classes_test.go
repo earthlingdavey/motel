@@ -204,8 +204,8 @@ func text(e ast.Expr) (holds bool, typed string, inline *ast.StructType) {
 }
 
 // Every string field of every wire type is classed (the package doc):
-// moteld's own or passing as written by its tag, the app's text or an
-// error's by its type. Nothing filters an answer by default, so a field
+// moteld's own or passing as written (an error's text among it) by its
+// tag, the app's text by its type. Nothing filters an answer by default, so a field
 // nobody classed would be sent as it stands with nobody having said
 // whose text it holds: this fails for one.
 func TestEveryStringFieldIsClassed(t *testing.T) {

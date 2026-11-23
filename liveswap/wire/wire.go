@@ -75,8 +75,8 @@ type Status struct {
 	// reads a failure body's phase from here on, when this is a deploy
 	// of the version it sent: so its first key is "version", and no
 	// "phase" key comes after its opening but its own, in the status or
-	// after it (a failure body carries the status under "status", whose
-	// keys' order the filter keeps).
+	// after it (a failure body carries the status under "status", in
+	// the wire type's order).
 	LastDeploy *DeployResult `json:"last_deploy,omitempty"`
 	Watchdog   *Watchdog     `json:"watchdog,omitempty"`
 	// AvailableVersions lists the on-disk releases, the running version
@@ -167,7 +167,7 @@ type DeployResult struct {
 	// launch (nothing of the app's ran).
 	Detail *DeployDetail `json:"detail,omitempty"`
 	// RedactedEnv is the env keys whose values the filter replaced in
-	// this result's error and detail, where the app's text entered.
+	// this result's detail, where the app's text entered.
 	RedactedEnv []string `json:"redacted_env,omitempty" text:"moteld"`
 }
 
@@ -203,10 +203,11 @@ type PhaseTiming struct {
 	Seconds   float64   `json:"seconds"`
 }
 
-// DeployDetail is the app's side of a failed deploy. Every string in
-// it but Exit (moteld's own) has passed the app's filter as it was
-// built, before the tail and body caps cut, so a cap never leaves a
-// fragment of a known value.
+// DeployDetail is the app's side of a failed deploy. Its app text (the
+// tail, the probe's body and Location) has passed the app's filter as
+// it was built, before the tail and body caps cut, so a cap never
+// leaves a fragment of a known value; Exit is moteld's own, and
+// LogTailError journalctl's words, sent as written.
 type DeployDetail struct {
 	// Exit is how the process ended, from the runner: "exit status 3",
 	// "killed by signal 9 (killed)". The pre_start's when that failed,

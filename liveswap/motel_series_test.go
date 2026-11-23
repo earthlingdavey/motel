@@ -253,11 +253,7 @@ func TestSeriesChosenByTheHandle(t *testing.T) {
 // number or a time of the body (a point's unix time, a run of digits
 // inside a memory value, a date, the end's hour, a short number) leaves
 // every point, the step and the end as the source gave them, and the
-// read whole. The points and the step are numbers, which rule 7 of
-// redact.go holds in any body but in its fallbacks (a value across a
-// number's edge among them), and filterSeries holds even then; the end
-// is a time under a key rule 7 does not hold, so a date value or a piece
-// of one would be replaced inside it but for filterSeries.
+// read whole: no filter runs over a series body.
 func TestSeriesNumbersPassNoFilter(t *testing.T) {
 	for _, value := range []string{"1795096800", "19084083", "12345678901", "2026-11-19", "2026-11-19T14:00:00Z", "T14:00:00", "0.000123", "42", "300", "191889408,"} {
 		h, people := alertsRig(t)
