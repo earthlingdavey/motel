@@ -569,7 +569,7 @@ VIEWS (type after :)
  help                         this
 
 MARKS   ✖ broken now   ▲ look   ⟳ deploying   ? cannot tell   · nothing to show
-AGE     how old each row's answer is; "stale" after three missed reads
+AGE     how old each answer is; "stale" until it is read again after the machine slept, and on a row after three missed reads
 ALERTS  first in the title bar, on every screen: how many fire that you may see (✖ 3 firing; ▲ when none is critical), reversed while one is new until a key, ? when the count is old or not known. The terminal's bell rings once for a read that brings a new one, at most once a minute; MOTEL_BELL=off turns it off
 
 This client only reads. Rolling back and adding silences arrive when the box offers them.
