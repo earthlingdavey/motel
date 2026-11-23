@@ -629,8 +629,6 @@ made by hand. Accepted:
 | Such a row's VERSION says only the version in flight (`stopped  → 9a1b2c3d4e5f`), so the table does not name the version that is stopped, throttled or in backoff, and the row can be read as the new version being the stopped one; the `→` marks it as on its way ("The TUI", below), and the strip and the app's screen name the stopped one | 2 | 4 | 3 | 24 | 1 (keep the running version in VERSION on these rows) | accepted over the bar, pending the owner (the skill's rule 4): VERSION said as a row in flight says it was the owner's chosen fix for #584's item 4 |
 | While whoami lists a `logs` grant on an app and the box still refuses its logs read (403), the read held by that 403 is asked again at each whoami answer that follows it (whoami is asked again by the 403 itself, at most once a minute, else every 5 minutes): a refused read, and a Warn line in the box's journal (which the box writes at most once a minute for a person and an app), each time, for as long as the screen is open. It takes whoami and the logs route disagreeing about one key from one address, which neither does by design: whoami lists the grants that apply from the request's address | 2 | 2 | 1 | 4 | 2 (keep, for each refused app, whether whoami has since not listed the grant, and ask again only after that) | accepted, found by the fourth self-review round of the logs screen: the screen says the refusal and that ctrl-r asks again |
 | A logs read the box answered busy (a `503` with its wait, `FailBusy`) counts as a failed read of its own (its misses), as a refusal does: a box that then stops answering is seen by that read's backoff from the count it reached (4 s, 8 s… instead of 2 s), and the read of another thing is not brought forward for it | 2 | 2 | 1 | 4 | 2 (a branch in `Done` for a busy answer) | accepted: the other reads see the outage at their own pace, and the title bar says it |
-| While the logs screen shows no line of the app (no logs grant, whoami not known, a refusal, kept off, still asking, a head that fills the page), its footer still lists the scroll, follow and wrap keys, which do nothing useful there | 2 | 5 | 3 | 30 | 2, 2 | accepted over the bar by the owner's decision of 2026-11-22: the fix was tried in three review rounds and each brought faults in, since the footer, the keys and the layout must then agree on whether lines are shown; the rule's stop. A follow-up issue may take it up on its own |
-| Scrolling or paging on a logs page that shows no line (the head fills the page, or the grant went while lines were held) moves and holds the view at a place not seen: when lines show again the rule says `held: N new lines since · End follows`, and End follows | 2 | 5 | 1 | 10 | 2, 2 | accepted |
 | After a read that stopped every read and `r`, a failure the logs screen said before the stop is said again until the next logs answer, 2 s or the read's wait | 2 | 2 | 3 | 12 | 1, 2 (forgetting it on a stop also cleared the failure of another opening's read) | accepted |
 | The logs screen's tail after a skip (a follow more than the 5,000 lines it holds behind, `lines skipped`) leaves out each of its lines at or before the time of the newest line held, so a line of the journal's with that same microsecond, after the last one held, is not shown, nor one stamped earlier after a step of the box's clock back | 2 | 5 | 1 | 10 | 2 (keep the last line's text too, and match on both) | accepted: the skip's note says the lines between were not read, which these are among |
 
@@ -781,7 +779,15 @@ of termtext's escapes), and tview wraps nothing. A rule above them says
 it follows; a row or a page up (↑, k, PgUp, Home) holds the view where it
 is while lines arrive, the rule counting them (`held: 37 new lines since
 · End follows`); End, or scrolling down to the newest row, follows
-again. It holds the newest 5,000 lines (`LogsKeep`), and at most 16 MiB
+again. The footer lists these keys only on a frame where they act, and
+one it does not list does nothing: the scroll keys while lines are in
+view, End while the screen follows the app's lines (a follow with no
+line yet too) or holds a view, also one it no longer shows (the grant
+gone, or a head that leaves the lines no row), and `w` while it follows
+them or asks for the first, so lines that then arrive come as `w` left
+them. While the screen says why it shows no line (no grant, whoami not
+yet answered, a refusal, the output kept on the box), the footer offers
+none of the three. It holds the newest 5,000 lines (`LogsKeep`), and at most 16 MiB
 of their text as shown (`LogsKeepBytes`: a line of 4 KiB from the box
 can be four times that made safe, eight with tabs), and says how many
 older ones it dropped. The box saying the app keeps its output on the

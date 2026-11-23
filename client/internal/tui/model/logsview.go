@@ -368,16 +368,15 @@ func (s *Session) LogsAsOf(app string, now time.Time) Line {
 // where a line or a divider does.
 func (s *Session) LogsViewFit(app string, now time.Time, width, height int, cells Cells, wrap bool) []Line {
 	s.seen(now)
-	head, d := s.logsHead(app, now, width, cells)
+	head, d, rows := s.logsFit(app, now, width, height, cells)
 	if d == nil {
 		return head
 	}
 	// The head, the rule and the lines, within the page: a head taller
 	// than the page is cut at its foot.
-	if len(head)+1 >= height {
+	if rows == 0 {
 		return head[:min(len(head), max(height, 1))]
 	}
-	rows := height - len(head) - 1
 	d.pos.lastHeight = rows
 	var rule string
 	switch {
@@ -406,6 +405,52 @@ func (s *Session) LogsViewFit(app string, now time.Time, width, height int, cell
 		i, r = i+1, 0
 	}
 	return out[:min(len(out), len(head)+1+rows)]
+}
+
+// logsFit is the logs screen of app laid to width cells and height rows,
+// as LogsViewFit lays it and LogsKeys reads it: the head, the lines held
+// when the screen shows them (nil when it says why there are none), and
+// how many rows the lines get under the head and the rule (none when d
+// is nil, or when the head leaves none).
+func (s *Session) logsFit(app string, now time.Time, width, height int, cells Cells) ([]Line, *logsData, int) {
+	head, d := s.logsHead(app, now, width, cells)
+	if d == nil || len(head)+1 >= height {
+		return head, d, 0
+	}
+	return head, d, height - len(head) - 1
+}
+
+// LogsKeysOn is which of the logs screen's own keys act on a frame: the
+// scroll keys (↑ ↓ j k, PgUp, PgDn, Home), End, and w. Its footer lists
+// these and no others, and a key not listed does nothing.
+type LogsKeysOn struct {
+	Scroll, Follow, Wrap bool
+}
+
+// LogsKeys is which of the logs screen's own keys act, asked of the
+// session as it is now, on the screen of app laid to width cells and
+// height rows (the page's, as LogsViewFit is given them): nothing is
+// kept of an answer, so the footer of a frame and the keys pressed after
+// it go by that frame's layout, and by the app in front.
+//
+// The lines are live when the screen shows them, or would with room:
+// the scroll keys act when they are and have a row, and at least one
+// item is held; End when they are, or a view held is to be let go (one
+// held where the screen no longer shows it too: the grant gone, the head
+// filling the page); w when they are, or while the first read is asked,
+// so the lines arrive as it says.
+func (s *Session) LogsKeys(app string, now time.Time, width, height int, cells Cells) LogsKeysOn {
+	s.seen(now)
+	_, d, rows := s.logsFit(app, now, width, height, cells)
+	live := d != nil
+	mine := s.logs != nil && s.logs.app == app
+	held := mine && s.logs.pos.held
+	asking := s.LogsGrant(app) == Granted && (!mine || s.logs.got == nil && s.logs.err == nil)
+	return LogsKeysOn{
+		Scroll: live && rows > 0 && len(d.items) > 0,
+		Follow: live || held,
+		Wrap:   live || asking,
+	}
 }
 
 // logsHead is what the logs screen says above the lines, laid to width,
