@@ -39,8 +39,12 @@ func (u *UI) render(now time.Time) {
 	}
 	door.SetText(u.crumb, door.Line(spread(crumbL, crumbR, u.w), u.Colour))
 	foot := footers[v.Screen]
-	if v.Screen == model.ScreenRefused && u.S.CanPrint(v, 0) {
+	switch {
+	case v.Screen == model.ScreenRefused && u.S.CanPrint(v, 0):
 		foot = "↑↓ scroll  r ask again  P print person line  ? keys  q quit"
+	case v.Screen == model.ScreenLogs:
+		// Laid as the page below it is (LogsViewFit's size and clock).
+		foot = logsFoot(u.S.LogsKeys(v.App, now, u.w, u.h-3, door.Width))
 	}
 	if !u.S.Engine.CanAskAgain(now) {
 		foot = strings.Replace(foot, "  ctrl-r ask again", "", 1)
@@ -226,6 +230,22 @@ var footers = map[model.Screen]string{
 	model.ScreenHelp:     "↑↓ scroll  esc close  q quit",
 	model.ScreenRefused:  "↑↓ scroll  r ask again  ? keys  q quit",
 	model.ScreenStopHelp: "↑↓ scroll  esc back  r ask again  q quit",
+}
+
+// logsFoot is the logs screen's footer on a frame where its own keys
+// act as k says: each of them listed only when it acts, so every form is
+// the full footer (footers, k all true) with parts left out.
+func logsFoot(k model.LogsKeysOn) string {
+	var parts []string
+	for _, p := range []struct {
+		on   bool
+		text string
+	}{{k.Scroll, "↑↓ scroll"}, {k.Follow, "End follow"}, {k.Wrap, "w wrap"}} {
+		if p.on {
+			parts = append(parts, p.text)
+		}
+	}
+	return strings.Join(append(parts, "c cmd", "esc back", "? more"), "  ")
 }
 
 // The apps table's columns, dropped in this order when the screen is
