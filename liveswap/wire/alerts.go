@@ -11,8 +11,10 @@ type Alerts struct {
 	// Monitor is MonitorOn (Alertmanager answered: Alerts is what it
 	// holds of the app, maybe none), MonitorOff (the config has no
 	// monitor block that raises anything: nothing is raised, and Alerts
-	// is empty) or MonitorUnanswered (Alertmanager did not answer within
-	// the box's budget: Alerts is empty, and says nothing). A client
+	// is empty) or MonitorUnanswered (the box could not read what
+	// Alertmanager holds: no answer within the box's budget, an answer
+	// over the 4 MiB it reads, or another failure its journal names;
+	// Alerts is empty, and says nothing). A client
 	// reads a word it does not know as not knowing whether anything
 	// fires.
 	Monitor string  `json:"monitor" text:"moteld"`
