@@ -71,11 +71,11 @@ func TestBoxAlertsSays(t *testing.T) {
 		t.Errorf("the box screen's line at 60 columns: %q", box)
 	}
 
-	// No monitor block, and an Alertmanager that did not answer: said,
+	// No monitor block, and an Alertmanager the box could not read: said,
 	// and nothing listed.
 	for body, want := range map[string]string{
 		`{"monitor":"off","alerts":[],"silences":[]}`:        "monitor     off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)",
-		`{"monitor":"unanswered","alerts":[],"silences":[]}`: "monitor     not known: the box's Alertmanager did not answer it in time",
+		`{"monitor":"unanswered","alerts":[],"silences":[]}`: "monitor     not known: the box could not read its Alertmanager",
 		`{"monitor":"asleep","alerts":[],"silences":[]}`:     `monitor     not known: the box said "asleep"`,
 	} {
 		*now = now.Add(model.BoxEvery)

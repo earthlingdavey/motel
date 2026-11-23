@@ -890,6 +890,55 @@ it on the box (`ssh root@box.example.com ip netns exec motel-metrics
 amtool …`, on a box set up with `--metrics`). The store's socket
 forwards the same way (`~/.motel/vm.sock:/run/motel-metrics/vm.sock`).
 
+### More alerts than motel reads
+
+For the people's reads of alerts (`motel monitor alerts`, with or
+without `--app`, and the TUI), motel reads at most 4 MiB of what
+Alertmanager holds, and of its silence list: 5,500 to 7,500 alerts the
+size of motel's own, which take 550 to 760 bytes each in Alertmanager's
+answer (measured by marshalling them as `GET /api/v2/alerts` gives
+them). From 500 alerts up to that, the box's read sends the newest 500
+and says it holds more. Past it, every one of those reads, the box's
+and each app's, answers `"monitor":"unanswered"`: the TUI says `not
+known: the box could not read its Alertmanager`, and `motel monitor
+alerts` exits 3. Alertmanager still routes and sends every alert to
+your channels.
+
+motel's own events and your `rule` lines stay far below it (a rule
+raises at most one alert per app). It takes a producer that sends many,
+such as `moteld monitor send` with a new `--instance` at every send
+([Your own events](#your-own-events-moteld-monitor-send)). While people
+read, the journal then says, at most once every 5 seconds:
+
+```
+monitor: every person's read of alerts (an app's, or the box's) is answered "monitor":"unanswered": Alertmanager holds more alerts than motel reads (4 MiB of its answer); docs/monitor.md, "More alerts than motel reads", says how to see them
+```
+
+Ask Alertmanager itself, which has no such limit. On every box, over
+its socket, count what it holds by name:
+
+```sh
+curl -s --unix-socket /run/motel-notify/am.sock http://am/api/v2/alerts \
+  | grep -o '"alertname":"[^"]*"' | sort | uniq -c | sort -rn | head
+```
+
+and list one app's (`filter` is a matcher, `app="shop"` URL-encoded;
+give it again to match on more labels):
+
+```sh
+curl -s --unix-socket /run/motel-notify/am.sock 'http://am/api/v2/alerts?filter=app%3D%22shop%22'
+```
+
+On a box set up with `--metrics`, `amtool` asks the same in the
+store's namespace:
+
+```sh
+ip netns exec motel-metrics amtool --alertmanager.url=http://127.0.0.1:9093 alert query app=shop
+```
+
+Then stop the producer. A one-shot ends five minutes after it was sent;
+a state holds until the producer sends `--state resolved` for its key.
+
 ## Silence an alert
 
 While you fix something you already know about, silence its alert so

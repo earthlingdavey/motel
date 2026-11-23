@@ -62,7 +62,8 @@ const (
 	NotAsked
 	// WasRefused: its read was refused (a 403, a 404, a 409).
 	WasRefused
-	// Unanswered: the box's Alertmanager did not answer the box.
+	// Unanswered: the box could not read its Alertmanager (it did not
+	// answer, or held more than the box reads).
 	Unanswered
 	// NotAWord: the box said a monitor word the client does not know.
 	NotAWord

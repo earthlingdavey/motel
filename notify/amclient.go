@@ -51,6 +51,14 @@ type amAlert struct {
 // maxErrBody is how much of an error response is kept for a message.
 const maxErrBody = 512
 
+// maxAMBody bounds what is read of an answer. The largest is every
+// alert Alertmanager holds, for the people's reads (heldAlerts): 4 MiB
+// is 5,500 to 7,500 alerts the size of motel's own (docs/monitor.md,
+// "More alerts than motel reads").
+const maxAMBody = 4 << 20
+
+// do asks Alertmanager. A 2xx answer over maxAMBody is an
+// amOverLimitError, never handed on cut.
 func (c *amClient) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
 	var rd io.Reader
 	if body != nil {
@@ -68,7 +76,7 @@ func (c *amClient) do(ctx context.Context, method, path string, body []byte) ([]
 		return nil, fmt.Errorf("alertmanager at %s: %w", c.socket, unwrapURLError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAMBody+1))
 	if err != nil {
 		return nil, fmt.Errorf("alertmanager at %s: reading %s: %w", c.socket, path, err)
 	}
@@ -79,7 +87,20 @@ func (c *amClient) do(ctx context.Context, method, path string, body []byte) ([]
 		}
 		return nil, &amStatusError{path: path, code: resp.StatusCode, msg: msg}
 	}
+	if len(data) > maxAMBody {
+		return nil, &amOverLimitError{socket: c.socket, path: strings.SplitN(path, "?", 2)[0]}
+	}
 	return data, nil
+}
+
+// amOverLimitError is a 2xx answer longer than maxAMBody: Alertmanager
+// answered, with more than motel reads.
+type amOverLimitError struct {
+	socket, path string
+}
+
+func (e *amOverLimitError) Error() string {
+	return fmt.Sprintf("alertmanager at %s: its answer to %s is over %d bytes, the most motel reads", e.socket, e.path, maxAMBody)
 }
 
 // amStatusError is an answer that is not 2xx: Alertmanager refused the

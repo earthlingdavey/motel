@@ -201,6 +201,48 @@ func TestHeldAlertsFailures(t *testing.T) {
 	}
 }
 
+// TestHeldAlertsOverTheLimit (#638): an answer of Alertmanager's longer
+// than maxAMBody fails the fetch as over the limit, naming the route
+// and the limit, not as the JSON a cut body would be; and the journal
+// line says Alertmanager holds more than motel reads, and where to look.
+// An answer of maxAMBody bytes exactly is read whole.
+func TestHeldAlertsOverTheLimit(t *testing.T) {
+	// heldAnswer padded with spaces to n bytes: still JSON.
+	padded := func(answer string, n int) string { return answer + strings.Repeat(" ", n-len(answer)) }
+	am := &fakeAMReads{alerts: padded(heldAnswer, maxAMBody), silences: padded(silencesAnswer, maxAMBody), alertsCode: 200, silCode: 200}
+	c := newAMClient(am.serve(t))
+	if held, err := c.heldAlerts(context.Background()); err != nil || len(held.Alerts) == 0 || len(held.Silences) == 0 {
+		t.Fatalf("at the limit: %v, %d alerts, %d silences", err, len(held.Alerts), len(held.Silences))
+	}
+
+	for _, over := range []struct{ path, what string }{{"/api/v2/alerts", "alerts"}, {"/api/v2/silences", "silences"}} {
+		am.mu.Lock()
+		am.alerts, am.silences = padded(heldAnswer, maxAMBody), padded(silencesAnswer, maxAMBody)
+		if over.what == "alerts" {
+			am.alerts = padded(heldAnswer, maxAMBody+1)
+		} else {
+			am.silences = padded(silencesAnswer, maxAMBody+1)
+		}
+		am.mu.Unlock()
+		_, err := c.heldAlerts(context.Background())
+		var e *amOverLimitError
+		if !errors.As(err, &e) || e.path != over.path || !strings.Contains(err.Error(), "its answer to "+over.path+" is over 4194304 bytes, the most motel reads") {
+			t.Errorf("%s over the limit: %v", over.what, err)
+		}
+
+		core, logs := observer.New(zap.WarnLevel)
+		v := &alertsView{now: time.Now, fetch: c.heldAlerts}
+		if _, ok := v.get(context.Background(), zap.New(core)); ok {
+			t.Errorf("%s over the limit: the read was answered", over.what)
+		}
+		all := logs.All()
+		if len(all) != 1 || !strings.Contains(all[0].Message, "Alertmanager holds more "+over.what+" than motel reads (4 MiB of its answer)") ||
+			!strings.Contains(all[0].Message, `docs/monitor.md, "More alerts than motel reads"`) || strings.Contains(all[0].Message, "did not answer") {
+			t.Errorf("%s over the limit: journal %+v", over.what, all)
+		}
+	}
+}
+
 // TestAlertsView: one fetch per alertsEvery for every caller, a failure
 // kept as long, a clock set back fetching again; one fetch at a time,
 // the others waiting on it; a waiter that gives up told it did not
@@ -246,7 +288,7 @@ func TestAlertsView(t *testing.T) {
 	if held, ok := v.get(context.Background(), logger); ok || held.Alerts != nil || count() != 2 {
 		t.Errorf("a failure: %v %+v, %d fetches", ok, held, count())
 	}
-	if n := len(logs.FilterMessageSnippet("Alertmanager did not answer").All()); n != 1 {
+	if n := len(logs.FilterMessageSnippet("motel could not read what Alertmanager holds").All()); n != 1 {
 		t.Errorf("%d journal lines for the failure, want 1", n)
 	}
 	if _, ok := v.get(context.Background(), logger); ok || count() != 2 {

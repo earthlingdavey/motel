@@ -77,8 +77,8 @@ func TestAlertsReadWhileTheAppIsOpen(t *testing.T) {
 
 // TestAlertLines: an app's screen says its alerts under its state, as
 // the box said them: how many are held, each with what holds it and
-// when it began, under it its summary; no monitor, an Alertmanager that
-// did not answer, a monitor word the client does not know and a box
+// when it began, under it its summary; no monitor, an Alertmanager the
+// box could not read, a monitor word the client does not know and a box
 // older than the read each in the client's own words; a read that
 // failed after an answer says so beside it. At most AlertsShown are
 // listed, the rest counted.
@@ -119,7 +119,7 @@ func TestAlertLines(t *testing.T) {
 	}
 	for _, c := range []struct{ body, want string }{
 		{`{"monitor":"off","alerts":[]}`, "alerts      none: the box has no monitor, so nothing is raised"},
-		{`{"monitor":"unanswered","alerts":[]}`, "alerts      not known: the box could not ask its Alertmanager"},
+		{`{"monitor":"unanswered","alerts":[]}`, "alerts      not known: the box could not read its Alertmanager"},
 		{`{"monitor":"later","alerts":[]}`, "alerts      not known: the box says later of its monitor"},
 		{`{"monitor":"on","alerts":[]}`, "alerts      none held · as of "},
 		{`{"monitor":"on","alerts":[` + strings.Repeat(`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"},`, 4) +

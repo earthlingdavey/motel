@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -239,9 +240,19 @@ func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.Held
 		held, err := fetch(fctx)
 		cancel()
 		if err != nil {
-			// A person is told only that it did not answer: the cause is the
-			// operator's, at most one line per alertsEvery, as kept.
-			logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": Alertmanager did not answer", zap.Error(err))
+			// A person is told only that the box could not read them: the
+			// cause is the operator's, at most one line per alertsEvery, as
+			// kept.
+			var over *amOverLimitError
+			if errors.As(err, &over) {
+				what := "alerts"
+				if over.path == "/api/v2/silences" {
+					what = "silences"
+				}
+				logger.Warn(fmt.Sprintf("monitor: every person's read of alerts (an app's, or the box's) is answered \"monitor\":\"unanswered\": Alertmanager holds more %s than motel reads (4 MiB of its answer); docs/monitor.md, \"More alerts than motel reads\", says how to see them", what), zap.Error(err))
+			} else {
+				logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": motel could not read what Alertmanager holds", zap.Error(err))
+			}
 			held = liveswap.HeldAlerts{}
 		}
 		e.held, e.ok = held, err == nil

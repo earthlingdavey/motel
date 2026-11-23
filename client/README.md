@@ -123,7 +123,9 @@ box's free text, on a `summary` line under it. Not the box's own alerts,
 and not the silences. The box asks Alertmanager at most every 5 s, so
 an answer can be that old. It exits 0 when it read them, alerts or none,
 and when the box has no monitor (nothing is raised there); 3 when the
-box could not ask its Alertmanager (`"monitor":"unanswered"`) or names
+box could not read what its Alertmanager holds (`"monitor":"unanswered"`:
+it did not answer, or held more than the box reads; the box's journal
+says which) or names
 its monitor in a word the client does not know: `--json` then prints
 the client's own sentence. It is asked with your own key only, as
 `whoami` is. An alert's name is held to `^[A-Za-z_][A-Za-z0-9_:.-]{0,63}$` (an app's
@@ -148,14 +150,18 @@ alerts about a person's key, which go to the operator's channels alone. Silences
 added and expired as root on the box (`moteld monitor silence`,
 docs/monitor.md). It exits 0 when the box answered, whatever fires or
 is silenced; on a box whose monitor block sends nothing to anyone, or
-that has none, it says the box raises no alerts, exit 0; when the box's Alertmanager did not answer the box in
-time (`"monitor":"unanswered"`), or the box names a monitor word this
+that has none, it says the box raises no alerts, exit 0; when the box could not read what its Alertmanager
+holds (`"monitor":"unanswered"`), or the box names a monitor word this
 client does not know, 3; a monitor that is not a lowercase word is not
 moteld's answer, 3. A silence's state the client does not know is said
 as not known, the box's word quoted, and an operator it does not know
 as `?`. The box sends at most 500 alerts, the newest, and 200 silences,
 the active ones first and then the soonest to start, and says when it
-held more: the first line then says so.
+held more: the first line then says so. That holds up to 4 MiB of what
+Alertmanager holds, the most the box reads of it (5,500 to 7,500 alerts
+the size of motel's own): past it the box reads none, and says
+`"monitor":"unanswered"` (docs/monitor.md, "More alerts than motel
+reads").
 
 `monitor rules` reads `GET /_motel/rules`, for a viewer of the box, the
 remote twin of `moteld monitor rules` without the store's socket and
@@ -365,7 +371,7 @@ other than the 401, 403, 404 and 429 below, a 409 for one; said as the
 box's: no header tells a gateway's from motel's; and `backup status`'s
 not healthy); 2 nothing was
 sent (usage, no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not
-moteld's answer, any 5xx, a 429 that stood, the box's could not tell of `backup status`, an Alertmanager that did not answer the box, for `monitor alerts`, a metrics store that did not answer it, for `monitor rules`, and a store that did not, for `metrics`); 4 not accepted (a 401 after one
+moteld's answer, any 5xx, a 429 that stood, the box's could not tell of `backup status`, an Alertmanager the box could not read, for `monitor alerts`, a metrics store that did not answer it, for `monitor rules`, and a store that did not, for `metrics`); 4 not accepted (a 401 after one
 retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
 verify (the client never continues past one); 9 the deploy `status
 --follow` followed failed; 130 interrupted. 7 is held for a box too old
@@ -616,7 +622,7 @@ made by hand. Accepted:
 | Against a moteld older than the alerts read (a 404), the title bar says `alerts not known` (`alerts ?`) in the warning colour on every screen until ctrl-r, though the box refused nothing | 2 | 5 | 1 | 10 | 2 (a dim word of its own for a box that cannot say) | accepted: the decision of 2026-11-20 (#576, READS.md section 3): the box cannot say, and the mark never reads as none firing; `:alerts` says the 404 and why |
 | While the box says it holds more alerts than it sends (`more_alerts`, past 500), every alert the watch has counted and the box no longer sends is kept as maybe firing until an answer without it, so the keys kept grow for as long as that lasts, and one not yet seen stays counted as new until a key | 2 | 2 | 3 | 12 | 2 | accepted: it takes an Alertmanager holding over 500 alerts, far past what motel posts; the count says `+` |
 | For a person with app grants only, two alerts of one app that differ only by instance and begin at one evaluation (an app's rule over two paths) are one in the title bar's count and ring once: an app's alerts carry no instance, so their keys are the same. A viewer of the box, whose read carries it, counts two | 2 | 3 | 3 | 18 | 3 (the instance on an app's alerts: a wire field) | accepted: it takes two instances crossing at one evaluation; the app's screen lists both |
-| For a person with app grants only, one app whose alerts read is refused, unanswered by its Alertmanager or not yet read (an app added or removed on the box, until the list is read again, at most a minute) turns the whole mark to `alerts not known` (or `alerts…`), hiding the other apps' known count, critical ones too | 2 | 3 | 3 | 18 | 2 (the known sum shown as old beside an app not known) | accepted: the mark never reads as a count it does not know; the apps' own screens show theirs |
+| For a person with app grants only, one app whose alerts read is refused, answered `unanswered` (the box could not read its Alertmanager) or not yet read (an app added or removed on the box, until the list is read again, at most a minute) turns the whole mark to `alerts not known` (or `alerts…`), hiding the other apps' known count, critical ones too | 2 | 3 | 3 | 18 | 2 (the known sum shown as old beside an app not known) | accepted: the mark never reads as a count it does not know; the apps' own screens show theirs |
 | `ChannelFailed` told to several channels is one alert in the title bar's count, but several identical rows on `:alerts` and in the box screen's count of what fires (the wire does not carry which channel each is), from a box whose moteld is older than `ChannelFailed`'s read-only copy, or from a newer one before that copy is held (vmalert's rules alone, while moteld was not running when the failure began) | 2 | 3 | 3 | 18 | 2 (the channel on the wire, a notify change) | accepted: the owner's decision of 2026-11-20 (#576); a newer moteld sends the read-only copy alone in their place (notify/DESIGN-notify.md, "Failed delivery"), which is what is left: an older box until it is upgraded, and the minutes before moteld's copy is held |
 | On a box with the metrics package whose moteld was not running when a failure began, the TUI rings twice for it: once for vmalert's addressed rows, and again when moteld's read-only copy, from a start of its own, takes their place | 2 | 2 | 3 | 12 | 3 (a vmalert rule for the read-only copy, with a series motel pushes while a hold stands: notify/DESIGN-metrics.md, "ChannelFailed, a second source") | accepted: notify/DESIGN-notify.md's row; the row the read ends on is right |
 | From a box older than `ChannelFailed`'s read-only copy, with the metrics package, one `ChannelFailed` often rings twice: vmalert's post carries the minute of its evaluation as its start, earlier than motel's, and Alertmanager moves the start it holds to it, a new alert to the watch (measured 2026-11-21) | 2 | 4 | 3 | 24 | — (the box's) | fixed on a newer box: its read carries the read-only copy, which has no vmalert rule, so its start never moves; an older box keeps it until upgraded |
@@ -687,7 +693,7 @@ lists them whole, `motel monitor alerts --box <host> --app <app>`,
 since the screen's `y` and `P` give the status; then the first three,
 each with what holds it, when it began and, on a `summary` line, its
 summary, and the rest counted; the client's own words when the box has no monitor or
-could not ask its Alertmanager, and on a 404 the box's own (a box older
+could not read its Alertmanager, and on a 404 the box's own (a box older
 than the read, or no app of that name now); while a deploy is in flight its
 state names the current version as running (one stopped, throttled or
 in backoff by its row's word), and a `deploying` line
@@ -1008,7 +1014,7 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   asked again when whoami next lists the role, a 404 by ctrl-r on a
   screen that shows the read (`:alerts`, the box screen, an app's
   screen for its alerts); the
-  box's Alertmanager did not answer the box; a monitor word the client
+  box could not read its Alertmanager; a monitor word the client
   does not know; a read that failed before any answer; an answer about
   another key or box) it says `alerts not known` (`alerts ?`, `?`),
   never a zero, and the title bar's word is not turned to `refused` by
@@ -1020,8 +1026,8 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   fires, told apart by its name, app, instance, severity and start, so
   a refire, a silence ending, the deploy mute ending and a change of
   severity are each new; nothing is new at the first answer, and after
-  a gap (the pause, STALE, a sleep, an Alertmanager that did not answer
-  the box) what is new against the last answer known is new once.
+  a gap (the pause, STALE, a sleep, an Alertmanager the box could not
+  read) what is new against the last answer known is new once.
   While something is new and not seen the long form says how many
   (`✖ 3 firing, 1 new`) and the mark is drawn reversed, which reads
   without colour: on alternate seconds of the clock for 5 s, then still

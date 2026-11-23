@@ -29,7 +29,7 @@ func hostileAlerts() wire.Alerts {
 }
 
 // monitor alerts --app: the box's answer is --json on a read; a box
-// that could not ask its Alertmanager, or says a word for its monitor
+// that could not read its Alertmanager, or says a word for its monitor
 // the client does not know, exits 3 with the client's own sentence; no
 // monitor is said and exits 0; the human output holds nothing a box
 // could use on a terminal, and is what the golden says; --app is
@@ -86,6 +86,12 @@ func TestMonitorAlerts(t *testing.T) {
 		case c.code != 0 && (r.code != c.code || json.Unmarshal([]byte(r.stdout), &e) != nil || !strings.HasPrefix(e.Error, "127.0.0.1 ")):
 			t.Errorf("%s, --json: exit %d, stdout %q", c.monitor, r.code, r.stdout)
 		}
+	}
+	// Unanswered names no cause the client cannot know: the box's
+	// Alertmanager may not have answered, or held more than the box reads.
+	fb.alerts = wire.Alerts{Monitor: wire.MonitorUnanswered, Alerts: []wire.Alert{}}
+	if r := runKey(t, fb, nil, "monitor", "alerts", "--app", "blog"); r.stderr != "motel: 127.0.0.1 could not tell blog's alerts: it could not read what its Alertmanager holds (the box's journal says why)\n" {
+		t.Errorf("unanswered: stderr %q", r.stderr)
 	}
 	fb.alerts = wire.Alerts{Monitor: wire.MonitorOn, Alerts: []wire.Alert{}}
 	if r := runKey(t, fb, nil, "monitor", "alerts", "--app", "blog"); r.code != 0 || r.stdout != "127.0.0.1 says no alert of blog is held\n" {
