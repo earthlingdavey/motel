@@ -46,10 +46,10 @@ func (r *runner) monitorAlerts() *cobra.Command {
 			"(https://deploy.example.com/blog), which names the box too. The box asks\n" +
 			"Alertmanager at most every 5 s, so an answer can be that old. It exits 0 when\n" +
 			"it read them, alerts or none, and when the box has no monitor (nothing is\n" +
-			"raised there); 3 when the box could not ask its Alertmanager, or said a word\n" +
-			"for it this client does not know: --json then prints the client's own\n" +
-			"sentence. It is asked with your own key only: with MOTEL_TOKEN set, name the\n" +
-			"key with --key.\n\n" + experimental,
+			"raised there); 3 when the box could not read what its Alertmanager holds\n" +
+			"(the box's journal says why), or said a word for it this client does not\n" +
+			"know: --json then prints the client's own sentence. It is asked with your\n" +
+			"own key only: with MOTEL_TOKEN set, name the key with --key.\n\n" + experimental,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !cmd.Flags().Changed("app") {
@@ -74,7 +74,7 @@ func (r *runner) monitorAlerts() *cobra.Command {
 			case wire.MonitorOn, wire.MonitorOff:
 			case wire.MonitorUnanswered:
 				unknown = &client.Failure{Exit: client.ExitUnknown, Message: fmt.Sprintf(
-					"%s could not tell %s's alerts: its Alertmanager did not answer it", c.Box.Host, app.Name)}
+					"%s could not tell %s's alerts: it could not read what its Alertmanager holds (the box's journal says why)", c.Box.Host, app.Name)}
 			default:
 				unknown = &client.Failure{Exit: client.ExitUnknown, Message: fmt.Sprintf(
 					"%s answered about %s's alerts in a word for its monitor this client does not know (%s): it cannot tell what fires", c.Box.Host, app.Name, a.Monitor)}

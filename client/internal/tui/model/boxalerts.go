@@ -48,7 +48,7 @@ func monitorSays(b wire.BoxAlerts) Line {
 	case wire.MonitorOff:
 		return Line{own("off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)")}
 	case wire.MonitorUnanswered:
-		return Line{ownC("not known", Warn), own(": the box's Alertmanager did not answer it in time")}
+		return Line{ownC("not known", Warn), own(": the box could not read its Alertmanager")}
 	}
 	return Line{ownC("not known", Warn), own(": the box said "), quoted(b.Monitor)}
 }

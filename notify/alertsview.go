@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -213,8 +214,8 @@ var theAlerts = &alertsView{now: time.Now}
 
 // get answers from the entry under alertsEvery old, or waits for the
 // fetch in flight, or makes it. A request that gives up first is told
-// Alertmanager did not answer; the fetch it waited for still fills the
-// entry for the next.
+// no answer (ok false: unanswered); the fetch it waited for still fills
+// the entry for the next.
 func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.HeldAlerts, bool) {
 	v.mu.Lock()
 	now := v.now()
@@ -239,9 +240,26 @@ func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.Held
 		held, err := fetch(fctx)
 		cancel()
 		if err != nil {
-			// A person is told only that it did not answer: the cause is the
-			// operator's, at most one line per alertsEvery, as kept.
-			logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": Alertmanager did not answer", zap.Error(err))
+			// A person is told only that the box could not read them: the
+			// cause is the operator's, at most one line per alertsEvery, as
+			// kept.
+			var over *amOverLimitError
+			switch {
+			case errors.As(err, &over):
+				// The silence list holds expired silences too, until
+				// Alertmanager's retention drops them: no producer to stop.
+				what := "alerts than motel reads (4 MiB of its answer); docs/monitor.md, \"More alerts than motel reads\", says how to see them"
+				if over.path == "/api/v2/silences" {
+					what = "silences than motel reads (4 MiB of its answer, expired ones counting until its retention drops them); docs/monitor.md, \"Silence an alert\", says how to list them"
+				}
+				logger.Warn("monitor: every person's read of alerts (an app's, or the box's) is answered \"monitor\":\"unanswered\": Alertmanager holds more "+what, zap.Error(err))
+			case errors.Is(err, context.DeadlineExceeded):
+				// The fetch's budget, alertsBudget, covers both lists: the
+				// error does not say which was late, nor why.
+				logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": Alertmanager's answers did not come within the 2 s motel waits", zap.Error(err))
+			default:
+				logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": motel could not read what Alertmanager holds", zap.Error(err))
+			}
 			held = liveswap.HeldAlerts{}
 		}
 		e.held, e.ok = held, err == nil

@@ -40,7 +40,7 @@ func WriteAlerts(w io.Writer, a Alerts) error {
 		return p.err
 	case "on":
 	default:
-		// The command says a monitor that did not answer, or a word it
+		// The command says a monitor the box could not read, or a word it
 		// does not know, as its failure, not here.
 		return p.err
 	}

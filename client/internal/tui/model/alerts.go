@@ -53,7 +53,7 @@ func (s *Session) alertLines(app string, now time.Time) []Line {
 	case wire.MonitorOff:
 		head = append(head, own("none: the box has no monitor, so nothing is raised"))
 	case wire.MonitorUnanswered:
-		head = append(head, ownC("not known: the box could not ask its Alertmanager", Warn))
+		head = append(head, ownC("not known: the box could not read its Alertmanager", Warn))
 	default:
 		head = append(head, ownC("not known: the box says ", Warn), boxT(g.V.Monitor), own(" of its monitor"))
 	}
