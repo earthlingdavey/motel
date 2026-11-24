@@ -12,6 +12,46 @@ Kubernetes, no SSH keys in CI. Powered by
 git push  →  CI builds app.tar.gz  →  webhook  →  motel swaps it live. Zero downtime.
 ```
 
+What runs on the box, and what talks to it:
+
+```mermaid
+flowchart LR
+    visitors(["Visitors"])
+    appci["An app's repository:<br/>CI builds app.tar.gz"]
+    boxci["The box's repository:<br/>a signed Caddyfile,<br/>encrypted secrets"]
+    laptop(["motel on a laptop,<br/>a person's ssh key"])
+
+    subgraph box ["The box (Debian 13)"]
+        moteld["<b>moteld</b> (user motel):<br/>Caddy with liveswap,<br/>penaltybox, cache, box,<br/>notify and access"]
+        apps["Your apps: each release<br/>a sandboxed systemd<br/>unit on a unix socket"]
+        applier["The box applier, as root:<br/>checks the signatures,<br/>installs the Caddyfile<br/>and the secrets"]
+        backup["motel-backup, hourly:<br/>sqlite3 and restic<br/>in sandboxed units"]
+        mon["Optional: Alertmanager,<br/>and VictoriaMetrics<br/>with vmalert, reached<br/>over unix sockets"]
+    end
+
+    bucket[("A restic repository<br/>off the box")]
+    channels(["ntfy, Slack, Discord<br/>or any webhook"])
+
+    visitors -- "HTTPS" --> moteld
+    appci -- "deploy,<br/>OIDC token" --> moteld
+    boxci -- "config push,<br/>OIDC token" --> moteld
+    laptop -- "reads, token<br/>the key signed" --> moteld
+    moteld <-- "a push in,<br/>a reload back" --> applier
+    moteld -- "proxies to, starts,<br/>stops, watches" --> apps
+    moteld -- "alerts,<br/>numbers" --> mon
+    apps -. "databases<br/>and files" .-> backup
+    backup --> bucket
+    mon --> channels
+```
+
+Of everything in the picture, moteld alone has a port on the box's
+network. Everything from outside arrives there over HTTPS: a visitor's
+request, a deploy from an app's CI, a config push from the box's
+repository, a person reading from a laptop. moteld reaches the apps,
+Alertmanager and the metrics store over unix sockets.
+[How motel fits together](docs/architecture.md) follows a request
+through moteld, and a deploy from the push to the cutover.
+
 Built in:
 
 | Module | What it does |
