@@ -314,7 +314,7 @@ func (r *runner) backupStatus() *cobra.Command {
 
 // boxAlerts is `motel monitor alerts` without --app: GET /_motel/alerts,
 // for a viewer of the box. It exits 0 when the box answered, whatever
-// fires, and 3 when its Alertmanager did not answer it or the box names
+// fires, and 3 when it could not read what its Alertmanager holds or names
 // its monitor in a word this client does not know.
 func (r *runner) boxAlerts(cmd *cobra.Command, t *target) error {
 	c, err := r.client(cmd.Context(), t, nil, "", "monitor alerts")
@@ -329,7 +329,7 @@ func (r *runner) boxAlerts(cmd *cobra.Command, t *target) error {
 	case wire.MonitorOn, wire.MonitorOff:
 	case wire.MonitorUnanswered:
 		return &client.Failure{Exit: client.ExitUnknown, Message: fmt.Sprintf(
-			"%s could not tell what fires: its Alertmanager did not answer it in time", c.Box.Host)}
+			"%s could not tell what fires: it could not read what its Alertmanager holds (the box's journal says why)", c.Box.Host)}
 	default:
 		return &client.Failure{Exit: client.ExitUnknown, Message: fmt.Sprintf(
 			"%s could not be told: it says its monitor is %s, a word this client does not know", c.Box.Host, termtext.Quote(b.Monitor))}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -201,6 +202,99 @@ func TestHeldAlertsFailures(t *testing.T) {
 	}
 }
 
+// TestHeldAlertsOverTheLimit (#638): an answer of Alertmanager's longer
+// than maxAMBody fails the fetch as over the limit, naming the route
+// and the limit, not as the JSON a cut body would be; and the journal
+// line says Alertmanager holds more than motel reads, and where to look.
+// An answer of maxAMBody bytes exactly is read whole.
+func TestHeldAlertsOverTheLimit(t *testing.T) {
+	// heldAnswer padded with spaces to n bytes: still JSON.
+	padded := func(answer string, n int) string { return answer + strings.Repeat(" ", n-len(answer)) }
+	am := &fakeAMReads{alerts: padded(heldAnswer, maxAMBody), silences: padded(silencesAnswer, maxAMBody), alertsCode: 200, silCode: 200}
+	c := newAMClient(am.serve(t))
+	if held, err := c.heldAlerts(context.Background()); err != nil || len(held.Alerts) == 0 || len(held.Silences) == 0 {
+		t.Fatalf("at the limit: %v, %d alerts, %d silences", err, len(held.Alerts), len(held.Silences))
+	}
+
+	// A refusal is said as its status, however long its body; a route
+	// is named without its query.
+	am.mu.Lock()
+	am.alerts, am.alertsCode = padded(heldAnswer, maxAMBody+1), http.StatusServiceUnavailable
+	am.mu.Unlock()
+	var refused *amStatusError
+	if _, err := c.heldAlerts(context.Background()); !errors.As(err, &refused) || refused.code != http.StatusServiceUnavailable {
+		t.Errorf("a refusal over the limit: %v, want its status", err)
+	}
+	am.mu.Lock()
+	am.alertsCode = http.StatusOK
+	am.mu.Unlock()
+	var overCopies *amOverLimitError
+	if _, err := c.failureCopies(context.Background(), "ops"); !errors.As(err, &overCopies) || overCopies.path != "/api/v2/alerts" {
+		t.Errorf("a filtered read over the limit: %v, want /api/v2/alerts named without its query", err)
+	}
+
+	for _, over := range []struct{ path, what, says string }{
+		{"/api/v2/alerts", "alerts", `Alertmanager holds more alerts than motel reads (4 MiB of its answer); docs/monitor.md, "More alerts than motel reads", says how to see them`},
+		// Expired silences count until Alertmanager drops them: no
+		// producer to stop, so the alerts' passage is not the one.
+		{"/api/v2/silences", "silences", `Alertmanager holds more silences than motel reads (4 MiB of its answer, expired ones counting until its retention drops them); docs/monitor.md, "Silence an alert", says how to list them`},
+	} {
+		am.mu.Lock()
+		am.alerts, am.silences = padded(heldAnswer, maxAMBody), padded(silencesAnswer, maxAMBody)
+		if over.what == "alerts" {
+			am.alerts = padded(heldAnswer, maxAMBody+1)
+		} else {
+			am.silences = padded(silencesAnswer, maxAMBody+1)
+		}
+		am.mu.Unlock()
+		_, err := c.heldAlerts(context.Background())
+		var e *amOverLimitError
+		if !errors.As(err, &e) || e.path != over.path || !strings.Contains(err.Error(), "its answer to "+over.path+" is over 4194304 bytes, the most motel reads") {
+			t.Errorf("%s over the limit: %v", over.what, err)
+		}
+
+		core, logs := observer.New(zap.WarnLevel)
+		v := &alertsView{now: time.Now, fetch: c.heldAlerts}
+		if _, ok := v.get(context.Background(), zap.New(core)); ok {
+			t.Errorf("%s over the limit: the read was answered", over.what)
+		}
+		all := logs.All()
+		if len(all) != 1 || !strings.HasSuffix(all[0].Message, over.says) || strings.Contains(all[0].Message, "did not answer") {
+			t.Errorf("%s over the limit: journal %+v", over.what, all)
+		}
+	}
+}
+
+// TestAlertsViewSlowAnswer (#638): an answer later than the budget is
+// the deadline's error, and its journal line says only that the answers
+// did not come within the wait: not why, nor which list. Any other
+// error, a cancelled one too, has the default line.
+func TestAlertsViewSlowAnswer(t *testing.T) {
+	sock := unixServer(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, slow := newAMClient(sock).heldAlerts(ctx)
+	if !errors.Is(slow, context.DeadlineExceeded) {
+		t.Fatalf("a late answer: %v, want the deadline's", slow)
+	}
+	for _, c := range []struct {
+		err  error
+		says string
+	}{
+		{slow, `"monitor":"unanswered": Alertmanager's answers did not come within the 2 s motel waits`},
+		{fmt.Errorf("alertmanager at /run/x: %w", context.Canceled), `"monitor":"unanswered": motel could not read what Alertmanager holds`},
+	} {
+		core, logs := observer.New(zap.WarnLevel)
+		v := &alertsView{now: time.Now, fetch: func(context.Context) (liveswap.HeldAlerts, error) { return liveswap.HeldAlerts{}, c.err }}
+		if _, ok := v.get(context.Background(), zap.New(core)); ok {
+			t.Errorf("%v: answered", c.err)
+		}
+		if all := logs.All(); len(all) != 1 || !strings.HasSuffix(all[0].Message, c.says) {
+			t.Errorf("%v: journal %+v", c.err, all)
+		}
+	}
+}
+
 // TestAlertsView: one fetch per alertsEvery for every caller, a failure
 // kept as long, a clock set back fetching again; one fetch at a time,
 // the others waiting on it; a waiter that gives up told it did not
@@ -246,7 +340,7 @@ func TestAlertsView(t *testing.T) {
 	if held, ok := v.get(context.Background(), logger); ok || held.Alerts != nil || count() != 2 {
 		t.Errorf("a failure: %v %+v, %d fetches", ok, held, count())
 	}
-	if n := len(logs.FilterMessageSnippet("Alertmanager did not answer").All()); n != 1 {
+	if n := len(logs.FilterMessageSnippet("motel could not read what Alertmanager holds").All()); n != 1 {
 		t.Errorf("%d journal lines for the failure, want 1", n)
 	}
 	if _, ok := v.get(context.Background(), logger); ok || count() != 2 {

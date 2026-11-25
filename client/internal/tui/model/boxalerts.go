@@ -29,7 +29,7 @@ func (s *Session) BoxAlertsAsOf(now time.Time) Line {
 	if s.BoxAlertsSt == nil {
 		return nil
 	}
-	l := s.asOf(s.BoxAlertsSt.At, now)
+	l := append(s.asOf(s.BoxAlertsSt.At, now), s.stale(Job{Kind: KBoxAlerts})...)
 	if s.BoxAlertsErr != nil {
 		l = append(l, ownC(" · the last read failed", Warn))
 	}
@@ -48,7 +48,7 @@ func monitorSays(b wire.BoxAlerts) Line {
 	case wire.MonitorOff:
 		return Line{own("off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)")}
 	case wire.MonitorUnanswered:
-		return Line{ownC("not known", Warn), own(": the box's Alertmanager did not answer it in time")}
+		return Line{ownC("not known", Warn), own(": the box could not read its Alertmanager")}
 	}
 	return Line{ownC("not known", Warn), own(": the box said "), quoted(b.Monitor)}
 }
@@ -247,6 +247,10 @@ func (s *Session) BoxAlertsLine(now time.Time) Line {
 	switch {
 	case s.BoxAlertsSt != nil:
 		l := Line{own(Ago(now.Sub(s.BoxAlertsSt.At)) + " ago · :alerts · ")}
+		if s.Engine.Woke(Job{Kind: KBoxAlerts}) {
+			// After the pointer, as the failed read's words are (stale).
+			l = append(l, ownC("stale · ", Warn))
+		}
 		if s.BoxAlertsErr != nil {
 			l = append(l, ownC("the last read failed · ", Warn))
 		}

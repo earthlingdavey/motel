@@ -195,9 +195,8 @@ func TestWebhookValidatesPayload(t *testing.T) {
 	}
 }
 
-// A refused pin's 422 names both digests as they are: real ones, which
-// the filter's entropy layer would otherwise mask as tokens. Both are
-// names (the deployer's own pin, and the hash of what a host served),
+// A refused pin's 422 names both digests as they are. Both are names
+// (the deployer's own pin, and the hash of what a host served),
 // never secrets. (No record to check: a refusal of the request's own
 // content is not the version's history — see the deploy pipeline.)
 func TestWebhookRefusedPinNamesBothDigests(t *testing.T) {
@@ -925,9 +924,9 @@ func TestWebhookDeployRecordRoute(t *testing.T) {
 	}
 }
 
-// A recorded version's name survives the filter's entropy layer in the
-// status list and in its own record, as the running and on-disk
-// versions' names do — a commit SHA is a name, not a secret.
+// A recorded version's name is sent whole in the status list and in its
+// own record, as the running and on-disk versions' names are — a commit
+// SHA is a name, not a secret.
 func TestDeployRecordVersionsAreNamesNotSecrets(t *testing.T) {
 	h, rig := newTestHandler(t)
 	sha := "9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e"
@@ -940,9 +939,6 @@ func TestDeployRecordVersionsAreNamesNotSecrets(t *testing.T) {
 		t.Fatalf("second deploy: %d %s", w.Code, w.Body.String())
 	}
 	// The failed SHA's release is gone; it is in no field but deploys.
-	// The assertion reads the version fields alone: other fields may be
-	// masked by the entropy layer (deployed_by names the test's random
-	// t.TempDir() key path, which sometimes looks like a secret).
 	for _, path := range []string{"/demo", "/demo?deploy=" + sha} {
 		w := do(t, h, http.MethodGet, path, appToken(t), "")
 		if w.Code != 200 {
@@ -955,7 +951,7 @@ func TestDeployRecordVersionsAreNamesNotSecrets(t *testing.T) {
 			t.Fatalf("%s: version fields %q lack %s: %s", path, versions, sha, w.Body.String())
 		}
 		for _, v := range versions {
-			if strings.Contains(v, "[masked") || strings.Contains(v, "[redacted") {
+			if strings.Contains(v, "[redacted") {
 				t.Fatalf("%s: version field %q filtered: %s", path, v, w.Body.String())
 			}
 		}
@@ -1270,17 +1266,13 @@ func TestWebhookOutageNamesEverySourceDown(t *testing.T) {
 
 // A pinned deploy's digest is on record wherever the record is: the
 // response's last_deploy, the status's deploys list, the record read
-// back, and the done line of a stream — whole, though a real digest is
-// what the filter's entropy layer masks in the app's text: the pin is
-// moteld's own data, which no filter meets. An unpinned deploy has no
-// field, and a rollback carries the pin of the record it replaces.
+// back, and the done line of a stream — whole: the pin is moteld's own
+// data, which no filter meets. An unpinned deploy has no field, and a
+// rollback carries the pin of the record it replaces.
 func TestWebhookDeployRecordNamesThePin(t *testing.T) {
 	h, _ := newTestHandler(t)
 	digest := func(s string) string { sum := sha256.Sum256([]byte(s)); return hex.EncodeToString(sum[:]) }
 	pin := digest("what CI built")
-	if text, _ := NewRedactor(nil, nil).Redact(`{"sha256":"` + pin + `"}`); strings.Contains(text, pin) {
-		t.Fatalf("control: an unnamed digest must be masked in text, or this test proves nothing: %s", text)
-	}
 	pinOf := func(raw []byte) (any, bool) {
 		var m map[string]any
 		must(t, json.Unmarshal(raw, &m))

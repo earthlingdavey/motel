@@ -11,8 +11,10 @@ type Alerts struct {
 	// Monitor is MonitorOn (Alertmanager answered: Alerts is what it
 	// holds of the app, maybe none), MonitorOff (the config has no
 	// monitor block that raises anything: nothing is raised, and Alerts
-	// is empty) or MonitorUnanswered (Alertmanager did not answer within
-	// the box's budget: Alerts is empty, and says nothing). A client
+	// is empty) or MonitorUnanswered (the box could not read what
+	// Alertmanager holds: no answer within the box's budget, an answer
+	// over the 4 MiB it reads, or another failure its journal names;
+	// Alerts is empty, and says nothing). A client
 	// reads a word it does not know as not knowing whether anything
 	// fires.
 	Monitor string  `json:"monitor" text:"moteld"`
@@ -36,7 +38,7 @@ type Alert struct {
 	// Summary is motel's sentence about it, which the box built from
 	// its own words and names, never the app's output (notify's own
 	// filter runs over it, its known values the channels' URLs, with
-	// the filter's heuristic layers); or an operator's rule's, or
+	// the ten shape rules); or an operator's rule's, or
 	// another program's, as written.
 	Summary string `json:"summary" text:"passes"`
 	// StartsAt is when it began firing, as Alertmanager holds it.

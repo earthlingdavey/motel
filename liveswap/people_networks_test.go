@@ -162,9 +162,6 @@ func TestAnnouncementSummary(t *testing.T) {
 		if got := c.a.Summary(); got != c.want {
 			t.Errorf("Summary() =\n  %q\nwant\n  %q", got, c.want)
 		}
-		if safe := c.a.Safe(); !slices.Equal(safe, []string{"alice@example.com", short}) {
-			t.Errorf("Safe() = %q", safe)
-		}
 	}
 	name := strings.Repeat("a", access.MaxName)
 	for _, c := range []struct {
@@ -180,9 +177,6 @@ func TestAnnouncementSummary(t *testing.T) {
 		got := c.a.Summary()
 		if n := len([]rune(got)); n > 200 || !strings.HasSuffix(got, c.end) || !strings.Contains(got, strings.Repeat("a", 48)) || strings.Contains(got, strings.Repeat("a", 49)) {
 			t.Errorf("a long name: %d runes, %q", n, got)
-		}
-		if safe := c.a.Safe(); !strings.Contains(got, safe[0]) || !strings.Contains(got, safe[1]) {
-			t.Errorf("Safe() %q is not what the summary %q shows", safe, got)
 		}
 	}
 }

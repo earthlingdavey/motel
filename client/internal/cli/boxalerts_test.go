@@ -44,7 +44,7 @@ func hostileBoxAlerts() wire.BoxAlerts {
 // the human output holds nothing a box could use on a terminal, has
 // every value of the box's on a labelled line of its own, and is what
 // the golden says; a box with no monitor block says so, exit 0; one
-// whose Alertmanager did not answer it, or that says a monitor word the
+// that could not read its Alertmanager, or that says a monitor word the
 // client does not know, could not tell (3), and a monitor that is not a
 // word is not moteld's answer; a matcher's operator or a silence's
 // state the client does not know is said as not known; at the cap the
@@ -87,7 +87,7 @@ func TestMonitorBoxAlerts(t *testing.T) {
 		t.Errorf("off: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
 	for _, c := range []struct{ monitor, says string }{
-		{wire.MonitorUnanswered, "127.0.0.1 could not tell what fires: its Alertmanager did not answer it in time"},
+		{wire.MonitorUnanswered, "127.0.0.1 could not tell what fires: it could not read what its Alertmanager holds (the box's journal says why)"},
 		{"asleep", `127.0.0.1 could not be told: it says its monitor is "asleep", a word this client does not know`},
 	} {
 		fb.boxAlerts.Monitor = c.monitor

@@ -7,6 +7,15 @@ release's notes describe. The ways back below go to `moteld` releases
 only: going back across that move is not possible. What this page says
 of a release up to v0.7.0 applies to a box once it has made the move.
 
+The raw-binary archives were renamed with the package. Up to v0.7.0
+they were `motel_<version>_linux_<arch>.tar.gz`, holding `motel`, and
+since v0.8.0 they are `moteld_<version>_linux_<arch>.tar.gz`, holding
+`moteld`. After v0.8.0 the old name is the laptop client's archive,
+and its `motel` is the client, which refuses `run` and every other
+server command. A script of your own that still fetches the old name
+installs the client in the server's place: have it fetch `moteld_…`
+and install `moteld`.
+
 A release is a new `.deb`; installing it over the old one is the
 upgrade. Everything on this page runs as root on the box
 (`ssh root@box.example.com`). This fetches the `.deb` for the box's

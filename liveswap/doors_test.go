@@ -206,24 +206,6 @@ func TestCanaryAtEveryDoor(t *testing.T) {
 	}
 }
 
-// A safe name exempts nothing from the known values (layer 2 of the
-// filter's header): the app's text that holds a version, a pin or a
-// release on disk equal to an env value has it replaced, though such a
-// name is left alone by the heuristics.
-func TestADoorsNamesExemptNoValue(t *testing.T) {
-	const value = "release-named-like-a-value-01"
-	b := newDoorBox(t, "TOKEN="+value+"\n")
-	must(t, os.MkdirAll(b.rig.spec.dirs.release(value), 0o755))
-	d := b.rig.ma.door(value)
-	if got := d.text("serving " + value); got != "serving [redacted:TOKEN]" {
-		t.Errorf("the app's text: %q", got)
-	}
-	sha := strings.Repeat("4c2d9e7b1a05", 3) + "0f9e"
-	if got := b.rig.ma.door(sha).text("built " + sha); got != wire.AppText("built "+sha) {
-		t.Errorf("a version that looks generated, named: %q", got)
-	}
-}
-
 // The logs door reads no more of a long line than the logs read always
 // has: a value past the first 4 KiB and its margin is in no part of the
 // filter's input, so it is named in no redacted_env; one inside what is
@@ -236,7 +218,7 @@ func TestLogsDoorReadsABoundedPieceOfALongLine(t *testing.T) {
 		t.Fatal("the premise: a line longer than the filter reads")
 	}
 	seen := map[string]bool{}
-	out := filterLogLine(NewRedactor([]string{"NEAR=" + near, "FAR=" + far}, nil), line, seen)
+	out := filterLogLine(NewRedactor([]string{"NEAR=" + near, "FAR=" + far}), line, seen)
 	if len(out) > logsLineMax || !strings.HasSuffix(out, "…") || strings.Contains(out, near) || strings.Contains(out, far) {
 		t.Errorf("sent %d bytes, ending %q", len(out), out[max(0, len(out)-20):])
 	}
@@ -397,11 +379,11 @@ func g() wire.AppText { return wire.AppText("a constant") }
 }
 
 // A failed deploy's tail passes the door line by line: a rule that
-// reaches across white space (a bearer token, an assignment) never
-// joins two lines or masks the next line's first word, and a line that
+// reaches across white space (a bearer token) never joins two lines or
+// masks the next line's first word, and a line that
 // holds a line break of its own stays one line, as the journal kept it.
 func TestDoorTailKeepsItsLines(t *testing.T) {
-	d := &door{r: NewRedactor(nil, nil), seen: map[string]bool{}}
+	d := &door{r: NewRedactor(nil), seen: map[string]bool{}}
 	in := []string{"refreshing token", "ConnectionPoolManagerStarted ok", "db password:", "connection established", "one\ntwo"}
 	got := strs(d.lines(in))
 	if strings.Join(got, "|") != strings.Join(in, "|") {
@@ -409,25 +391,10 @@ func TestDoorTailKeepsItsLines(t *testing.T) {
 	}
 }
 
-// The versions and the pins the app's records hold are names the
-// heuristics leave alone in the app's text, as the status's were: an
-// app that prints its artifact's digest keeps it readable.
-func TestADoorsNamesAreTheRecordsPins(t *testing.T) {
-	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
-	pin := strings.Repeat("3f9a1c7e", 8)
-	must(t, writeDeployRecord(b.rig.spec.dirs, "v7", []byte(`{"version":"v7","status":"succeeded","sha256":"`+pin+`"}`)))
-	if got := b.rig.ma.door().text("artifact sha256 " + pin); got != wire.AppText("artifact sha256 "+pin) {
-		t.Errorf("the app's text: %q", got)
-	}
-	if got := b.rig.ma.door().text("artifact sha256 " + strings.Repeat("8b2d6e4f", 8)); !strings.Contains(string(got), "[masked, 64 chars]") {
-		t.Errorf("the premise, a digest no record names is masked: %q", got)
-	}
-}
-
 // redacted_env never spells a value: a key's name that is another key's
 // value is that value's marker in the list.
 func TestRedactedEnvSpellsNoValue(t *testing.T) {
-	d := &door{r: NewRedactor([]string{"PRIMARY_KEY_NAME=STRIPE_LIVE_KEY", "STRIPE_LIVE_KEY=sk-value-0123456789"}, nil), seen: map[string]bool{}}
+	d := &door{r: NewRedactor([]string{"PRIMARY_KEY_NAME=STRIPE_LIVE_KEY", "STRIPE_LIVE_KEY=sk-value-0123456789"}), seen: map[string]bool{}}
 	if got := d.text("boot sk-value-0123456789"); strings.Contains(string(got), "sk-value") {
 		t.Fatalf("the text: %q", got)
 	}
@@ -437,11 +404,10 @@ func TestRedactedEnvSpellsNoValue(t *testing.T) {
 	}
 }
 
-// A failed deploy's own version and pin are names its text may hold,
-// which no record on disk holds yet: an app that prints the git sha it
-// was deployed as and its artifact's digest, in its journal and in its
-// probe's answer, has both read as written in the deploy's detail and
-// its record, as on main (failureDetail's names).
+// An app that prints the git sha it was deployed as and its artifact's
+// digest, in its journal and in its probe's answer, has both read as
+// written in the deploy's detail and its record: no rule of the filter
+// matches a commit or a digest.
 func TestFailedDeploysOwnNamesStandInItsDetail(t *testing.T) {
 	b := newDoorBox(t, "TOKEN=some-value-of-the-app-01\n")
 	version := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b"
@@ -463,10 +429,9 @@ func TestFailedDeploysOwnNamesStandInItsDetail(t *testing.T) {
 	}
 }
 
-// A logs line from a release no longer on disk and named by no record
-// holds the git sha it was deployed as: the release the line's unit
-// names is a name the logs door leaves to the known values alone, so
-// the sha is read as written (appLogs' names).
+// A logs line that holds the git sha its release was deployed as reads
+// as written, the line's release beside it: no rule of the filter
+// matches a commit.
 func TestLogsLinesReleaseStandsInItsText(t *testing.T) {
 	version := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b"
 	j := demoJournal(1, func(int) string { return "booted " + version })

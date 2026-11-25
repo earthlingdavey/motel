@@ -15,8 +15,9 @@ import (
 // viewer of the box) is the route's to choose,
 // through the handle Decide's answer made, never the source's.
 type AlertsSource interface {
-	// Alerts is what Alertmanager holds now, or ok false when it did not
-	// answer within the source's own short budget. It is called with the
+	// Alerts is what Alertmanager holds now, or ok false when the source
+	// could not read it (no answer within its own short budget, an answer
+	// over what it reads, a refusal). It is called with the
 	// request's context; the caller only reads what it returns.
 	Alerts(ctx context.Context) (held HeldAlerts, ok bool)
 }

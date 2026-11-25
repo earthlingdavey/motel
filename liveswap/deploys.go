@@ -66,8 +66,7 @@ import (
 // summaryPin is the summary's digest when it has the shape the writer records
 // (lowercase hex); "" otherwise. A record is read off disk, so a
 // string in the field names nothing until it is a digest, as a
-// version names nothing until it is valid (recordHead) — and the safe
-// string is the text the body carries, never a respelling of it.
+// version names nothing until it is valid (recordHead).
 func summaryPin(s deploySummary) string {
 	var d string
 	if json.Unmarshal(s.SHA256, &d) != nil || !sha256Re.MatchString(d) || d != strings.ToLower(d) {
@@ -139,22 +138,6 @@ func releaseNames(releasesDir string) ([]string, error) {
 		}
 	}
 	return names, nil
-}
-
-// recordNames is the versions and the pins the app's deploy records
-// hold, each proven a record and a digest as the status lists them
-// (listDeploySummaries, summaryPin): names the app's filter leaves to
-// its known values alone (managedApp.door), as the status's versions
-// and pins were. A safe string equal to a known value exempts nothing.
-func recordNames(d appDirs) []string {
-	var names []string
-	for _, s := range listDeploySummaries(d) {
-		names = append(names, s.Version)
-		if pin := summaryPin(s); pin != "" {
-			names = append(names, pin)
-		}
-	}
-	return names
 }
 
 // recordsDir is the records directory as the directory it names

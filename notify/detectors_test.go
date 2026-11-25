@@ -62,8 +62,7 @@ func TestLifecycleSinkMapsLiveswapsEvents(t *testing.T) {
 // TestPeopleSinkRaisesBoxEvents: liveswap's two announcements about a
 // person's key are one-shot box events at warning, from source access,
 // keyed by the key's fingerprint, with the summary liveswap wrote, the
-// name and the fingerprint's start in it as written (a long name of hex
-// would be masked but for Announcement.Safe); a thief cycling networks is
+// name and the fingerprint's start in it as written; a thief cycling networks is
 // held to the limit per key (four, then a journal line each), and
 // another key is not held by it.
 func TestPeopleSinkRaisesBoxEvents(t *testing.T) {
@@ -89,8 +88,8 @@ func TestPeopleSinkRaisesBoxEvents(t *testing.T) {
 	if sum := got[0].Annotations["summary"]; sum != first.Summary() || !strings.Contains(sum, alice[:19]) {
 		t.Errorf("summary %q, want %q", sum, first.Summary())
 	}
-	// A long name that looks generated, cut in the summary: the cut is
-	// what the filter is told to leave.
+	// A long name that looks generated, cut in the summary, is sent as
+	// written.
 	long := liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "svc-" + strings.Repeat("7f3e9d2a", 10), Key: bob, From: "203.0.113.0/24"}
 	s.Announce(long)
 	if got := te.drain(); len(got) != 1 || got[0].Annotations["summary"] != long.Summary() {

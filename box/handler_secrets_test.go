@@ -161,8 +161,8 @@ func TestPushFastPathSecrets(t *testing.T) {
 
 // A result reaches the workflow as root wrote it: its secrets' names (a
 // variable's name can look as random as a key, which an older moteld's
-// heuristics then masked) and its diff, which passed the heuristic
-// layers when the result was made (caddyfileDiff, diff.go). No filter
+// heuristics then masked) and its diff, which passed the shape rules
+// when the result was made (caddyfileDiff, diff.go). No filter
 // runs over the answer.
 func TestResultSecretNamesUnmasked(t *testing.T) {
 	p := newPushRig(t)

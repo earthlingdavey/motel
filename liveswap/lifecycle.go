@@ -39,7 +39,7 @@ const (
 // refusal's reason, never the app's output, and liveswap tells it as
 // written, with no app's filter (notify's own still runs over every
 // summary it is told, its known values the channels' URLs, with the
-// filter's heuristic layers).
+// ten shape rules).
 type LifecycleEvent struct {
 	Name       string
 	App        string

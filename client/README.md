@@ -123,7 +123,8 @@ box's free text, on a `summary` line under it. Not the box's own alerts,
 and not the silences. The box asks Alertmanager at most every 5 s, so
 an answer can be that old. It exits 0 when it read them, alerts or none,
 and when the box has no monitor (nothing is raised there); 3 when the
-box could not ask its Alertmanager (`"monitor":"unanswered"`) or names
+box could not read what its Alertmanager holds (`"monitor":"unanswered"`;
+the box's journal says why) or names
 its monitor in a word the client does not know: `--json` then prints
 the client's own sentence. It is asked with your own key only, as
 `whoami` is. An alert's name is held to `^[A-Za-z_][A-Za-z0-9_:.-]{0,63}$` (an app's
@@ -148,14 +149,19 @@ alerts about a person's key, which go to the operator's channels alone. Silences
 added and expired as root on the box (`moteld monitor silence`,
 docs/monitor.md). It exits 0 when the box answered, whatever fires or
 is silenced; on a box whose monitor block sends nothing to anyone, or
-that has none, it says the box raises no alerts, exit 0; when the box's Alertmanager did not answer the box in
-time (`"monitor":"unanswered"`), or the box names a monitor word this
+that has none, it says the box raises no alerts, exit 0; when the box could not read what its Alertmanager
+holds (`"monitor":"unanswered"`), or the box names a monitor word this
 client does not know, 3; a monitor that is not a lowercase word is not
 moteld's answer, 3. A silence's state the client does not know is said
 as not known, the box's word quoted, and an operator it does not know
 as `?`. The box sends at most 500 alerts, the newest, and 200 silences,
 the active ones first and then the soonest to start, and says when it
-held more: the first line then says so.
+held more: the first line then says so. That holds up to 4 MiB of what
+Alertmanager holds, the most the box reads of it (5,500 to 7,500 alerts
+with no details, as motel's own events are; about 1,300 to 1,400 from
+`moteld monitor send` with its 2 KiB of details): past it the box reads none, and says
+`"monitor":"unanswered"` (docs/monitor.md, "More alerts than motel
+reads").
 
 `monitor rules` reads `GET /_motel/rules`, for a viewer of the box, the
 remote twin of `moteld monitor rules` without the store's socket and
@@ -365,7 +371,7 @@ other than the 401, 403, 404 and 429 below, a 409 for one; said as the
 box's: no header tells a gateway's from motel's; and `backup status`'s
 not healthy); 2 nothing was
 sent (usage, no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not
-moteld's answer, any 5xx, a 429 that stood, the box's could not tell of `backup status`, an Alertmanager that did not answer the box, for `monitor alerts`, a metrics store that did not answer it, for `monitor rules`, and a store that did not, for `metrics`); 4 not accepted (a 401 after one
+moteld's answer, any 5xx, a 429 that stood, the box's could not tell of `backup status`, an Alertmanager the box could not read, for `monitor alerts`, a metrics store that did not answer it, for `monitor rules`, and a store that did not, for `metrics`); 4 not accepted (a 401 after one
 retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
 verify (the client never continues past one); 9 the deploy `status
 --follow` followed failed; 130 interrupted. 7 is held for a box too old
@@ -616,7 +622,7 @@ made by hand. Accepted:
 | Against a moteld older than the alerts read (a 404), the title bar says `alerts not known` (`alerts ?`) in the warning colour on every screen until ctrl-r, though the box refused nothing | 2 | 5 | 1 | 10 | 2 (a dim word of its own for a box that cannot say) | accepted: the decision of 2026-11-20 (#576, READS.md section 3): the box cannot say, and the mark never reads as none firing; `:alerts` says the 404 and why |
 | While the box says it holds more alerts than it sends (`more_alerts`, past 500), every alert the watch has counted and the box no longer sends is kept as maybe firing until an answer without it, so the keys kept grow for as long as that lasts, and one not yet seen stays counted as new until a key | 2 | 2 | 3 | 12 | 2 | accepted: it takes an Alertmanager holding over 500 alerts, far past what motel posts; the count says `+` |
 | For a person with app grants only, two alerts of one app that differ only by instance and begin at one evaluation (an app's rule over two paths) are one in the title bar's count and ring once: an app's alerts carry no instance, so their keys are the same. A viewer of the box, whose read carries it, counts two | 2 | 3 | 3 | 18 | 3 (the instance on an app's alerts: a wire field) | accepted: it takes two instances crossing at one evaluation; the app's screen lists both |
-| For a person with app grants only, one app whose alerts read is refused, unanswered by its Alertmanager or not yet read (an app added or removed on the box, until the list is read again, at most a minute) turns the whole mark to `alerts not known` (or `alerts…`), hiding the other apps' known count, critical ones too | 2 | 3 | 3 | 18 | 2 (the known sum shown as old beside an app not known) | accepted: the mark never reads as a count it does not know; the apps' own screens show theirs |
+| For a person with app grants only, one app whose alerts read is refused, answered `unanswered` (the box could not read its Alertmanager) or not yet read (an app added or removed on the box, until the list is read again, at most a minute) turns the whole mark to `alerts not known` (or `alerts…`), hiding the other apps' known count, critical ones too | 2 | 3 | 3 | 18 | 2 (the known sum shown as old beside an app not known) | accepted: the mark never reads as a count it does not know; the apps' own screens show theirs |
 | `ChannelFailed` told to several channels is one alert in the title bar's count, but several identical rows on `:alerts` and in the box screen's count of what fires (the wire does not carry which channel each is), from a box whose moteld is older than `ChannelFailed`'s read-only copy, or from a newer one before that copy is held (vmalert's rules alone, while moteld was not running when the failure began) | 2 | 3 | 3 | 18 | 2 (the channel on the wire, a notify change) | accepted: the owner's decision of 2026-11-20 (#576); a newer moteld sends the read-only copy alone in their place (notify/DESIGN-notify.md, "Failed delivery"), which is what is left: an older box until it is upgraded, and the minutes before moteld's copy is held |
 | On a box with the metrics package whose moteld was not running when a failure began, the TUI rings twice for it: once for vmalert's addressed rows, and again when moteld's read-only copy, from a start of its own, takes their place | 2 | 2 | 3 | 12 | 3 (a vmalert rule for the read-only copy, with a series motel pushes while a hold stands: notify/DESIGN-metrics.md, "ChannelFailed, a second source") | accepted: notify/DESIGN-notify.md's row; the row the read ends on is right |
 | From a box older than `ChannelFailed`'s read-only copy, with the metrics package, one `ChannelFailed` often rings twice: vmalert's post carries the minute of its evaluation as its start, earlier than motel's, and Alertmanager moves the start it holds to it, a new alert to the watch (measured 2026-11-21) | 2 | 4 | 3 | 24 | — (the box's) | fixed on a newer box: its read carries the read-only copy, which has no vmalert rule, so its start never moves; an older box keeps it until upgraded |
@@ -635,6 +641,9 @@ made by hand. Accepted:
 | Below the TUI's smallest window (60x16) the frame says only `window too small`, and the logs screen's keys still act on what it would show: k, ↑, PgUp and Home hold the view where nobody sees it, and `w` turns the wrap | 2 | 5 | 1 | 10 | 2 (a branch in every logs key for a window the TUI does not draw in) | accepted: the frame says the window is too small and what it needs; once it is large enough the rule says `held`, and End follows |
 | After a read that stopped every read and `r`, a failure the logs screen said before the stop is said again until the next logs answer, 2 s or the read's wait | 2 | 2 | 3 | 12 | 1, 2 (forgetting it on a stop also cleared the failure of another opening's read) | accepted |
 | The logs screen's tail after a skip (a follow more than the 5,000 lines it holds behind, `lines skipped`) leaves out each of its lines at or before the time of the newest line held, so a line of the journal's with that same microsecond, after the last one held, is not shown, nor one stamped earlier after a step of the box's clock back | 2 | 5 | 1 | 10 | 2 (keep the last line's text too, and match on both) | accepted: the skip's note says the lines between were not read, which these are among |
+| After a wake from sleep, a frame drawn between a read's answer and its being applied (the clock's tick, between the reads' goroutine recording the read and the screen applying the answer) shows the answer from before the sleep with its age and without `stale`, for that frame alone: the engine clears the read's mark when it records the answer (#639) | 2 | 2 | 3 | 12 | 3 (clear the mark where the answer is applied, on the screen's goroutine, through an engine call) | accepted: the age beside it is the old one, and the answer is applied in the next frame. The apps rows were so before |
+| After a wake, a list kept beside a 403 or a 404 is shown with its age and no `stale` (`list as of 14:00:00 UTC, 1h ago · the last read failed`): its read is held by the refusal, and a held read is not marked (`Engine.Woke`). A whoami kept beside one is asked again by the wake itself, which lifts its hold, so who am I's crumb says `stale` until that read is refused again, and then its age alone (`1m ago · stale`, then `1m ago`); that crumb never says the read failed, but the title bar (`whoami failed`) and the screen's last line do (#639) | 2 | 3 | 1 | 6 | 1, 2 (mark a held read whose answer is kept) | accepted: it takes a refusal on those routes, and the failure is said on the screen in the warning colour, the list's on its line, whoami's at the screen's foot and in the title bar: red and named (the rule's single fault) |
+| After a wake, an app's alerts or a series can keep `stale` beside an answer applied after the wake (`alerts      as of 0s ago · stale · 2 held`) until that read's next turn: when the screen closes between `Drive`'s look at the read's context (`run.go`) and `Done`'s early return for a shown-only read dropped in flight, the answer is applied and the mark stays. The mechanism is main's; the word is #639's | 2 | 2 | 3 | 12 | 2 (clear the mark where such an answer is applied) | accepted: a window between two statements, after a wake, with the screen closed in it |
 
 Owed, from the reviews of the TUI's first part (#558; scored there), of
 their fixes, and of its second part; the others are fixed:
@@ -645,6 +654,12 @@ their fixes, and of its second part; the others are fixed:
 | The title bar's name, roles and release are whoami's last answer, shown beside the freshness of the newest answer to any read: while whoami answers (every 5 minutes) they can be up to 5 minutes older than that word says, unmarked. While its newest read has failed, the title bar says so and the answer's age before it (below) | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
 | Between reads nothing is waited for, so after a box stops answering the title bar says `live`, its age growing, until 5 s into the first read made after it (from the end of its signature, when it signs a token; then `waiting`, as "The rate" under "## The TUI" below says): for the time to the next read due and 5 s more, as long as between two reads of a box that answers and 5 s. Measured on the fake clock: 7 s on an app's screen (its read every 5 s: at most 10 s), 14 s on the apps screen with one app and refusals that come 10 s late (its app read every 30 s: at most 35 s), at most 65 s on an apps screen with no app (the list every 60 s); with more apps their reads are spread over the cycle and it is shorter | 2 | 4 | 3 | 24 | 3 (a read made only to see that the box answers, when nothing else is due: a new schedule, and requests against the rate) | the owner's call: over the bar, and closing it costs requests, which this change was held not to add; the age beside the word is never more than 5 s past what the same screen shows of a box that answers |
 | `motel logs` prints each line whole after its time, and a terminal wraps a line wider than itself: an app that writes a line padded to the reader's width, with a time and text after the padding (a request it logs, with what a client sent in it), has that text begin a row of its own, where it reads as a line of its own, or as one of the client's dividers (`-- 2026-11-21 UTC, release v43 --`, a gap). The same mechanism as the accepted row on a labelled value's runs of spaces, scored there at occurrence 1; scored here at 5, since an app's line holds what anyone who reaches it may send | 2 | 5 | 3 | 30 | 3 (a layout that knows the terminal's width and indents a line's continuation rows past the time, so that no row of the app's begins at the left edge) | the owner's call: over the bar, and the fix is a new layout; in a pipe or a file no line wraps, and `--json` holds each line whole. Found while building `motel logs` |
+| After a wake from sleep the logs screen's crumb says its newest answer's age and not `stale`, as every other screen's crumb now does (#639): the engine marks the logs read too, and nothing shows it | 2 | 5 | 3 | 30 | 1 (`LogsAsOf` says `Session.stale` beside the age), risk 2 | owed: left out of #639, since its crumb has rules of its own, #662 is about that screen and #667 changes its files; for the change that settles that crumb |
+| After a sleep longer than 30 s but shorter than the watch's interval and 5 s (for a person with app grants only, the apps' alerts are read at the statuses' interval, never under 30 s: 31 to 35 s up to about 19 apps, to 53 s with 30 apps (an interval of 48 s), to 5m22s with 200 (5m17s); up to 65 s while paused), the title bar's firing count is not marked old (`✖ 3?`) though the alerts reads behind it are marked stale on the screens that show them: `Firing.Old` judges an answer by its age alone (#639) | 2 | 3 | 3 | 18 | 1 (`Old` also when `Engine.Woke` says the watch's read is marked), risk 2 | owed: a single fault, so fixed by the rule, but #639 leaves the title bar's mark as it is (its rule is #576's); for a change of the mark's own |
+| The title bar's `whoami failed; 46s old:` says the age of whoami's answer and not `stale` while whoami is marked by a wake (`whoami failed; 46s old: v0.7.0 · alice@example.com …`, whoami marked). The words are main's, and were so before #639 | 2 | 4 | 3 | 24 | 1, 2 (say `stale` there while whoami is marked) | owed: over the bar, but #639 leaves the title bar as it is; for the change of the title bar's own the count's row above names |
+| After a wake, an answer to a read that was in flight when the machine slept clears `stale`, though it may be from before the sleep, and it is shown as of when it came, with no `stale`, until that read's next turn: the open app's status 5 s; an app's alerts on its screen 15 s (the box's alerts under a viewer's watch 15 s); the box, its backups, alerts and rules, an app's rules and a series 30 s; another app's status and alerts their cycle, 30 s or more with many apps; the list and who am I 60 s (whoami 5 minutes off its screen, and the wake's ask of whoami, the list and the open app's status is put back to that turn when that read was the one in flight). The apps rows were so before; #639 makes it every screen's | 2 | 3 | 3 | 18 | 3 (a new state, the wake's time, to keep the mark for an answer to a read taken before it, and a re-ask of that read; the one tried in #639 brought in faults in both) | owed: a single fault, so fixed by the rule; the fix tried in #639 brought in faults two reviews found, and was taken out by the owner's decision. A change of its own, if the owner asks for one |
+| After a wake, a fresh answer can be shown as `stale` for up to its read's interval: the wake is seen only at the next tick of the clock, up to 1 s after the machine resumes (`Tick`), and a read taken and answered before that tick is marked by it (`wakeLocked`) and keeps the word until its next turn. Forced on the fake clock: `:box … as of 14:15:20 UTC · 0s ago · stale` for 30 s after a 2-minute sleep; 30 s for the backups, the box's rules, an app's rules and the metrics, 5 s for an app's status, 1 s for who am I, 15 s for `:alerts` after a 1-hour sleep. It takes an answer inside that sub-second window, so a network up at once; after a sleep past the 10-minute pause only whoami and the watch's reads are taken before the tick. The apps rows were so before; #639 makes it every screen's. Not run on a real suspend | 2 | 3 | 3 | 18 | 3 (the wake seen before the reads resume, or the reads in that window kept unmarked) | owed: a single fault, so fixed by the rule; the owner has said no more engine changes in #639. For the same change of its own as the row above, if the owner asks for one |
+| At 60 columns a crumb that says both `stale` and `the last read failed` (a read failed after a wake) takes the row: `as of 14:12:40 UTC · 46s ago · stale · the last read failed` is 59 cells, and the screen's name on its left is not drawn until the read answers. Before #639 the failure alone left 8 cells of it | 2 | 3 | 3 | 18 | 2 (a shorter right side when the row cannot hold the name too) | owed: #639 leaves the crumb's layout as it is; the word is never what is cut. For a change of the crumb's own |
 
 ## The TUI
 
@@ -687,7 +702,7 @@ lists them whole, `motel monitor alerts --box <host> --app <app>`,
 since the screen's `y` and `P` give the status; then the first three,
 each with what holds it, when it began and, on a `summary` line, its
 summary, and the rest counted; the client's own words when the box has no monitor or
-could not ask its Alertmanager, and on a 404 the box's own (a box older
+could not read its Alertmanager, and on a 404 the box's own (a box older
 than the read, or no app of that name now); while a deploy is in flight its
 state names the current version as running (one stopped, throttled or
 in backoff by its row's word), and a `deploying` line
@@ -1008,7 +1023,7 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   asked again when whoami next lists the role, a 404 by ctrl-r on a
   screen that shows the read (`:alerts`, the box screen, an app's
   screen for its alerts); the
-  box's Alertmanager did not answer the box; a monitor word the client
+  box could not read its Alertmanager; a monitor word the client
   does not know; a read that failed before any answer; an answer about
   another key or box) it says `alerts not known` (`alerts ?`, `?`),
   never a zero, and the title bar's word is not turned to `refused` by
@@ -1020,8 +1035,8 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   fires, told apart by its name, app, instance, severity and start, so
   a refire, a silence ending, the deploy mute ending and a change of
   severity are each new; nothing is new at the first answer, and after
-  a gap (the pause, STALE, a sleep, an Alertmanager that did not answer
-  the box) what is new against the last answer known is new once.
+  a gap (the pause, STALE, a sleep, an Alertmanager the box could not
+  read) what is new against the last answer known is new once.
   While something is new and not seen the long form says how many
   (`✖ 3 firing, 1 new`) and the mark is drawn reversed, which reads
   without colour: on alternate seconds of the clock for 5 s, then still
@@ -1073,8 +1088,17 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   counts. A step of the clock back is seen at the first time read after
   it, and every time kept of the reads moves back by it, to within the
   second between two readings; a sleep, or a step back past 30 s, makes
-  every row that is still being read stale until read again (one held
-  by a 403 or a 404 waits for `ctrl-r`). A step of the clock forward cannot be told from a short sleep: one that leaves no more than 30 s between two of the clock's ticks (one a second) is counted as time passed, so the bucket fills by the step and a 429's wait or a backoff ends early by it; a longer one is a wake.
+  every answer kept that is still being read stale until read again,
+  whatever screen shows it (one held by a 403 or a 404 waits for
+  `ctrl-r`, and a deploy's record, read once, is not marked): an apps
+  row says `stale` in its state, and the crumb of an app's screen, who am I, the box, the
+  backups, the alerts, the rules and the metrics says `stale` after the
+  answer's age, as do the box screen's lines of the backups and the
+  alerts, an app's line of its alerts and the apps screen's line of a
+  list whose read failed; the logs screen's crumb does not. Any answer
+  clears the mark: a read in flight through the sleep that answers after
+  the wake clears it, though its answer may be from before the sleep
+  (the owed row above). A step of the clock forward cannot be told from a short sleep: one that leaves no more than 30 s between two of the clock's ticks (one a second) is counted as time passed, so the bucket fills by the step and a 429's wait or a backoff ends early by it; a longer one is a wake.
   Colour only repeats a mark (`✖ ▲ ⟳ ? ·`) or a word; `NO_COLOR`
   turns it off.
 - **Box text on tview.** tview reads `[...]` as tags in table cells,

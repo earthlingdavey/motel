@@ -1,7 +1,7 @@
 ✖ 2 firing · motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the … live · 0s ago
 apps › blog                                                              as of 14:12:40 UTC · 0s ago
 state       running 7c1e55d0a913 · pid 41233 · unit motel-blog.7c1e55d0a913.3f9a0c21d4e8b7a6.service
-alerts      2 held · as of 0s ago
+alerts      as of 0s ago · 2 held
             all: motel monitor alerts --box deploy.example.com --app blog
 alert       deploy_failed · warning · silenced until 15:12 UTC · since 3m ago (14:09 UTC)
 summary     deploy of e9a0b3f2c118 failed at starting
