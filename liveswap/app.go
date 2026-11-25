@@ -320,9 +320,7 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 }
 
 // door is the app's filter for text the app wrote, at the place it
-// enters (redact.go): the values remembered from every launch, and the
-// names that text may hold, which the heuristics leave alone (the
-// app's, the versions given, the releases on disk, the app's dirs).
+// enters (redact.go): the values remembered from every launch.
 //
 // It may read the env_file: after a moteld restart the app is
 // reattached without a launch, and a reload can name another env_file
@@ -333,28 +331,15 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 // read back from the manager (rememberRunningEnv). (A deploy's failed detail does not
 // read it: its launch rendered the file and remembered the values,
 // failureDetail.)
-func (ma *managedApp) door(names ...string) *door {
-	return ma.doorKnowing(nil, true, append(names, ma.namesOnDisk()...)...)
-}
-
-// namesOnDisk is the names on the box the app's text may hold, which
-// the doors give the heuristics as safe: the env_file's path, the
-// releases on disk, and the versions and pins the records hold.
-func (ma *managedApp) namesOnDisk() []string {
-	spec := ma.snapshot().spec
-	if spec == nil {
-		return nil
-	}
-	onDisk, _ := listReleases(spec.dirs) // names only
-	return append(append([]string{spec.envFile}, onDisk...), recordNames(spec.dirs)...)
+func (ma *managedApp) door() *door {
+	return ma.doorKnowing(nil, true)
 }
 
 // doorKnowing is the app's filter knowing the pairs also (a launch's
 // own, which a failed deploy's detail is filtered with whatever the
-// process remembers: failureDetail), with names and the app's name and
-// dirs as its safe strings. read is whether it may read the env_file.
-// tell's summary passes it with the release alone, as it always did.
-func (ma *managedApp) doorKnowing(also []string, read bool, names ...string) *door {
+// process remembers: failureDetail). read is whether it may read the
+// env_file.
+func (ma *managedApp) doorKnowing(also []string, read bool) *door {
 	// The spec is read under secretsMu so the "which env_file is
 	// loaded" check and the spec it is checked against are one
 	// snapshot. secretsMu → specMu is the only nesting.
@@ -373,11 +358,7 @@ func (ma *managedApp) doorKnowing(also []string, read bool, names ...string) *do
 	}
 	kvs := mergeSecrets(append([]string(nil), ma.secrets...), also)
 	ma.secretsMu.Unlock()
-	safe := append([]string{ma.name}, names...)
-	if spec != nil {
-		safe = append(safe, spec.dirs.root, spec.dirs.app, spec.dirs.releases, spec.dirs.shared, spec.dirs.run)
-	}
-	d := &door{r: NewRedactor(kvs, safe), seen: map[string]bool{}}
+	d := &door{r: NewRedactor(kvs), seen: map[string]bool{}}
 	if unread != nil {
 		// The reason names the file and why, as main's sentence did: a
 		// line that is no assignment is quoted, as its parse error is in
@@ -673,10 +654,8 @@ func preflightResult(what string, err error) error {
 // the fact: the exit the runner recorded (the pre_start's from its
 // error; the app's as read before motel stopped it, and only when
 // it died on its own), the last probe's answer, and the last lines the
-// launch's units wrote. Nil when a launch left nothing to say. own is
-// the deploy's version and pin, names its text may hold that no record
-// on disk holds yet (this deploy's is written after).
-func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, own []string, err error, appExit string, appPID int, l launch, since time.Time) (*deployDetail, []string) {
+// launch's units wrote. Nil when a launch left nothing to say.
+func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, err error, appExit string, appPID int, l launch, since time.Time) (*deployDetail, []string) {
 	raw := rawDetail{withBody: spec.deployLogLines > 0, maxLines: spec.deployLogLines}
 	var ee *exitError
 	// With the exit, the pid of the process that failed — the pre_start's
@@ -724,7 +703,7 @@ func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, own []string
 	// env_file rendered) and those every launch remembered, so no file
 	// is read and nothing is withheld on a file that went unreadable
 	// since: the record keeps its detail.
-	known := ma.doorKnowing(l.secrets, false, append(own, ma.namesOnDisk()...)...)
+	known := ma.doorKnowing(l.secrets, false)
 	return raw.through(known), known.keys()
 }
 
@@ -1110,7 +1089,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	// joins its own lines onto it.
 	defer func() {
 		if err != nil && launched {
-			detail, redacted = ma.failureDetail(c, spec, []string{req.version, pin}, err, appExit, appPID, l, started)
+			detail, redacted = ma.failureDetail(c, spec, err, appExit, appPID, l, started)
 		}
 	}()
 	// A launch that never becomes the instance leaves nothing behind:

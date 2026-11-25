@@ -1506,21 +1506,22 @@ What liveswap does for you:
   is exact: every `env_file` value of 8+ characters, as written,
   JSON-escaped, base64, hex or URL-escaped (and a URL value's password
   on its own), becomes `[redacted:KEY]`, and the response's
-  `"redacted_env": ["KEY", …]` names what it contained. Then
-  credentials with a recognisable shape (JWTs, bearer tokens, URL
-  userinfo and query strings, provider key prefixes, PEM blocks,
-  `…PASSWORD=`-style assignments) are replaced by name, and finally
-  any 20+-character run that looks generated — base64 or hex alphabet,
-  mixed, high entropy for its length — becomes `[masked, N chars]`
-  (an assignment keeps its key: `BUILD_ID=[masked, 24 chars]`). The
+  `"redacted_env": ["KEY", …]` names what it contained. Then ten
+  credential shapes an ordinary log line does not hold are replaced by
+  name where the shape stands at a word's start (one straight after a
+  letter, a digit or `_`, as after JSON's `\n` or a colour code, is
+  not): a PEM private key, a JWT, a bearer, basic or token credential,
+  a URL's userinfo, an AWS key id, GitHub, Slack and Stripe tokens, and
+  a Basic credential. A URL's query, a `password=` assignment, a
+  request id, a hash and any other generated-looking token pass as
+  written. The
   values are replaced before the tail and the probe's body are cut to
   their caps, and the token a read's own bound cut in two is dropped,
   so a cut never leaves a fragment of one (a value with a space in it,
-  cut by the read bound, is the one exception). The app's name, the
-  versions in play and the app's own paths are exempt from the
-  heuristics, so a git SHA used as a version survives them — from the
-  heuristics only: one equal to an `env_file` value is replaced in the
-  app's text like the value. Everything else in a response is motel's
+  cut by the read bound, is the one exception). A git SHA used as a
+  version is read as written, unless it equals an `env_file` value,
+  which is replaced in the app's text like any value, or follows the
+  word `token`, `bearer` or `basic`, where the bearer rule replaces it. Everything else in a response is motel's
   own, or the deployer's, the operator's or another program's text,
   and passes as written: an error's text too, which can quote an
   `env_file` value only where the app named a file after one, answered
@@ -1553,8 +1554,8 @@ What liveswap does for you:
   which names why the file did not read, since its values are unknown
   to the filter, and the rest is sent; the
   next response after the file reads is normal.
-  Past the first layer it is best effort, and the limits are in
-  DESIGN-threat-model.md.
+  A secret that is in no `env_file` is hidden only when it has one of
+  the ten shapes; the limits are in DESIGN-threat-model.md.
 - Deploy logs record the artifact **host only**; download errors go
   through a redactor that drops credentials and query strings (where
   presigned-URL and token secrets live).
@@ -1601,8 +1602,10 @@ What's yours to handle:
   `deploy_log_lines`, 40 by default), the process's exit status and
   the last health probe's answer, each through the app's filter. The
   filter knows every `env_file` value and replaces it; what it does
-  not know — a secret the app fetched at runtime and printed in a
-  low-entropy form — is caught only by the heuristics. Two things
+  not know — a secret the app made or fetched at runtime — is hidden
+  only when it has one of the ten shapes (a JWT, a GitHub token, a
+  URL's userinfo, …), so a session token, a presigned URL's signature
+  or a password in a DSN is sent as the app printed it. Two things
   follow. Keep secrets in `env_file`, where the filter can see them.
   And with a **public repository**, the Actions log is public: if
   your app's output is not something you would post, set

@@ -19,7 +19,7 @@ import (
 // Rule 4 (redact.go): a directory under releases/ is a release only
 // under a version's name. Anything else — a staging dir, a dotfile, a
 // name nothing could deploy or roll back to — is not listed, so it
-// is neither offered to an operator nor put on the filter's safe list.
+// is not offered to an operator.
 func TestListReleasesSkipsNamesThatAreNotVersions(t *testing.T) {
 	d := newAppDirs(t.TempDir(), "demo")
 	dir := d.releases

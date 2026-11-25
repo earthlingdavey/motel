@@ -96,7 +96,7 @@ func TestReattachKnowsTheLaunchedValues(t *testing.T) {
 			h, people, ma, err := restartedLogsRig(t, launched, c.change)
 			must(t, err)
 			line := "token " + launchedToken
-			if out := ma.doorKnowing(nil, false, "v2").text(line); out != "token [redacted:API_TOKEN]" {
+			if out := ma.doorKnowing(nil, false).text(line); out != "token [redacted:API_TOKEN]" {
 				t.Errorf("a failed deploy's door: %q", out)
 			}
 			if c.unread {

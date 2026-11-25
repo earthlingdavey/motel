@@ -15,7 +15,7 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
-// generated is a token the filter's entropy layer masks.
+// generated is a token an older moteld's entropy layer masked.
 const generated = "Xk29fQa7Lm3Zp8Rt5Wn1Yc6Vb4Hd0Jg2" // gitleaks:allow — made up for this test
 
 // fakeBackups is a source that counts its looks.

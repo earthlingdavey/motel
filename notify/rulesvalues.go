@@ -208,7 +208,7 @@ func lastValue(s series) (float64, bool) {
 
 // roundSignificant keeps v to six significant digits: an unrounded share
 // marshals as a run of twenty digits or more (0.00005740305648246404),
-// which a response filter's entropy layer reads as a generated secret
+// which an older moteld's response filter read as a generated secret
 // (metricsview.go, roundTo); six are more than a screen shows.
 func roundSignificant(v float64) float64 {
 	r, err := strconv.ParseFloat(strconv.FormatFloat(v, 'g', 6, 64), 64)

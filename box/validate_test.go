@@ -48,7 +48,7 @@ func stubChildren(t *testing.T, validate, adapt, backup string, env ...string) (
 	// own.
 	c := &childValidator{
 		stage: stage, moteld: script(t, dir, "moteld", moteld), backup: filepath.Join(dir, "absent"),
-		env: env, timeout: validateTimeout, redactor: liveswap.NewRedactor(secretCandidates(env), nil),
+		env: env, timeout: validateTimeout, redactor: liveswap.NewRedactor(secretCandidates(env)),
 	}
 	if backup != "" {
 		c.backup = script(t, dir, "motel-backup", backup)

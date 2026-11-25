@@ -1207,7 +1207,7 @@ func TestMetricsViewCPUIsRounded(t *testing.T) {
 		t.Fatalf("tiny averages:\n got %s\nwant %s", got, want)
 	}
 	if regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`).Match(got) {
-		t.Fatalf("a run the response filter's entropy layer would read: %s", got)
+		t.Fatalf("an unrounded run of digits: %s", got)
 	}
 }
 
@@ -1438,7 +1438,7 @@ func TestMetricsViewRequests(t *testing.T) {
 		t.Errorf("the day's request queries =\n%s\nwant\n%s", strings.Join(asked, "\n"), strings.Join(want, "\n"))
 	}
 	if regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`).Match(got) {
-		t.Fatalf("a run the response filter's entropy layer would read: %s", got)
+		t.Fatalf("an unrounded run of digits: %s", got)
 	}
 	// The windows are cached apart.
 	if f.calls != 3 {

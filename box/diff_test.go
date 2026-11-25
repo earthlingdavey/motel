@@ -140,7 +140,7 @@ func TestUnifiedDiffFallback(t *testing.T) {
 	roundTrip(t, []byte(a.String()), []byte(b.String()))
 }
 
-// The diff a record carries is redacted (layers 3 and 4) and cut at
+// The diff a record carries is redacted (the shape rules) and cut at
 // 64 KiB on a line end with a note.
 func TestCaddyfileDiff(t *testing.T) {
 	token := "ghp_" + strings.Repeat("aB3dE5fG7h", 4)[:36]

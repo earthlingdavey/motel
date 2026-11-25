@@ -152,11 +152,6 @@ func (a Announcement) shownKey() string {
 	return deploytrust.CutRunes(a.Key, summaryKeyRunes) + "…"
 }
 
-// Safe are the strings of the summary notify's filter must leave as
-// written: the name and the fingerprint as it shows them (a
-// fingerprint looks generated).
-func (a Announcement) Safe() []string { return []string{a.shownPerson(), a.shownKey()} }
-
 // Announcer is told each announcement: notify's, which raises it as a
 // one-shot to the operator's channels, installed by its Provision
 // (SetAnnouncer). It is called on a request's goroutine, or on the

@@ -27,10 +27,9 @@ const (
 )
 
 // caddyfileDiff is the `diff` field: a unified diff of the installed
-// file against the incoming one, redacted with liveswap's shape and
-// entropy layers (layers 3 and 4; layer 1's env_file values are the
-// service's, which root does not have), then cut at maxDiff on a line
-// end with a note.
+// file against the incoming one, redacted with liveswap's shape rules
+// (layer 2; layer 1's env_file values are the service's, which root
+// does not have), then cut at maxDiff on a line end with a note.
 func caddyfileDiff(prev, next []byte) string {
 	d, cut := renderDiff(prev, next, maxDiffRedacted)
 	if d == "" {
@@ -39,7 +38,7 @@ func caddyfileDiff(prev, next []byte) string {
 	if cut {
 		d = cutAtLine(d, maxDiffRedacted)
 	}
-	d, _ = liveswap.NewRedactor(nil, nil).Redact(d)
+	d, _ = liveswap.NewRedactor(nil).Redact(d)
 	if cut || len(d) > maxDiff {
 		d = cutAtLine(d, maxDiff-len(diffCutNote)) + diffCutNote
 	}

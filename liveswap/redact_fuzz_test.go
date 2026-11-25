@@ -45,7 +45,7 @@ func FuzzDoorText(f *testing.F) {
 		if len(value) < secretMinLen || strings.ContainsAny(value, "\x00\n=") || !utf8.ValidString(value) {
 			return
 		}
-		r := NewRedactor([]string{"SECRET=" + value}, nil)
+		r := NewRedactor([]string{"SECRET=" + value})
 		forms := []string{value, string(mustQuote(t, value)), base64.StdEncoding.EncodeToString([]byte(value)),
 			base64.RawStdEncoding.EncodeToString([]byte(value)), base64.URLEncoding.EncodeToString([]byte(value)),
 			base64.RawURLEncoding.EncodeToString([]byte(value)), hex.EncodeToString([]byte(value)),

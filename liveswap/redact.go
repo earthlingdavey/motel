@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"math"
 	"net/url"
 	"regexp"
 	"sort"
@@ -56,42 +55,35 @@ import (
 //     (the Caddyfile is in a repo); motel's SOCKET, the sandbox HOME
 //     and the inherited PATH are paths a diagnostic needs, and none is
 //     an env_file value (a HOME or PATH the env_file sets is one).
-//  2. A safe list (the app's name, the versions and digests in play,
-//     the app's dirs), exempt from the heuristics below. Never from
-//     layer 1: a safe string equal to a known value is dropped.
-//  3. Shape rules: credentials with a recognisable form.
-//  4. Entropy: a generated-looking token of entropyMinLen or more.
+//  2. Shape rules (shapeRules, basicCredentialRe): ten credential forms
+//     an ordinary log line does not hold, each replaced by its name (a
+//     PEM private key, a JWT, a bearer, basic or token credential of 20
+//     characters or more, a URL's userinfo, an AWS key id, the two
+//     GitHub token forms, a Slack token, a Stripe key, a Basic
+//     credential that decodes to user:password).
 //
-// Layers 3 and 4 are best effort. Layer 1 runs again last, since a
-// heuristic's marker text could spell a known value. What passes all
-// four is documented in DESIGN-threat-model.md: an encoding not in the
-// list, a value under secretMinLen, a value split across two lines.
+// Layer 1 runs again last, since a rule's marker text could spell a
+// known value. A secret that is in no env_file is hidden only when it
+// has one of the ten shapes: a URL's query, a `password=` assignment
+// and a generated-looking token pass as written, as request ids,
+// hashes and trace ids do (the owner's decision of 2026-11-22). What
+// else passes is documented in DESIGN-threat-model.md: an encoding not
+// in the list, a value under secretMinLen, a value split across two
+// lines.
 //
 // The box webhook (box/validate.go, box/diff.go) and notify
 // (notify/engine.go) build filters of their own with NewRedactor and
 // call Redact on a text where it enters: doors of theirs.
 
-const (
-	secretMinLen  = 8
-	entropyMinLen = 20
-	// Bits per character. Random base64 is ~6, random hex ~4; English
-	// identifiers sit around 3.5–4 and never clear the base64 bar.
-	entropyBase64 = 4.5
-	entropyHex    = 3.0
-)
+const secretMinLen = 8
 
 // Redactor is the filter: the layers above, over one set of known
-// values and safe strings. Exported, with NewRedactor and Redact, for
-// the box webhook and notify; a nil *Redactor is layers 3 and 4 alone.
+// values. Exported, with NewRedactor and Redact, for the box webhook
+// and notify; a nil *Redactor is the shape rules alone.
 type Redactor struct {
 	// secrets holds every form of every known value, longest first so
 	// a value that contains another is replaced whole.
 	secrets []*secretForm
-	// safeExact is the safe strings as given, none equal to a known
-	// value (layer 2): held out of the heuristics as spans. safeTokens
-	// is those strings and every layer-4 token inside them: exempt
-	// from the entropy heuristic.
-	safeExact, safeTokens map[string]bool
 }
 
 // secretForm is one text to replace, the keys whose values it belongs
@@ -103,10 +95,8 @@ type secretForm struct {
 	marker string
 }
 
-// NewRedactor takes env_file KEY=VALUE pairs and the strings that must
-// survive the heuristics. A safe string equal to a value is dropped:
-// whoever named it, it exempts nothing. A nil *Redactor is usable:
-// layers 3 and 4 only.
+// NewRedactor takes env_file KEY=VALUE pairs. A nil *Redactor is
+// usable: the shape rules only.
 //
 // The box webhook builds its own: the pairs are the caller's choice,
 // as an app's are liveswap's — an app's filter is primed with env_file
@@ -115,27 +105,10 @@ type secretForm struct {
 // the env_file sets is one of its values) — so a caller priming with a
 // process environment (the box, whose `caddy validate` quotes expanded
 // values in its errors) will want the same for the variables that are
-// paths. Build one per set of safe strings and keep it: every form of
-// every value is computed here, and a running process's environment
-// does not change.
-func NewRedactor(envFile []string, safe []string) *Redactor {
-	known := make(map[string]bool, len(envFile))
-	for _, kv := range envFile {
-		if _, value, ok := strings.Cut(kv, "="); ok {
-			known[value] = true
-		}
-	}
-	r := &Redactor{safeExact: make(map[string]bool, len(safe)), safeTokens: make(map[string]bool, len(safe))}
-	for _, s := range safe {
-		if s == "" || known[s] {
-			continue
-		}
-		r.safeExact[s] = true
-		r.safeTokens[s] = true
-		for _, tok := range entropyTokenRe.FindAllString(s, -1) {
-			r.safeTokens[tok] = true
-		}
-	}
+// paths. Build one and keep it: every form of every value is computed
+// here, and a running process's environment does not change.
+func NewRedactor(envFile []string) *Redactor {
+	r := &Redactor{}
 	byText := map[string]*secretForm{}
 	for _, kv := range envFile {
 		key, value, ok := strings.Cut(kv, "=")
@@ -318,37 +291,18 @@ var shapeRules = []struct {
 	{regexp.MustCompile(`(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{20,}`), "$1 [redacted:token]"},
 	// URL userinfo: scheme://user:pass@host.
 	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://)[^/\s"'@:]+:[^/\s"'@]+@`), "$1[redacted:userinfo]@"},
-	// URL query strings: where presigned-URL credentials live. The
-	// same rule the box applies to its own logs (redactURL).
-	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?[^\s"']+`), "$1?[redacted:query]"},
 	// Provider prefixes.
 	{regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`), "[redacted:aws-key]"},
 	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`), "[redacted:github-token]"},
 	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}\b`), "[redacted:github-token]"},
 	{regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}\b`), "[redacted:slack-token]"},
 	{regexp.MustCompile(`\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b`), "[redacted:stripe-key]"},
-	// KEY=value, key: value and JSON "key":"value" assignments whose
-	// key contains a credential word, whatever surrounds it
-	// (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, STRIPE_API_KEY). The value
-	// must be 8+ characters that are not a delimiter, not a marker
-	// layer 1 left there, and not a path or placeholder (an argv flag
-	// such as --api-key=/etc/motel/app.key names a file, not a
-	// secret).
-	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*(?:password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)[^\s"',;\[/{][^\s"',;]{7,}`), "$1$2[redacted:credential]"},
 }
 
 // basicCredentialRe finds "Basic <base64>"; the decode check is in
-// redact, since a regexp cannot tell a credential from a word. Four
+// shapes, since a regexp cannot tell a credential from a word. Four
 // characters is the shortest base64 of a user:pass ("a:b").
 var basicCredentialRe = regexp.MustCompile(`(?i)\bbasic[ \t]+[A-Za-z0-9+/]{4,}={0,2}`)
-
-// entropyTokenRe finds candidates for layer 4. `/` is not in the
-// alphabet on purpose: a URL path is a long base64-alphabet run with
-// slashes, and splitting there keeps paths readable while a base64
-// secret with a slash in it still leaves 20+-character pieces. `.` is
-// out for the same reason (hostnames, unit names, dotted versions),
-// which is why the safe list is split the same way.
-var entropyTokenRe = regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`)
 
 // replaceKnown is layer 1 on its own: every known form replaced by its
 // marker, longest first, and the keys found added to seen.
@@ -378,9 +332,9 @@ func reportedKeys(seen map[string]bool) []string {
 }
 
 // Redact filters a text and reports which env keys' values it found.
-// Layer 1 runs first and again last: the heuristic layers' own marker
-// text ("[redacted:private-key]") can contain a known value, and only
-// a pass over the finished text guarantees none remains.
+// Layer 1 runs first and again last: a shape rule's own marker text
+// ("[redacted:private-key]") can contain a known value, and only a
+// pass over the finished text guarantees none remains.
 func (r *Redactor) Redact(s string) (string, []string) {
 	seen := map[string]bool{}
 	s = r.filter(s, seen)
@@ -388,19 +342,14 @@ func (r *Redactor) Redact(s string) (string, []string) {
 	return s, reportedKeys(seen)
 }
 
-// filter is layers 1 to 4 in order, with the safe strings held out of
-// the heuristic layers: a version shaped like a provider token, or a
-// path with a generated-looking segment, comes back as it went in.
+// filter is layers 1 and 2 in order.
 func (r *Redactor) filter(s string, seen map[string]bool) string {
-	s = r.replaceKnown(s, seen)
-	s, restore := r.protectSafe(s)
-	s = r.heuristics(s)
-	return restore(s)
+	return shapes(r.replaceKnown(s, seen))
 }
 
 // door is an app's filter at a place the app's bytes enter: the app's
-// known values, the names its text may hold, and the keys found so far,
-// for the answer's redacted_env.
+// known values and the keys found so far, for the answer's
+// redacted_env.
 type door struct {
 	r    *Redactor
 	seen map[string]bool
@@ -426,18 +375,19 @@ func (d *door) excerpt(s string, max int) wire.AppText {
 // filter sees the text cut to logsLineMax and a margin, the longest
 // form it knows or logsCutMargin if more, so every value or credential
 // that begins inside what is sent is whole when it is looked for (A).
-// Where that cut fell, a value or token it split is a piece no layer
-// can know; it begins in the margin, past logsLineMax, unless it is a
-// token longer than the margin. So the filter also sees the text cut at
-// logsLineMax (B), and what is kept is the start A and B have in common,
-// less a run of layer 4's alphabet at its end. A piece the first cut
-// split is past B's input, so not in it; one the second cut split is
-// whole in A and replaced there, so A and B part at it; a token longer
-// than the margin, raw in both, is the run that goes. Then what is left
-// is made valid UTF-8 and cut to logsLineMax with "…" (a marker or plain
-// text may be cut there, nothing a layer would have replaced). The keys
-// A replaced are the door's. A door whose env_file could not be read
-// sends its withheld sentence for the line, and an empty line empty.
+// Where that cut fell, a value or credential it split is a piece no
+// layer can know; it begins in the margin, past logsLineMax, unless it
+// is a credential longer than the margin. So the filter also sees the
+// text cut at logsLineMax (B), and what is kept is the start A and B
+// have in common. A piece the first cut split is past B's input, so
+// not in it; one the second cut split is whole in A and replaced there,
+// so A and B part at it; a credential longer than the margin is raw in
+// both, and its start is sent (DESIGN-access.md, the accepted row on a
+// credential over 8 KiB on one line). Then what is left is made valid
+// UTF-8 and cut to logsLineMax with "…" (a marker or plain text may be
+// cut there, nothing a layer would have replaced). The keys A replaced
+// are the door's. A door whose env_file could not be read sends its
+// withheld sentence for the line, and an empty line empty.
 func (d *door) logLine(text string) wire.AppText {
 	if d.unread != "" {
 		return wire.AppText(d.mixed(text))
@@ -451,13 +401,10 @@ func (d *door) logLine(text string) wire.AppText {
 	if cut {
 		text = cutText(text, pre)
 	}
-	// journald ends a stdout line at a NUL, so none is in one; a NUL is
-	// what the safe list's placeholders are made of (protectSafe).
-	text = strings.ReplaceAll(text, "\x00", "\uFFFD")
 	out := d.mixed(text)
 	if cut {
 		b, _ := d.r.Redact(cutText(text, logsLineMax))
-		out = strings.TrimRight(commonStart(out, b), tokenAlphabet)
+		out = commonStart(out, b)
 	}
 	// The app's bytes that are not UTF-8, each run one U+FFFD, only now:
 	// the filter saw them as written. Before the last cut, so the text
@@ -471,8 +418,8 @@ func (d *door) logLine(text string) wire.AppText {
 
 // lines is a journal tail through the door, each line on its own, as
 // the logs read filters each: a rule that reaches across white space
-// (a bearer token, an assignment) then never joins two lines or masks
-// the next line's first word, and the tail keeps its count of lines.
+// (a bearer token) then never joins two lines or masks the next line's
+// first word, and the tail keeps its count of lines.
 func (d *door) lines(lines []string) []wire.AppText {
 	if len(lines) == 0 {
 		return nil
@@ -484,7 +431,7 @@ func (d *door) lines(lines []string) []wire.AppText {
 	return out
 }
 
-// mixed is s through the whole filter: layers 1 to 4, then layer 1
+// mixed is s through the whole filter: layers 1 and 2, then layer 1
 // again.
 func (d *door) mixed(s string) string {
 	if s == "" {
@@ -511,47 +458,8 @@ func (d *door) keys() []string {
 	return keys
 }
 
-// safeSpanMinLen is the shortest safe string protectSafe holds out of
-// the heuristics. Below it nothing a rule matches fits inside the
-// string, and a short one — a one-character app name or version —
-// would otherwise be swapped out of the middle of a credential and
-// split it into pieces too short for the entropy layer to see.
-const safeSpanMinLen = 12
-
-// protectSafe swaps every safe string of safeSpanMinLen or more for a
-// placeholder no rule can match (control characters are in no rule's
-// alphabet) and returns the function that swaps them back. Longest
-// first, so a safe string containing another is protected whole.
-func (r *Redactor) protectSafe(s string) (string, func(string) string) {
-	if r == nil || len(r.safeExact) == 0 {
-		return s, func(s string) string { return s }
-	}
-	safe := make([]string, 0, len(r.safeExact))
-	for v := range r.safeExact {
-		if len(v) >= safeSpanMinLen {
-			safe = append(safe, v)
-		}
-	}
-	sort.Slice(safe, func(i, j int) bool {
-		return len(safe[i]) > len(safe[j]) || (len(safe[i]) == len(safe[j]) && safe[i] < safe[j])
-	})
-	var used []string
-	for _, v := range safe {
-		if strings.Contains(s, v) {
-			s = strings.ReplaceAll(s, v, "\x00"+strconv.Itoa(len(used))+"\x00")
-			used = append(used, v)
-		}
-	}
-	return s, func(s string) string {
-		for i := len(used) - 1; i >= 0; i-- {
-			s = strings.ReplaceAll(s, "\x00"+strconv.Itoa(i)+"\x00", used[i])
-		}
-		return s
-	}
-}
-
-// heuristics is layers 3 and 4.
-func (r *Redactor) heuristics(s string) string {
+// shapes is layer 2.
+func shapes(s string) string {
 	for _, rule := range shapeRules {
 		s = rule.re.ReplaceAllString(s, rule.repl)
 	}
@@ -570,92 +478,5 @@ func (r *Redactor) heuristics(s string) string {
 		}
 		return m
 	})
-	return entropyTokenRe.ReplaceAllStringFunc(s, r.maskGenerated)
-}
-
-// maskGenerated is layer 4 over one token. An assignment — an `=` with
-// more after it, where base64 pads only at its end — is judged by its
-// parts: `RandomizedDelaySec=40s` is a setting a reader needs, and
-// `BUILD_ID=<secret>` keeps its key and masks its value (a key the
-// shape rules know, `API_KEY=`, is theirs first); a value short of
-// entropyMinLen is not carried over the bar by its key's letters.
-func (r *Redactor) maskGenerated(tok string) string {
-	if r != nil && r.safeTokens[tok] {
-		return tok
-	}
-	if i := strings.IndexByte(tok, '='); i > 0 && i < len(tok)-1 && tok[i+1] != '=' {
-		return r.maskGenerated(tok[:i]) + "=" + r.maskGenerated(tok[i+1:])
-	}
-	if len(tok) >= entropyMinLen && looksGenerated(tok) {
-		return "[masked, " + strconv.Itoa(len(tok)) + " chars]"
-	}
-	return tok
-}
-
-// looksGenerated is layer 4's test. Hex needs a digit and clears
-// entropyHex; anything else needs a digit, an upper- and a lower-case
-// letter (identifiers and words rarely have all three) and clears
-// entropyBase64.
-func looksGenerated(tok string) bool {
-	var digit, upper, lower, other bool
-	for _, c := range tok {
-		switch {
-		case c >= '0' && c <= '9':
-			digit = true
-		case c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
-			if c >= 'a' {
-				lower = true
-			} else {
-				upper = true
-			}
-		case c >= 'g' && c <= 'z':
-			lower, other = true, true
-		case c >= 'G' && c <= 'Z':
-			upper, other = true, true
-		default:
-			other = true
-		}
-	}
-	if !digit {
-		return false
-	}
-	h := shannon(tok)
-	if !other { // hex alphabet only
-		return h >= entropyHex
-	}
-	// A string's entropy over its own characters is at most log2(len):
-	// 4.32 bits at 20 characters, 4.46 at 22, so a fixed bar of 4.5 is
-	// out of a short token's reach however random it is. The bar
-	// follows the length, entropySlack under that ceiling, up to
-	// entropyBase64. Measured 2026-11-07 on random url-safe tokens
-	// against the mixed-case tokens in this repository's own text
-	// (DESIGN-liveswap.md, "Accepted residuals"): this masks 55% of
-	// random 20- and 22-character tokens and 41% of 24, where the
-	// fixed bar masked none, and one non-secret of 148 (an e-mail's
-	// local part); a bar 0.9·log2(len) would mask 80% of each length
-	// and nine non-secrets, among them identifiers with a digit
-	// (`loadEd25519PrivateKey`) and unit settings.
-	bar := math.Min(entropyBase64, math.Log2(float64(len(tok)))-entropySlack)
-	return upper && lower && h >= bar
-}
-
-// entropySlack is how far under log2(len) the base64 bar sits for a
-// token too short to reach entropyBase64 (looksGenerated).
-const entropySlack = 0.3
-
-func shannon(s string) float64 {
-	var counts [256]int
-	for i := 0; i < len(s); i++ {
-		counts[s[i]]++
-	}
-	n := float64(len(s))
-	var h float64
-	for _, c := range counts {
-		if c == 0 {
-			continue
-		}
-		p := float64(c) / n
-		h -= p * math.Log2(p)
-	}
-	return h
+	return s
 }

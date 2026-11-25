@@ -164,7 +164,7 @@ Properties that matter to the model:
   `Handler.ServeHTTP` (liveswap/handler.go). The status endpoint is
   authenticated — not public.
 - **The app's text is filtered where it enters what the webhook says
-  back** (liveswap/redact.go, which states the places and the four
+  back** (liveswap/redact.go, which states the places and the two
   layers). What it promises, plainly, within the limits below: when an
   app prints one of its `env_file` values, motel hides it; motel's own
   figures, names and times are never hidden. The response's audience
@@ -227,16 +227,20 @@ Properties that matter to the model:
   password on its own), becomes `[redacted:KEY]`, and the answer's
   `redacted_env` names the keys. motel is the party that knows these
   values, which is why the filter lives here and not in CI, where
-  `::add-mask::` can only hide what the job itself knows. Second, an
-  allowlist: the app's name, the versions and digests in play, the
-  releases on disk and the app's own paths are exempt from the
-  heuristics below, never from the first layer: a safe string equal to
-  a known value is dropped. Third, shape rules for credentials with a
-  recognisable form. Fourth, entropy: a run of 20+ characters from the
-  base64 or hex alphabet, mixed and with Shannon entropy above the
-  class's bar (one that follows the run's length, since a short run
-  cannot reach a fixed bar), is replaced by `[masked, N chars]`, never
-  by a fingerprint. Markers are chosen so that none contains a known
+  `::add-mask::` can only hide what the job itself knows. Second, ten
+  shape rules for credentials an ordinary log line does not hold: a
+  PEM private key, a JWT, a bearer, basic or token credential of 20
+  characters or more, a URL's userinfo, an AWS key id, the two GitHub
+  token forms, a Slack token, a Stripe key, and a Basic credential that
+  decodes to user:password, each replaced by its name where it stands
+  at a word's start (all but the PEM rule open at a word boundary, so
+  one straight after a letter, a digit or `_` is not). A secret that
+  is in no `env_file` is hidden only when it has one of those shapes:
+  a URL's query, a `password=` assignment and a generated-looking token
+  pass as written (the owner's decision of 2026-11-22: of 4,032
+  ordinary log lines, those three rules and the ten altered 797 with no
+  `env_file` value involved, a request id, a trace id, a hash or a
+  query in each, and the ten alone 25). Markers are chosen so that none contains a known
   value, and the first layer runs once more over the text, so the
   promise holds for the text sent. The values the running instance was
   launched with are known whatever the file holds now: a launch
@@ -316,7 +320,9 @@ Properties that matter to the model:
   What the filter does **not** promise: an encoding not in the list, a
   value under 8 characters, a secret split across lines (a value the
   app prints across two lines at the logs read stays readable), a
-  secret the app fetched at runtime and printed in a low-entropy form,
+  secret that is in no `env_file` and has none of the ten shapes (one
+  the app made or fetched at runtime: a session token, a presigned
+  URL's signature, a password in a DSN),
   an inline `env` value (not a secret by policy: the Caddyfile is in a
   repo), a value the still-running instance was launched with while
   moteld, started again, has not yet reattached to it (its user manager
@@ -1907,8 +1913,7 @@ does not isolate the runtime.
   by that mtime among its kind, and is named in the status
   (`ordered_by_mtime`). A name read off disk (a release directory's, a
   record's, `state.json`'s) is used as a version only once it is one
-  (`validVersion`), and as a safe string of the filter's never one
-  equal to a known value (nothing on disk says who chose a name).
+  (`validVersion`).
   Nothing there
   follows a link, ancestors included, and the store never blocks a
   deploy or a status.

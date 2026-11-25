@@ -247,7 +247,7 @@ func TestLogsLineFilteredBeforeItIsCut(t *testing.T) {
 
 // TestLogsBodyTimesAndCursorPassNoFilter: an env_file value that is the
 // lines' date is replaced in their text and leaves every at whole; the
-// cursor, whose ids layer 4 masks, comes back as the journal gave it;
+// cursor comes back as the journal gave it;
 // and a value of JSON's punctuation across two lines is not sent, the
 // times and the cursor kept.
 func TestLogsBodyTimesAndCursorPassNoFilter(t *testing.T) {
@@ -318,7 +318,7 @@ func TestLogsUnreadableEnvFile(t *testing.T) {
 // 4 KiB) empties no line shorter than the first cut.
 func TestLogsLongLineWithNoSpace(t *testing.T) {
 	value := "made-up-value-across-the-cut-0001" // 33 bytes; its hex form is the longest, 66
-	f := NewRedactor([]string{"V=" + value}, nil)
+	f := NewRedactor([]string{"V=" + value})
 	for _, at := range []int{logsLineMax - 40, logsLineMax - 3, logsLineMax + 20, logsLineMax + 60} {
 		text := strings.Repeat("{", at) + value + strings.Repeat("}", 3000)
 		seen := map[string]bool{}
@@ -337,30 +337,24 @@ func TestLogsLongLineWithNoSpace(t *testing.T) {
 	// an app with no env_file: no piece of it is sent.
 	token := "ghp_" + strings.Repeat("aB3dE5", 6) // gitleaks:allow — made up for this test
 	for _, at := range []int{logsLineMax - 20, logsLineMax + logsCutMargin - 10} {
-		out := filterLogLine(NewRedactor(nil, nil), strings.Repeat("x", at)+" "+token+" after", map[string]bool{})
+		out := filterLogLine(NewRedactor(nil), strings.Repeat("x", at)+" "+token+" after", map[string]bool{})
 		if strings.Contains(out, "ghp_") || strings.Contains(out, "aB3dE5") || len(out) > logsLineMax {
 			t.Errorf("a token at %d: …%q", at, out[max(0, len(out)-40):])
 		}
-	}
-	// A generated token longer than the margin, split by the first cut:
-	// no piece of its start is sent either.
-	long := strings.Repeat("Zq9", 3000) // gitleaks:allow — made up for this test
-	if out := filterLogLine(NewRedactor(nil, nil), strings.Repeat("x", 4000)+" "+long+" after", map[string]bool{}); strings.Contains(out, "Zq9") {
-		t.Errorf("a token longer than the margin: …%q", out[max(0, len(out)-40):])
 	}
 	// A private key on one line (an app's config logged as JSON), its
 	// block's end within the margin past the cut: replaced whole.
 	key := "-----BEGIN " + "PRIVATE KEY-----\\n" + strings.Repeat("MIIEvQIBADANBgkqhkiG9w0BAQEFAASC\\n", 70) + "-----END " + "PRIVATE KEY-----\\n" // gitleaks:allow — made up for this test
 	for _, total := range []int{6000, 20000} {
 		line := strings.Repeat("c", 3000) + `"private_key":"` + key + `"` + strings.Repeat("c", total)
-		if out := filterLogLine(NewRedactor(nil, nil), line, map[string]bool{}); strings.Contains(out, "MIIE") || total == 6000 && !strings.Contains(out, "[redacted:private-key]") {
+		if out := filterLogLine(NewRedactor(nil), line, map[string]bool{}); strings.Contains(out, "MIIE") || total == 6000 && !strings.Contains(out, "[redacted:private-key]") {
 			t.Errorf("a key on one line of %d: …%q", total, out[max(0, len(out)-60):])
 		}
 	}
 	// Bytes that are not UTF-8: the filter sees them as written, so a
 	// value holding them is replaced; what is sent is valid UTF-8, within
 	// 4 KiB however many runs there are.
-	bad := NewRedactor([]string{"K=made\xffup-value-01"}, nil)
+	bad := NewRedactor([]string{"K=made\xffup-value-01"})
 	if out := filterLogLine(bad, "key made\xffup-value-01 here \xfe", map[string]bool{}); out != "key [redacted:K] here \uFFFD" {
 		t.Errorf("a value with a byte that is not UTF-8: %q", out)
 	}
@@ -374,7 +368,7 @@ func TestLogsLongLineWithNoSpace(t *testing.T) {
 	}
 	// A value whose hex form is over 4 KiB: a 6 KB line with no space and
 	// no value keeps its first 4 KiB.
-	big := NewRedactor([]string{"G=" + strings.Repeat("{\"k\":\"made-up\"}", 160)}, nil)
+	big := NewRedactor([]string{"G=" + strings.Repeat("{\"k\":\"made-up\"}", 160)})
 	if out := filterLogLine(big, strings.Repeat("u", 6000), map[string]bool{}); out != strings.Repeat("u", logsLineMax-3)+"…" {
 		t.Errorf("a long value's filter: %d bytes, %.20q", len(out), out)
 	}
@@ -524,14 +518,14 @@ func words(n int) string {
 // TestLogsCutShapes: a line the first cut falls in keeps its readable
 // start, and sends no piece of a value or a token either cut split: a
 // value across logsLineMax, one across the first cut, one in the margin
-// between them, a token longer than the margin, a long token the filter
-// masks (its marker far shorter than it), and markers longer than their
-// values before the cut.
+// between them, a long bearer token the filter replaces (its marker far
+// shorter than it), and markers longer than their values before the
+// cut.
 func TestLogsCutShapes(t *testing.T) {
 	value := "planted.va/lue:0123 4567.89ab/cdef" // gitleaks:allow — made up for this test
-	f := NewRedactor([]string{"V=" + value}, nil)
+	f := NewRedactor([]string{"V=" + value})
 	pre := logsLineMax + logsCutMargin
-	base64ish := func(n int) string { // a token layer 4 masks
+	base64ish := func(n int) string { // a run of base64
 		var b strings.Builder
 		for b.Len() < n {
 			b.WriteString("Qm9vdHN0cmFwX3Rva2VuOjE3Mz0aR8")
@@ -544,12 +538,11 @@ func TestLogsCutShapes(t *testing.T) {
 		{"a value across logsLineMax", words(logsLineMax - 10)[:logsLineMax-10] + value + words(pre), "the app said", value},
 		{"a value across the first cut", words(pre - 10)[:pre-10] + value + words(100), "the app said", value},
 		{"a value in the margin", words(logsLineMax + 100)[:logsLineMax+100] + " " + value + " " + words(pre), "the app said", value},
-		{"a token longer than the margin", words(4000)[:4000] + " " + strings.Repeat("Zq9", 3000) + " end", "the app said", strings.Repeat("Zq9", 3000)},
-		{"a long token the filter masks", "ERROR decode failed for upload 17: " + base64ish(16000), "ERROR decode failed for upload 17: ", base64ish(16000)},
-		// The filter shrinks the start (a 9,000-byte token masked), so the
-		// piece of the value the first cut split comes to stand inside the
-		// first logsLineMax bytes of what it returns.
-		{"a value across the first cut, after a masked token", "upload " + base64ish(9000) + " " + words(pre)[:pre-9008-12] + value + words(100), "upload [masked, ", value},
+		{"a long token the filter replaces", "ERROR upstream refused Authorization: Bearer " + base64ish(16000), "ERROR upstream refused Authorization: Bearer [redacted:token]", base64ish(16000)},
+		// The filter shrinks the start (a 9,000-byte token replaced), so
+		// the piece of the value the first cut split comes to stand inside
+		// the first logsLineMax bytes of what it returns.
+		{"a value across the first cut, after a replaced token", "upload Bearer " + base64ish(9000) + " " + words(pre)[:pre-9015-12] + value + words(100), "upload Bearer [redacted:token]", value},
 		{"markers longer than their values", strings.Repeat(value+", ", 400) + value + words(pre), "[redacted:V], [redacted:V]", value},
 	} {
 		out := filterLogLine(f, c.text, map[string]bool{})
@@ -561,19 +554,19 @@ func TestLogsCutShapes(t *testing.T) {
 		}
 		// What is kept is at most the first logsLineMax bytes of the line
 		// as filtered: shorter where the filter shrank them.
-		if want := map[string]int{"a long token the filter masks": len("ERROR decode failed for upload 17: [masked, "), "markers longer than their values": 4096 / len(value+", ") * len("[redacted:V], "), "a value across the first cut, after a masked token": len("upload [masked, ")}[c.name]; want == 0 && len(out) < logsLineMax-200 || len(out) < want {
+		if want := map[string]int{"a long token the filter replaces": len("ERROR upstream refused Authorization: Bearer [redacted:token]"), "markers longer than their values": 4096 / len(value+", ") * len("[redacted:V], "), "a value across the first cut, after a replaced token": len("upload Bearer [redacted:token]")}[c.name]; want == 0 && len(out) < logsLineMax-200 || len(out) < want {
 			t.Errorf("%s: only %d bytes of the start kept", c.name, len(out))
 		}
 	}
 }
 
-// TestLogsCutRandom: lines of prose with a planted value, a long token
-// and a short one at random places, of random lengths past the first
-// cut: no 8-byte piece of the value or the token is ever sent, and the
-// prose before the first of them is.
+// TestLogsCutRandom: lines of prose with a planted value and a long
+// bearer token at random places, of random lengths past the first cut:
+// no 8-byte piece of the value or the token is ever sent, and the prose
+// before the first of them is.
 func TestLogsCutRandom(t *testing.T) {
 	value := "planted.va/lue:0123 4567.89ab/cdef" // gitleaks:allow — made up for this test
-	f := NewRedactor([]string{"V=" + value}, nil)
+	f := NewRedactor([]string{"V=" + value})
 	rnd := rand.New(rand.NewPCG(7, 11))
 	tok := func(n int) string {
 		const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
@@ -585,7 +578,7 @@ func TestLogsCutRandom(t *testing.T) {
 	}
 	for range 300 {
 		total := logsLineMax + logsCutMargin + rnd.IntN(12000)
-		long := tok(9000 + rnd.IntN(4000))
+		long := "Bearer " + tok(9000+rnd.IntN(4000))
 		// Near a cut most of the time: across logsLineMax or the first
 		// cut, or anywhere; the token early half the time, so the filter
 		// shrinks the start.
@@ -760,7 +753,7 @@ func (r rawLogs) entries(_ context.Context, _ []string, each func([]byte) bool) 
 // filter that knows no value), as the logs read passes it (door.logLine).
 func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
 	if f == nil {
-		f = NewRedactor(nil, nil)
+		f = NewRedactor(nil)
 	}
 	return string((&door{r: f, seen: seen}).logLine(text))
 }
@@ -781,7 +774,7 @@ func FuzzLogsEntry(f *testing.F) {
 		f.Add(append(append(e.json(), '\n'), e.json()...), true)
 	}
 	f.Add([]byte(`{"__CURSOR":"`+testCursor+`","__REALTIME_TIMESTAMP":"1","MESSAGE":"a\u0000b"}`), false)
-	r := NewRedactor([]string{"DB_PASSWORD=hunter2-of-demo"}, nil)
+	r := NewRedactor([]string{"DB_PASSWORD=hunter2-of-demo"})
 	f.Fuzz(func(t *testing.T, out []byte, follow bool) {
 		after := ""
 		if follow {

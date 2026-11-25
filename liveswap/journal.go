@@ -128,7 +128,7 @@ func boundedTail(out []byte, limit int) string {
 // the first token of s (atStart: a kept suffix) or its last (a kept
 // prefix), up to or from the nearest whitespace, and puts an ellipsis
 // where it was. A bound that fell inside an env_file value left a
-// fragment the app's filter cannot match and no heuristic can see
+// fragment the app's filter cannot match and no shape rule can see
 // (redact.go); without a whitespace to cut at, the whole of s goes. A
 // value with a space in it can still be cut (DESIGN-liveswap.md,
 // "Accepted residuals").

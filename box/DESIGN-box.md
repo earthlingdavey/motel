@@ -967,7 +967,7 @@ touched does not stop their write-back.
 | record, result | `secrets_added`, `secrets_changed`, `secrets_removed` | applier | the secrets the push adds, changes or removes, as `<app>/<VAR>`, sorted; never a value. In the record too, so a result recovery writes carries them. A secret is changed when its value is, so a rekey that keeps the values lists none. Added and changed are HEAD's names; removed ones only an env file at the digest `applied.json` records gives, so a file root did not write names none (I9), and its app is in `secrets_edited_out_of_band` |
 | record, result | `secrets_edited_out_of_band` | applier | the apps whose env file root wrote or removed over bytes it had not installed — a digest differing from `applied.json`'s, a listed file gone or not at the mode and owner it set, or a file it never installed for an app this push installs ("Values and the env file") |
 | result | `reloaded` | applier | on an applied result, `true` when the push reloaded moteld: the Caddyfile changed, or the box's own env file's bytes did ("The box's own slot"); absent otherwise. The names above cannot say it: the same values over other bytes reload, and a rekey that renders the same bytes does not. The template's `bin/apply` reads it for its line |
-| record, result | `diff` | applier | unified diff, redacted (layers 3 and 4), capped per Caps |
+| record, result | `diff` | applier | unified diff, redacted (the shape rules), capped per Caps |
 | record, result | `apps` | applier | app names from the incoming file's token walk: the global `liveswap` block's `app` lines whose name is in liveswap's app-name grammar (one outside it fails the load anyway), so a result's size stays under the handler's read cap |
 | record, result | `box_webhook` | applier | the host |
 | record, result | `caddyfile_edited_out_of_band` | applier | step 10's flag |
@@ -1796,12 +1796,12 @@ marshalled), so the protocol's own fields (`id`, `commit`, `sha256`,
 `box_webhook`, `phase`, `recipient`, each id in `named`, the
 `secrets_*` names) are sent as written. The text an answer holds of
 the bundle's bytes passed a filter where it entered: the applier ran
-the `diff` through liveswap/redact.go's layers 3 (shape) and 4
-(entropy) before writing it, and the validate child's line passed the
-same layers with the service environment's values (box/validate.go).
+the `diff` through liveswap/redact.go's shape rules before writing it,
+and the validate child's line passed the same rules with the service
+environment's values (box/validate.go).
 A refusal's `error` is the catalogue's words over names and paths, and
 never quotes a secret's value (secrets.go). Until 2026-11-22 every
-answer also passed layers 3 and 4 whole, with those fields on a safe
+answer also passed the shape and entropy layers whole, with those fields on a safe
 list; an address shaped like a token in the operator's own Caddyfile,
 quoted in a refusal, was masked then and is sent as written now
 (DESIGN-threat-model.md, "What is no longer searched").
