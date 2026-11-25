@@ -35,9 +35,11 @@ type Alert struct {
 	Name string `json:"name" text:"passes"`
 	// Severity is critical, warning or info.
 	Severity string `json:"severity" text:"passes"`
-	// Summary is motel's sentence about it, which the box built to
-	// carry no secret and passed through the app's filter when it told
-	// it; or an operator's rule's, or another program's, as written.
+	// Summary is motel's sentence about it, which the box built from
+	// its own words and names, never the app's output (notify's own
+	// filter runs over it, its known values the channels' URLs, with
+	// the ten shape rules); or an operator's rule's, or
+	// another program's, as written.
 	Summary string `json:"summary" text:"passes"`
 	// StartsAt is when it began firing, as Alertmanager holds it.
 	StartsAt time.Time `json:"starts_at"`

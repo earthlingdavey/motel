@@ -196,7 +196,7 @@ func TestAlertsRoutePaths(t *testing.T) {
 
 // TestAlertsRouteBody: what the source holds of the handle's app
 // alone, newest first, as Alertmanager holds it (a summary motel told
-// passed the app's filter when it was told, lifecycle.go; the rest is
+// is its own sentence, lifecycle.go; the rest is
 // the operator's and Alertmanager's text, which an older moteld filtered
 // here), with Alertmanager's state, when the last silence ends, and the
 // deploy mute; another app's alerts and the box's (one naming the app

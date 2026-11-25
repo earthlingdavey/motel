@@ -107,8 +107,8 @@ func TestBoxAlertsRoute(t *testing.T) {
 // TestBoxAlertsBody: every alert and every silence that has not ended,
 // newest first (the active silences first), each in its wire type's
 // order and as Alertmanager holds it: no filter runs over an alert or a
-// silence (an app's alert motel told passed the app's filter when it
-// was told, lifecycle.go; the rest is the operator's and Alertmanager's
+// silence (an app's alert motel told is its own sentence,
+// lifecycle.go; the rest is the operator's and Alertmanager's
 // text, which an older moteld filtered here); an alert the deploy mute
 // holds is there, inhibited; an expired silence is left out; no source
 // is "off", and a source that did not answer "unanswered", both with
