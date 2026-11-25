@@ -331,8 +331,10 @@ Properties that matter to the model:
   What the filter does **not** promise: an encoding not in the list
   (measured on 38 encoders of seven runtimes, it is a value holding a
   quote, a backslash, a non-ASCII or a control character, `<`, `>` or
-  `&`, as an encoder other than Go's escapes it: 47 of 494 outputs,
-  none of a value a provider or a generator issues), a
+  `&`, as an encoder other than Go's escapes it, and any value nested
+  in strings more than once: 47 of the corpus's 494 outputs, none of
+  the 190 of its five values shaped as a provider or a generator issues
+  them, and it nests once), a
   value under 8 characters, a secret split across lines (a value the
   app prints across two lines at the logs read stays readable), a
   secret that is in no `env_file` and has none of the ten shapes (one

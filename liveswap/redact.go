@@ -300,8 +300,9 @@ func secretForms(v string) []string {
 	return forms
 }
 
-// escapeOnceMore is what every JSON encoder does to a string it writes
-// inside another: a backslash and a quote escaped.
+// escapeOnceMore is what Go's and most JSON encoders do to a string
+// they write inside another: a backslash and a quote escaped (.NET's
+// default writes the quote as \u0022, which is not listed).
 var escapeOnceMore = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 // shapeRules are the recognisable credential forms. Each replacement
