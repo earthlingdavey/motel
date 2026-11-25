@@ -68,6 +68,7 @@ func TestRedactorRuntimeEscapes(t *testing.T) {
 	for name, v := range values {
 		env = append(env, "K_"+strings.ToUpper(name)+"="+v)
 	}
+	sort.Strings(env) // one order on every run: map order is random
 	r := NewRedactor(env)
 
 	var left []string
