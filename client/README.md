@@ -482,11 +482,13 @@ only:
    (`[redacted:<KEY>]`, or one of the spellings it falls back to when a
    key is named for its own value: `[REDACTED:<KEY>]`,
    `[withheld:<KEY>]`, `<<KEY> removed>`, `[#N]`; and
-   `[masked, N chars]`; what stands inside a marker may itself be
+   `[masked, N chars]`, which an older moteld wrote for a token that
+   looked generated; what stands inside a marker may itself be
    rewritten there, to any depth, `[redacted:[redacted:aws-key]]`: a
    marker runs to the bracket, or the angle, that closes it) is one the filter replaced
-   part of, as it does to a unit named after an app whose env_file
-   holds the app's name (`DB_NAME=<app>`). It is shown as
+   part of, as an older moteld, whose filter ran over its whole answer,
+   did to a unit named after an app whose env_file holds the app's
+   name (`DB_NAME=<app>`). It is shown as
    `[hidden by the box's filter]`, the client's words; and the app, or a
    record's version, is taken as the one asked for when the box's
    equals it everywhere but at a marker, and the one asked for is what
