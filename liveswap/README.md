@@ -1504,9 +1504,11 @@ What liveswap does for you:
   journal at the logs read. Each is filtered there, once, as text. motel knows the app's secrets by
   value (it built the environment from `env_file`), so the first layer
   is exact: every `env_file` value of 8+ characters, as written,
-  JSON-escaped, base64, hex or URL-escaped (and a URL value's password
-  on its own), becomes `[redacted:KEY]`, and the response's
-  `"redacted_env": ["KEY", …]` names what it contained. Then ten
+  JSON-escaped (as Go writes a string, and with the escapes of `/`,
+  `+` and `=` that PHP, Ruby, .NET and Gson write; each also escaped
+  once more, inside another string), base64, hex or URL-escaped (and a
+  URL value's password on its own), becomes `[redacted:KEY]`, and the
+  response's `"redacted_env": ["KEY", …]` names what it contained. Then ten
   credential shapes an ordinary log line does not hold are replaced by
   name where the shape stands at a word's start (one straight after a
   letter, a digit or `_`, as after JSON's `\n` or a colour code, is
