@@ -12,10 +12,10 @@ import (
 
 // runtimeEscapesReadable is how many of the corpus's 494 outputs a door
 // sends readable: none of the five realistic values' 190, and 47 of the
-// rest, each on a value that is borderline or built to stress the filter
-// (a quote or backslash under encoders other than Go's, non-ASCII as
-// \uXXXX, a control character as \xXX, deeper nesting, an encoder with
-// another habit). The owner accepted them on 2026-11-25
+// rest, each on a value that is borderline or built to stress the filter,
+// as an encoder other than Go's writes it: 22 a non-ASCII character as
+// \uXXXX, 15 a control character or DEL escaped, 7 a quote or a
+// backslash, 3 `<`, `>` or `&`. The owner accepted them on 2026-11-25
 // (DESIGN-liveswap.md, accepted residuals). Pinned, so that a change to
 // layer 1's spellings that moves it either way is seen.
 const runtimeEscapesReadable = 47
@@ -90,6 +90,26 @@ func TestRedactorRuntimeEscapes(t *testing.T) {
 	if len(left) != runtimeEscapesReadable {
 		sort.Strings(left)
 		t.Errorf("%d of %d outputs are sent readable, want %d:\n%s", len(left), len(outputs), runtimeEscapesReadable, strings.Join(left, "\n"))
+	}
+}
+
+// TestRedactorURLPasswordSpellings: a connection URL's password gets the
+// spellings its URL gets, so a driver that prints the password alone
+// through such an encoder is hidden under the URL's key.
+func TestRedactorURLPasswordSpellings(t *testing.T) {
+	// The URL's password below, decoded.
+	const pw = "abc/def+ghi="
+	r := NewRedactor([]string{"DATABASE_URL=postgres://app:abc%2Fdef%2Bghi%3D@db.internal/app"}) // gitleaks:allow — made up for this test
+	for _, in := range []string{
+		`abc\/def+ghi=`,     // PHP's json_encode, Ruby's script_safe
+		`abc/def\u002Bghi=`, // .NET's default
+		`abc/def+ghi\u003d`, // Gson's default
+		`abc\\\/def+ghi=`,   // PHP inside PHP
+	} {
+		out, keys := r.Redact(`{"msg":"auth failed for ` + in + `"}`)
+		if escapesReadable(out, pw) || strings.Join(keys, ",") != "DATABASE_URL" {
+			t.Errorf("the password as %s: sent %q, keys %v", in, out, keys)
+		}
 	}
 }
 
