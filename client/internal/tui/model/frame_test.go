@@ -76,8 +76,12 @@ func TestCommandsAreShellSafe(t *testing.T) {
 		}
 	}
 	s := &model.Session{Host: demo.Host, Now: func() time.Time { return t0 }, Engine: model.NewEngine(t0)}
-	if line, ok := s.Command(model.View{Screen: model.ScreenRecord, App: "blog", Version: "v1'x"}); ok {
+	bad := model.View{Screen: model.ScreenRecord, App: "blog", Version: "v1'x"}
+	if line, ok := s.Command(bad); ok {
 		t.Errorf("a version outside the grammar has the command %q", line)
+	}
+	if got := text(s.Overlay(bad, false, 200, runes, asIs)); !strings.Contains(got, "no motel command can ask for its record") || s.CanPrint(bad, 1) {
+		t.Errorf("a version outside the grammar: the overlay says %q, P prints %v", got, s.CanPrint(bad, 1))
 	}
 }
 
