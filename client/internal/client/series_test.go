@@ -11,9 +11,8 @@ import (
 
 // TestReadSeries: GET /_motel/apps/<app>/series's answer is taken only
 // with its store's word, a window of the box's set, and, with the
-// store's answer, a step and an end; each panel's name and unit a word
-// (a marker of the box's filter shown as the client's words), each name
-// once; each panel's points no more than its window has steps, oldest
+// store's answer, a step and an end; each panel's name and unit a
+// word, each name once; each panel's points no more than its window has steps, oldest
 // first, each inside the window. A store's word the client does not
 // know is taken, to be said as not known; a panel it does not know too.
 func TestReadSeries(t *testing.T) {

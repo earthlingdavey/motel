@@ -187,13 +187,12 @@ func (c *Client) Rules(ctx context.Context, app App) (wire.Rules, *Answer, error
 	var r wire.Rules
 	ans, err := c.read(ctx, "/_motel/apps/"+app.Name+"/rules", nil, &r)
 	if err == nil {
-		another := func(name string) bool { return name != app.Name }
 		for _, a := range r.Alerts {
 			// A box's own (its subject, a reading of a filesystem or a
 			// backup) is not an app's either.
-			other := a.Subject != "app" || a.App != "" && another(a.App) || len(a.Apps) > 0
+			other := a.Subject != "app" || a.App != "" && a.App != app.Name || len(a.Apps) > 0
 			for _, rd := range a.Readings {
-				other = other || rd.Instance != "" || rd.App == "" || another(rd.App)
+				other = other || rd.Instance != "" || rd.App == "" || rd.App != app.Name
 			}
 			if other {
 				err = c.NotMotel(ans, "it holds rules or numbers not of this app")

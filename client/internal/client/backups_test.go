@@ -10,9 +10,8 @@ import (
 
 // TestReadBackups: GET /_motel/backups's answer is taken only with its
 // at, apps and lines, and with every value the client prints as a token
-// in its grammar: an app's name (a marker of the box's filter is shown
-// as the client's words), a result of a backup run's shape, a level of
-// the three. Free text (a line's, could_not_tell) is not held; it is
+// in its grammar: an app's name, a result of a backup run's shape, a
+// level of the three. Free text (a line's, could_not_tell) is not held; it is
 // printed labelled and capped.
 func TestReadBackups(t *testing.T) {
 	cl := &Client{Box: Box{Host: "127.0.0.1"}}

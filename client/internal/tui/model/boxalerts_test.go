@@ -141,9 +141,10 @@ func TestOldBoxBoxWideReadsNotRefused(t *testing.T) {
 	}
 }
 
-// TestBoxAlertsWithheldRows: a row the box's filter withheld (no name,
-// no severity; a silence with no maker) shows its head and what it has,
-// and no labelled row with nothing after it.
+// TestBoxAlertsWithheldRows: a row with little in it (no name, no
+// severity, as the row of an app the person may not read has; a silence
+// with no maker) shows its head and what it has, and no labelled row
+// with nothing after it.
 func TestBoxAlertsWithheldRows(t *testing.T) {
 	s, f, now := session(t)
 	s.Engine.BoxAlertsOpen(true, *now)

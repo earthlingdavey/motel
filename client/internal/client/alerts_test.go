@@ -11,9 +11,8 @@ import (
 // TestReadAlerts: GET /_motel/apps/<app>/alerts's answer is taken only
 // with its monitor and its alerts, and with every value the client
 // prints as a token in its grammar: an alert's name, its severity and
-// its state, a word each (a marker of the box's filter is shown as the
-// client's words); the monitor a word, which may be one the client does
-// not know. The summary is free text, printed labelled and capped.
+// its state, a word each; the monitor a word, which may be one the
+// client does not know. The summary is free text, printed labelled and capped.
 func TestReadAlerts(t *testing.T) {
 	cl := &Client{Box: Box{Host: "127.0.0.1"}}
 	const whole = `{"monitor":"on","alerts":[{"name":"deploy_failed","severity":"warning","summary":"deploy of v2 failed \u001b[2J","starts_at":"2026-11-19T14:02:00Z","state":"suppressed","silenced_until":"2026-11-19T16:00:00Z"},` +

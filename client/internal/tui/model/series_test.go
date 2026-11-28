@@ -425,8 +425,8 @@ func seriesBody(end time.Time, back ...int) string {
 // TestMetricsDeployMarks: the time axis marks each version's latest
 // deploy that succeeded inside the window, at its column, and says what
 // the marks are, how long a column is, and from when the records reach
-// when that is inside the window; a deploy whose time the box's filter
-// hid is not marked, and said; with no status read, no marks, and said.
+// when that is inside the window; a deploy whose finish time does not
+// read is not marked, and said; with no status read, no marks, and said.
 func TestMetricsDeployMarks(t *testing.T) {
 	now := t0
 	f := &demo.Fake{Now: func() time.Time { return now }}

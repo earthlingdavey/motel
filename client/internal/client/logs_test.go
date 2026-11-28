@@ -56,8 +56,8 @@ func TestLogsAsks(t *testing.T) {
 // TestReadLogs: GET /_motel/apps/<app>/logs's answer is taken only with
 // kept a word (one the client does not know is taken, for the command
 // to say so), its lines, a cursor of the box's grammar or none, and each
-// line's release a version or "" (one the box's filter replaced part of
-// is the client's words); a line's text is taken whatever it holds.
+// line's release a version or ""; a line's text is taken whatever it
+// holds.
 func TestReadLogs(t *testing.T) {
 	cl := &Client{Box: Box{Host: "127.0.0.1"}}
 	whole := `{"kept":"on","lines":[{"at":"2026-11-20T09:30:00.123456Z","release":"v42","text":"GET /cart 200 \u001b[31m12ms"},` +

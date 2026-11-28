@@ -95,8 +95,8 @@ other      the box's disk_bytes in bytes: not one this client draws
 		t.Errorf("no point: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
 	fb.series.Panels = []wire.Panel{{Name: wire.PanelMemory, Unit: wire.UnitBytes, Points: [][2]float64{{float64(end.Unix()), 1 << 20}}}}
-	// Beside a panel this client does not know (one the box's filter may
-	// have renamed), no cause is said for the request panels' absence.
+	// Beside a panel this client does not know (a newer box's), no cause
+	// is said for the request panels' absence.
 	fb.series.Panels = append(fb.series.Panels, wire.Panel{Name: "requests_hidden", Unit: "per_second", Points: [][2]float64{}})
 	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || strings.Contains(r.stdout, "observe") {
 		t.Errorf("an unknown panel: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)

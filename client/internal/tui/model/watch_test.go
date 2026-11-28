@@ -114,8 +114,8 @@ func firing(t *testing.T, s *model.Session, now time.Time, what string, n, fresh
 // set: nothing at the first answer; a new alert, a refire (a new
 // start), a silence ending and the deploy mute ending each are; an info
 // alert, one held quiet and one resolving are not, and ring nothing;
-// ChannelFailed's identical rows count once; a row the filter withheld
-// keeps its key while withheld. One bell a read that brings something
+// ChannelFailed's identical rows count once; the row of an app the
+// person may not read keeps its key while it stays so. One bell a read that brings something
 // new, none sooner than RingFloor after the last: one owed inside it is
 // held, and rung once when it ends.
 func TestWatchNew(t *testing.T) {
@@ -200,8 +200,8 @@ func TestWatchNew(t *testing.T) {
 	*now = now.Add(model.RingFloor)
 	s.Seen(*now)
 
-	// A row the filter withheld: no name, no instance, the same key at
-	// each read.
+	// The row of an app the person may not read (liveswap/motel_alerts.go):
+	// no name, no instance, the same key at each read.
 	withheld := `{"name":"","severity":"warning","summary":"response withheld","starts_at":"` + a.Format(time.RFC3339) + `","state":"active","app":"shop"}`
 	f.Body("box-alerts.json", alerts(false, withheld, crit))
 	watchRead(t, s, f, now)
