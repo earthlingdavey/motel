@@ -56,7 +56,7 @@ func (c *Client) Status(ctx context.Context, app App, rng string) (wire.Status, 
 		q.Set("range", rng)
 	}
 	ans, err := c.read(ctx, app.Path, q, &st)
-	if err == nil && !Same(st.App, app.Name) {
+	if err == nil && st.App != app.Name {
 		err = c.NotMotel(ans, "it is the status of another app")
 	}
 	return st, ans, err
@@ -70,11 +70,8 @@ func (c *Client) Deploy(ctx context.Context, app App, version string) (wire.Depl
 		return d, nil, err
 	}
 	ans, err := c.read(ctx, app.Path, url.Values{"deploy": {version}}, &d)
-	if err == nil && !Same(d.Version, version) {
+	if err == nil && d.Version != version {
 		err = c.NotMotel(ans, "it is the record of another version")
-	}
-	if err == nil {
-		d.Version = version // the one asked for: the box's may carry its filter's marker
 	}
 	return d, ans, err
 }
@@ -190,9 +187,7 @@ func (c *Client) Rules(ctx context.Context, app App) (wire.Rules, *Answer, error
 	var r wire.Rules
 	ans, err := c.read(ctx, "/_motel/apps/"+app.Name+"/rules", nil, &r)
 	if err == nil {
-		// A name the box's filter hid (Filtered, from Read's hold) says
-		// nothing of which app it was: not taken for another.
-		another := func(name string) bool { return name != Filtered && !Same(name, app.Name) }
+		another := func(name string) bool { return name != app.Name }
 		for _, a := range r.Alerts {
 			// A box's own (its subject, a reading of a filesystem or a
 			// backup) is not an app's either.

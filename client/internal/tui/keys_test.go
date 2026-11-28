@@ -53,12 +53,11 @@ func TestFilterShownAgain(t *testing.T) {
 	}
 }
 
-// TestStepPassesOneVersionTwice: two deploys whose versions the box's
-// filter hid, between two real ones. p from the newest walks every row
-// to the oldest, the deploys table's cursor with it, each record read
-// as it is arrived at; n walks back; esc returns to the row stepped to.
-func TestStepPassesOneVersionTwice(t *testing.T) {
-	const hidden = "[hidden by the box's filter]"
+// TestStepWalksEveryRow: four deploys. p from the newest walks every
+// row to the oldest, the deploys table's cursor with it, each record
+// read as it is arrived at; n walks back; esc returns to the row
+// stepped to.
+func TestStepWalksEveryRow(t *testing.T) {
 	raw, err := os.ReadFile("demo/fixtures/status/shop.json")
 	if err != nil {
 		t.Fatal(err)
@@ -68,19 +67,19 @@ func TestStepPassesOneVersionTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 	ds := m["deploys"].([]any)
-	hid := func() any {
+	named := func(v string) any {
 		d := maps.Clone(ds[1].(map[string]any))
-		d["version"] = hidden
+		d["version"] = v
 		return d
 	}
-	m["deploys"] = []any{ds[0], hid(), hid(), ds[1]}
+	m["deploys"] = []any{ds[0], named("v2"), named("v1"), ds[1]}
 	body, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h := start(t, 100, 30, func(f *demo.Fake) { f.Body("status/shop.json", string(body)) })
 	h.press(":", "status shop", tcell.KeyEnter, tcell.KeyEnter) // the newest deploy's record
-	versions := []string{"e9a0b3f2c118", hidden, hidden, "7c1e55d0a913"}
+	versions := []string{"e9a0b3f2c118", "v2", "v1", "7c1e55d0a913"}
 	at := func(want int, key string) {
 		t.Helper()
 		var v model.View

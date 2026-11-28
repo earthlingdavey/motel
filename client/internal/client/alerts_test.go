@@ -39,10 +39,8 @@ func TestReadAlerts(t *testing.T) {
 			t.Errorf("%s: %v", c.name, err)
 		}
 	}
-	if a, err := read(strings.Replace(whole, `"deploy_failed"`, `"[redacted:NAME]"`, 1)); err != nil || a.Alerts[0].Name != Filtered {
-		t.Errorf("a marker in a name: %v, %q", err, a.Alerts[0].Name)
-	}
 	for _, c := range []struct{ name, body, want string }{
+		{"a marker in a name", strings.Replace(whole, `"deploy_failed"`, `"[redacted:NAME]"`, 1), "an alert's name in it is not one an alert has)"},
 		{"no monitor", strings.Replace(whole, `"monitor":"on",`, "", 1), "it has no monitor)"},
 		{"no alerts", `{"monitor":"on"}`, "it has no alerts)"},
 		{"alerts not a list", `{"monitor":"on","alerts":{}}`, "it has no alerts)"},

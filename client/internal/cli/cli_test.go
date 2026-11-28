@@ -421,52 +421,25 @@ func TestBoxAnswersFailure(t *testing.T) {
 	}
 }
 
-// A status the box's own filter replaced values in is read, and each
-// such value is shown in the client's words, with nothing of what the
-// box sent in it; the app and a record's version are the ones asked for
-// when the box's equal them but at a marker.
-func TestStatusTheFilterReplacedValuesIn(t *testing.T) {
+// A marker of a filter in a value moteld writes itself (an older
+// moteld's) is a value outside its grammar: the answer is not moteld's,
+// exit 3, and nothing of it is printed.
+func TestStatusWithAMarkerIsRefused(t *testing.T) {
 	fb := newFakeBox(t)
 	fb.status = wire.Status{
-		App: "bl[redacted:APP_ENV]", Phase: "idle", CurrentVersion: "v42", PID: 41233, Running: true,
-		Unit:              "motel-[redacted:DB_NAME].v42.0123456789abcdef.service motel: forged",
-		Watchdog:          &wire.Watchdog{State: "[redacted:FLAG]"},
-		Deploys:           []wire.DeploySummary{{Version: "v42", Status: "succeeded"}, {Version: "v[redacted:X]", Status: "failed", Phase: "soaking"}},
-		AvailableVersions: []string{"v42", "v[redacted:X]"},
+		App: "blog", Phase: "idle", CurrentVersion: "v42", PID: 41233, Running: true,
+		Unit: "motel-[redacted:DB_NAME].v42.0123456789abcdef.service motel: forged",
 	}
-	r := run(t, fb, deployToken, "status", appURL(fb, "blog"))
-	const hidden = "[hidden by the box's filter]"
-	if r.code != 0 || r.stderr != "" || !strings.HasPrefix(r.stdout, "blog  running v42  unit "+hidden+"  pid 41233\n") ||
-		!strings.Contains(r.stdout, "versions     v42 (running) "+hidden+"\n") || strings.Contains(r.stdout, "redacted:") || strings.Contains(r.stdout, "forged") {
-		t.Fatalf("status: %+v", r)
+	for _, args := range [][]string{{"status", appURL(fb, "blog")}, {"deploys", appURL(fb, "blog")}} {
+		r := run(t, fb, deployToken, args...)
+		if r.code != 3 || r.stdout != "" || !strings.Contains(r.stderr, "not moteld's answer: its unit is not one moteld names") ||
+			strings.Contains(r.stderr, "redacted:") || strings.Contains(r.stderr, "forged") {
+			t.Errorf("%s: %+v", args[0], r)
+		}
 	}
-	if n := strings.Count(r.stdout, hidden); n != 3 { // the unit, the watchdog's state, a version
-		t.Errorf("%d values shown as hidden, want 3:\n%s", n, r.stdout)
-	}
-	r = run(t, fb, deployToken, "deploys", appURL(fb, "blog"))
-	if r.code != 0 || !strings.Contains(r.stdout, hidden) || strings.Contains(r.stdout, "redacted:") {
-		t.Fatalf("deploys: %+v", r)
-	}
-	// --json is the box's own answer, markers and all.
-	r = run(t, fb, deployToken, "status", appURL(fb, "blog"), "--json")
-	if r.code != 0 || r.stdout != string(fb.bodies["/blog"]) {
-		t.Fatalf("--json: %+v", r)
-	}
-	// Another app's status is still another app's.
-	fb.status.App = "sh[redacted:APP_ENV]"
-	if r := run(t, fb, deployToken, "status", appURL(fb, "blog")); r.code != 3 || !strings.Contains(r.stderr, "it is the status of another app") {
-		t.Fatalf("another app's status behind a marker: %+v", r)
-	}
-
-	// One record: the version asked for is the one shown.
 	fb.deploy = wire.DeployResult{Version: "v[redacted:X]", Status: "succeeded"}
-	r = run(t, fb, deployToken, "deploys", appURL(fb, "blog"), "v41")
-	if r.code != 0 || !strings.Contains(r.stdout, "v41") || strings.Contains(r.stdout, "redacted:") {
-		t.Fatalf("one record: %+v", r)
-	}
-	fb.deploy.Version = "w[redacted:X]"
-	if r := run(t, fb, deployToken, "deploys", appURL(fb, "blog"), "v41"); r.code != 3 || !strings.Contains(r.stderr, "it is the record of another version") {
-		t.Fatalf("another version's record behind a marker: %+v", r)
+	if r := run(t, fb, deployToken, "deploys", appURL(fb, "blog"), "v41"); r.code != 3 || r.stdout != "" || !strings.Contains(r.stderr, "not moteld's answer: a version in it is not a version") {
+		t.Errorf("one record: %+v", r)
 	}
 }
 

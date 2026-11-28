@@ -71,15 +71,15 @@ var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenR
 // its arguments: the command's words, --box so it works pasted
 // anywhere, --key only when the person named it, then -- and the
 // positional arguments, so a version that begins with - is not read as
-// a flag. A record whose version is outside the version grammar (one
-// the box's filter hid, which the deploys table lists in the client's
-// words) has none: no command could ask for it.
+// a flag. A record whose version is outside the version grammar has
+// none: every way to a record holds its version to the grammar, and a
+// command line is never printed with one that is not.
 func (s *Session) CommandArgs(v View) ([]string, bool) { return s.commandArgs(v, false) }
 
 func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 	k, reads := screenReads[v.Screen]
 	a, ok := ActionFor(k)
-	if !reads || !ok || hiddenVersion(v) {
+	if !reads || !ok || badVersion(v) {
 		return nil, false
 	}
 	args := []string{"motel"}
@@ -116,11 +116,9 @@ func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 	return args, true
 }
 
-// hiddenVersion says whether v is a record whose version no command
-// can name: only one the box's filter hid reaches a screen so, since
-// the client refuses any other outside the grammar, and so does the :
-// line.
-func hiddenVersion(v View) bool { return v.Screen == ScreenRecord && !ValidVersion(v.Version) }
+// badVersion says whether v is a record whose version no command can
+// name.
+func badVersion(v View) bool { return v.Screen == ScreenRecord && !ValidVersion(v.Version) }
 
 // boxArg is the box as the printed command's --box gives it.
 func (s *Session) boxArg() string {
@@ -285,8 +283,8 @@ type AsIs func(termtext.Text) bool
 func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) []Line {
 	c, ok := s.Command(v)
 	switch {
-	case !ok && hiddenVersion(v):
-		return lay([]oRow{words("the box's filter hid this deploy's version: no motel command can ask for its record")}, width, cells)
+	case !ok && badVersion(v):
+		return lay([]oRow{words("this deploy's version is outside the version grammar: no motel command can ask for its record")}, width, cells)
 	case !ok:
 		return lay([]oRow{words("this screen reads nothing from the box")}, width, cells)
 	}
@@ -533,7 +531,7 @@ func (s *Session) CanPrint(v View, overlay int) bool {
 		return s.Engine.Stopped() == SignedOut
 	case overlay == 1:
 		_, ok := screenReads[v.Screen]
-		return ok && !hiddenVersion(v)
+		return ok && !badVersion(v)
 	case overlay == 2:
 		_, ok := screenReads[v.Screen]
 		_, _, have := s.Body(v)

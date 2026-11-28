@@ -219,7 +219,7 @@ func TestUnreadableFieldNamedNotQuoted(t *testing.T) {
 	body := `{"name":"alice","key":"SHA256:x","roles":[],"box":"b","version":"","protocol":1,"token_expires_at":"` + evil + `"}`
 	ans := &Answer{Code: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(body)}
 	f := failure(t, cl.Read(ans, &wire.WhoAmI{}))
-	want := "127.0.0.1 answered, but its token_expires_at could not be read: the box's response filter may have replaced it. The answer names no key whose value the filter replaced."
+	want := "127.0.0.1 answered, but its token_expires_at could not be read."
 	if f.Exit != ExitUnknown || f.Message != want {
 		t.Errorf("exit %d %q", f.Exit, f.Message)
 	}

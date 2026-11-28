@@ -396,9 +396,7 @@ func (u *UI) renderApp(v model.View, now time.Time) {
 	door.SetText(u.fields, door.Lines(fs, u.Colour))
 	u.appFlex.ResizeItem(u.fields, len(fs), 0)
 	// The cursor stays on its deploy, by version, as the apps table's
-	// stays on its app by name: a new deploy lands above it. Among rows
-	// of one version (the filter's placeholder for several), it stays on
-	// its row while that row's version is the same, else on the first.
+	// stays on its app by name: a new deploy lands above it.
 	sel, _ := u.deploys.GetSelection()
 	selVersion := ""
 	if sel >= 1 && sel-1 < len(u.deployRows) {
@@ -415,10 +413,9 @@ func (u *UI) renderApp(v model.View, now time.Time) {
 	for c, h := range model.DeployCols {
 		u.deploys.SetCell(0, c+1, door.Head(h))
 	}
-	kept := sel >= 1 && sel-1 < len(view.Deploys) && view.Deploys[sel-1].Version == selVersion
 	for i, r := range view.Deploys {
-		if !kept && r.Version == selVersion {
-			sel, kept = i+1, true
+		if r.Version == selVersion {
+			sel = i + 1
 		}
 		u.deploys.SetCell(i+1, 0, u.markCell(r.Mark))
 		for c, t := range r.Cells {

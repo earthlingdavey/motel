@@ -393,9 +393,9 @@ func mib(b float64) string {
 // ordered it. Not in colour: tabwriter would count a colour's escape
 // as width, and the columns would not line up. Every cell but BY is a
 // word of its grammar (the client's hold), with no white space, or the
-// client's own words (a time it could not read, a version the box's
-// filter replaced part of); BY, the one cell that holds what a box
-// wrote with spaces, is last and capped, so it cannot fake a column.
+// client's own words (a time it could not read); BY, the one cell that
+// holds what a box wrote with spaces, is last and capped, so it cannot
+// fake a column.
 func WriteDeploys(w io.Writer, rows []Summary) error {
 	if len(rows) == 0 {
 		_, err := fmt.Fprintln(w, "no deploy recorded")

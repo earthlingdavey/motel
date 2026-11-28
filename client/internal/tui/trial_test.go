@@ -512,8 +512,7 @@ func TestDeployAfterAFailure(t *testing.T) {
 // VERSION says the version in flight, marked as on its way ("→ "), and
 // not the running one, so the phase in STATE is not read as the running
 // version's; the strip's line names it too. An older box, which sends a
-// phase and no "deploying", is shown as before; a version the box's
-// filter hid is shown as hidden. The trial saw "⟳ example soaking
+// phase and no "deploying", is shown as before. The trial saw "⟳ example soaking
 // a2b3326f1c84" with a2b3326f1c84 serving and another version soaking.
 func TestRowVersionInFlight(t *testing.T) {
 	b, err := os.ReadFile("demo/fixtures/status/api.json")
@@ -528,7 +527,6 @@ func TestRowVersionInFlight(t *testing.T) {
 		}
 		return out
 	}
-	const hidden = "[hidden by the box's filter]"
 	for _, c := range []struct {
 		name, body, version, strip string
 	}{
@@ -536,7 +534,6 @@ func TestRowVersionInFlight(t *testing.T) {
 		{"uploading", edit(api, `"phase": "soaking"`, `"phase": "idle"`), "→ 4c2d9e7b1a05", "deploying 4c2d9e7b1a05 (seen 0s ago)"},
 		{"a relaunch", edit(api, `"version": "4c2d9e7b1a05"`, `"version": "3b8812aa0c4f"`), "→ 3b8812aa0c4f", "deploying 3b8812aa0c4f: soaking (seen 0s ago)"},
 		{"the first", edit(edit(api, `"current_version": "3b8812aa0c4f",`, ``), `"running": true`, `"running": false`), "→ 4c2d9e7b1a05", "deploying 4c2d9e7b1a05: soaking (seen 0s ago)"},
-		{"hidden", edit(api, `"version": "4c2d9e7b1a05"`, `"version": "`+hidden+`"`), "→ [hidden by …", "deploying [hidden by …: soaking (seen 0s ago)"},
 		{"an older box", edit(api, `"deploying"`, `"x_deploying"`), "3b8812aa0c4f", "deploying: soaking (seen 0s ago)"},
 	} {
 		for _, sz := range [][2]int{{60, 16}, {80, 24}} {

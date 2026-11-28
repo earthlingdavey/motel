@@ -506,8 +506,8 @@ func (s *Session) MetricsViewFit(app, rng string, now time.Time, width, height i
 	case !has[wire.PanelRequests] && known:
 		out = append(out, nil, cutTo(field("requests", own("none in this window: the box counts them only for an app behind observe")), width, cells))
 	case !has[wire.PanelRequests]:
-		// A panel the client does not know may be one the box's filter
-		// renamed: no cause is said.
+		// A panel the client does not know may be the requests' under a
+		// newer box's name: no cause is said.
 		out = append(out, nil, cutTo(field("requests", own("none drawn in this window")), width, cells))
 	}
 	for _, pn := range v.Panels {
@@ -772,7 +772,7 @@ func (s *Session) deployMarks(app string, start, end time.Time, plotW int, now t
 		l = append(l, own("; records from "+clock(oldest, now, false)))
 	}
 	if hidden > 0 {
-		l = append(l, own("; "+strconv.Itoa(hidden)+" not marked: the box's filter hid when"))
+		l = append(l, own("; "+strconv.Itoa(hidden)+" not marked: their finish time does not read"))
 	}
 	return marks, l
 }

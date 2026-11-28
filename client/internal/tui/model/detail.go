@@ -171,9 +171,8 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	v.Fields = append(v.Fields, flight...)
 	v.Fields = append(v.Fields, s.alertLines(app, now)...)
 	if wd := st.Watchdog; wd != nil {
-		// The client's check lets through the states it knows and its
-		// own words for one the box's filter hid; anything else would
-		// be shown as the box's value.
+		// The client's check lets through only the states it knows;
+		// anything else would be shown as the box's value.
 		w := Line{boxT(wd.State)}
 		if watchdogStates[wd.State] {
 			w = Line{own(wd.State)}

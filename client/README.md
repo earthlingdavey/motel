@@ -469,30 +469,20 @@ only:
    (an app or version name, a phase, a deploy's status, a unit, the
    watchdog's state, the metrics' window, a
    commit, a digest, a role and its scope, whoami's name and release,
-   a backup's app, the shape of its result and a line's level, the
-   env_file keys an answer's `redacted_env` names in the sentence for
-   a value that did not read (one outside the grammar or past 128
-   characters is counted there, not printed, and the answer stands),
-   each with the server code it mirrors cited beside its pattern in
+   a backup's app, the shape of its result and a line's level, each
+   with the server code it mirrors cited beside its pattern in
    `internal/client/client.go`), or compared with what was asked (the
    app, the version, the host, the key, the box). A value outside its
    grammar makes the answer "not moteld's answer", exit 3, and is not
-   printed. One exception, which prints nothing of the value either: a
-   value that carries a marker of the box's own response filter
-   (`[redacted:<KEY>]`, or one of the spellings it falls back to when a
-   key is named for its own value: `[REDACTED:<KEY>]`,
-   `[withheld:<KEY>]`, `<<KEY> removed>`, `[#N]`; and
-   `[masked, N chars]`, which an older moteld wrote for a token that
-   looked generated; what stands inside a marker may itself be
-   rewritten there, to any depth, `[redacted:[redacted:aws-key]]`: a
-   marker runs to the bracket, or the angle, that closes it) is one the filter replaced
-   part of, as an older moteld, whose filter ran over its whole answer,
-   did to a unit named after an app whose env_file holds the app's
-   name (`DB_NAME=<app>`). It is shown as
-   `[hidden by the box's filter]`, the client's words; and the app, or a
-   record's version, is taken as the one asked for when the box's
-   equals it everywhere but at a marker, and the one asked for is what
-   is printed.
+   printed. moteld filters only the app's text, where it enters (a
+   failed deploy's log tail, a probe's body and Location, a line of
+   `motel logs`), and never changes a value of its own, so a marker of
+   its filter (`[redacted:<KEY>]`) is ordinary text in those, and
+   outside every grammar anywhere else. A value of moteld's that does
+   not decode (a time in a record an older moteld wrote, which may hold
+   that moteld's marker) is named and not shown: "`<box>` answered, but
+   its `finished_at` could not be read.", exit 3. A list of deploys
+   shows such a time as `(unreadable)`.
 2. **A quotation through `termtext.Quote`**: white space collapsed,
    cut at 200 characters, every control made visible, `"` and `\`
    escaped, and each `'` and `` ` `` that stands beside another (two
@@ -519,13 +509,6 @@ only:
 No message carries a transport's or a decoder's error text once a byte
 came from the peer: a fixed reason of the client's own is said instead.
 
-A body the box's response filter withheld (a 200 whose one sentence
-opens `response withheld`, or with a marker where the filter replaced
-part of those words: an env_file it could not read, say) is said
-as that, with the box's sentence quoted, exit 1: the sentence names
-what the operator has to mend. (The filter's last resort, a body of
-`[#0]` alone, is said the same way and names nothing.)
-
 This is held by review, the hostile fixtures and goldens
 (`internal/cli/testdata/hostile-*.golden`), and one partial source test,
 `TestNoHandMadeQuoteMarks`, which finds only a few shapes of a quotation
@@ -534,8 +517,6 @@ made by hand. Accepted:
 | Residual | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
 | A new message could splice box text without a test failing | 2 | 2 | 3 | 12 | 3 (typed message parts) | accepted |
-| An env_file value that is a piece of a marker's own punctuation (`:aws-key]`, `d:[redac`), replaced by the filter's last pass across a marker's edge, leaves the box's text with brackets or angles that do not pair, so no marker is found whole where the app's name or a record's version stood: `status` says "the status of another app", exit 3 (a value held to a grammar is still shown as hidden) | 2 | 5 | 3 | 30 | 3, and not the client's to make: the box's filter would have to keep its later layers off the markers its first wrote | accepted at the third review round and by the owner on 2026-11-17, the fix in the box's filter held as #553: over the bar because an operator's input scores occurrence 5 however unlikely; it takes a credential-shaped key's name and a value made of marker punctuation |
-| A 200 from something that is not moteld, lacking one of the answer's fields or more, whose `error` either opens `response withheld` and then ends or goes on with a colon or a marker, or opens with any start of those words (none of them, too) and then something shaped like one of the filter's markers (`[#404] not found`, `<content removed>`, `response [#504] gateway timeout`), is said as the box withholding its answer, exit 1, not as "not moteld's answer", exit 3: a marker may stand for any piece of the filter's opening words, so what follows it cannot be held to them | 2 | 2 | 3 | 12 | 2 | accepted: it takes another server at the box's name answering 200 with such an error; the sentence is still quoted as its sender's |
 | A 5xx in moteld's own words (a box still starting, a box status that cannot read its files) is said as not known to be moteld's and exits 3, not 1: no header tells it from a gateway's, by the owner's decision that no answer names motel. Its code and its quoted sentence are still shown | 2 | 4 | 1 | 8 | 3 (a stamp on the wire again) | accepted |
 | A gateway's JSON 4xx (a 403, 404, 409) is said as "the box says", as motel's would be: no header tells them apart, and none ever did for a 4xx | 2 | 5 | 3 | 30 | 1 (say a 4xx's sentence as "it says", not "the box says") | owed: older than this change, and it rewrites every 4xx sentence and its goldens |
 | A box built with a release string that is not `N.N.N` with an optional suffix (`make build VERSION=<another shape>`: the Makefile's own default and every tag fit) has every `whoami` called "not moteld's answer: its version is not a release", exit 3 | 2 | 5 | 3 | 30 | 1 (print another shape quoted) | accepted: over the bar, and no doc asks for such a build; the client holds the release to the shape the Makefile links in so that it can print it unquoted |
@@ -881,9 +862,8 @@ when it alone takes the whole window or more (the apps' summary of hundreds of a
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
 written from the table the keys are bound from, its rows wrapped to the window (an entry's words under its words), and scrolls, as its footer says. On a screen that reads
-the box (not help or a stop screen), `c` shows the `motel` line for it
-(a record whose version the box's filter hid has none, and `c` and `y`
-say so, and `P` prints nothing there), every argument quoted for a
+the box (not help or a stop screen), `c` shows the `motel` line for it,
+every argument quoted for a
 POSIX shell, `--box` naming the port when it is not 443 and `--key` the
 key when it was named with `--key` or `MOTEL_KEY` (on the apps screen, a row's line
 too, `<app>` for the app). A command line wider than the window, in the
@@ -992,8 +972,8 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   one read at each retry: of the reads due, one of a thing none of whose reads has failed (got no answer, or was refused) since its last answer or `r`, or never read (a 429 or a read cancelled leaves the count as it was), or, when none is, the one tried longest ago, so a thing whose own route fails does not take every retry,
   until any answer from the box ends that run, the
   title bar says back, and whoami is asked again
-  (a read the client fails without sending, such as a record whose
-  version the box's filter hid, ends nothing).
+  (a read the client fails without sending, such as one no command
+  makes, ends nothing).
   A 401, a token not signed, or a certificate that did not verify stops
   every read and says why; `r` asks once more, as a new start: no read before it counts as one in a row after it (for the backoff, the read brought forward, or `stale`), and one that failed before it is due at once, after whoami, not at the end of its backoff. A 403 or a 404 stops
   that read alone until `ctrl-r`. A deploy's record is read each time it

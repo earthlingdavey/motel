@@ -380,12 +380,6 @@ func (l live) Status(ctx context.Context, app string) (model.Got[wire.Status], e
 }
 
 func (l live) Deploy(ctx context.Context, app, version string) (model.Got[wire.DeployResult], error) {
-	// A version the box's filter hid is listed in the client's own
-	// words, which name no deploy: nothing is sent, and this read
-	// alone fails, saying so.
-	if version == client.Filtered {
-		return model.Got[wire.DeployResult]{}, &model.Failure{Kind: model.FailNotSent, Message: "the box's filter hid this deploy's version, so its record cannot be asked for"}
-	}
 	a, err := client.ParseApp(app)
 	if err == nil {
 		err = client.CheckVersion(version)

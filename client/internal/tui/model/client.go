@@ -103,8 +103,8 @@ const (
 	// box is not said to be silent.
 	FailUnusable
 	// FailNotSent: the client failed this read alone without sending
-	// anything (a record whose version the box's filter hid, an app or a
-	// version outside the client's grammar, a read no command makes).
+	// anything (an app or a version outside the client's grammar, a read
+	// no command makes).
 	// Nothing came from the box, so nothing is known of it: a run of no
 	// answer goes on.
 	FailNotSent

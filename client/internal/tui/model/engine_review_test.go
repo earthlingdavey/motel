@@ -76,7 +76,7 @@ func TestRefusalEndsAnOutage(t *testing.T) {
 }
 
 // TestNotSentKeepsAnOutage: a read the client fails without sending
-// anything (a record whose version the box's filter hid) while the box
+// anything (a read no command makes) while the box
 // does not answer changes nothing of the run: its misses, its backoff
 // and the title's STALE stay.
 func TestNotSentKeepsAnOutage(t *testing.T) {

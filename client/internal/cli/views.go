@@ -130,8 +130,9 @@ func summaryViews(ds []wire.DeploySummary) []render.Summary {
 
 // rawTime shows a summary's time, which the box carries as the record
 // has it: a timestamp when it is one, and the client's own word
-// otherwise (the response filter may have replaced it), never what it
-// holds, which could fake the table's columns.
+// otherwise (a record an older moteld wrote can hold its filter's
+// marker there), never what it holds, which could fake the table's
+// columns.
 func rawTime(raw json.RawMessage) termtext.Text {
 	if len(raw) == 0 {
 		return termtext.Text{}

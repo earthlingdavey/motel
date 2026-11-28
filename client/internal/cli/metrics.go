@@ -88,7 +88,7 @@ func seriesView(s wire.Series, app, host string) render.Series {
 	v := render.Series{Host: tx(host), App: tx(app), Window: tx(s.Window), Store: tx(s.Store), Step: time.Duration(s.StepSeconds) * time.Second}
 	// The request panels' absence is said as observe's only beside the
 	// app's memory or cpu, every panel known: with no point of the app at
-	// all, or a panel the box's filter may have renamed, no cause is.
+	// all, or a panel this client does not know, no cause is.
 	ran := false
 	for _, p := range s.Panels {
 		if (p.Name == wire.PanelMemory || p.Name == wire.PanelCPU) && len(p.Points) > 0 {
@@ -120,8 +120,8 @@ func seriesView(s wire.Series, app, host string) render.Series {
 	}
 	for _, p := range s.Panels {
 		label, known := model.SeriesLabel(p.Name, p.Unit)
-		// A panel this client does not know may be one the box's filter
-		// renamed: no cause is said for one absent then.
+		// A panel this client does not know may be the requests' under a
+		// newer box's name: no cause is said for one absent then.
 		if p.Name == wire.PanelRequests && known || !known {
 			v.NoRequests = false
 		}

@@ -118,9 +118,10 @@ type watchSrc struct {
 // alertKey is an alert as the watch tells one from another across
 // reads: its name, app, instance, severity and when it began. A refire
 // is a new start, a severity change a new alert; Alertmanager keeps the
-// earliest start of one held across moteld's restarts. A row the box's
-// filter withheld has no name or instance: its key is its app, its
-// severity and its start, which hold while it stays withheld. The
+// earliest start of one held across moteld's restarts. The row of an
+// app the box does not allow the person to read has no name or
+// instance (liveswap/motel_alerts.go): its key is its app, its severity
+// and its start, which hold while it stays so. The
 // fields are the box's text, any byte in them: the key is them encoded
 // as a JSON list, so no two lists of fields make one key.
 func alertKey(a wire.BoxAlert) string {

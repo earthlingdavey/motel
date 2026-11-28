@@ -295,12 +295,8 @@ const (
 	EventDone  = "done"
 )
 
-// PhaseEvent is a streamed deploy's line for one phase entered. Error
-// is never sent by this moteld: an older one, which filtered every
-// finished body, sent it in place of At when its filter withheld the
-// line.
+// PhaseEvent is a streamed deploy's line for one phase entered.
 type PhaseEvent struct {
-	Error string    `json:"error,omitempty" text:"passes"`
 	At    time.Time `json:"at,omitzero"`
 	Event string    `json:"event" text:"moteld"` // EventPhase
 	Phase string    `json:"phase" text:"moteld"`

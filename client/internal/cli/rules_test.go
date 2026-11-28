@@ -175,15 +175,14 @@ func TestMonitorRules(t *testing.T) {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", other.Name, r.code, r.stdout, r.stderr)
 		}
 	}
-	// A name the box's filter hid says nothing of which app it was: not
-	// taken for another's, and shown as hidden.
-	hid := wire.Rules{Store: wire.StoreOn, Alerts: []wire.AlertListing{{Name: "errors_high", Subject: "app", Kind: "threshold",
-		Readings: []wire.Reading{{App: "[redacted:DB_NAME]", Value: pf(0.1), MeasuredAt: at}}}}}
-	hid.RulesFile = wire.RulesFileDiffers
-	fb.appRules = &hid
-	if r := runKey(t, fb, nil, "monitor", "rules", "--app", "blog"); r.code != 0 || !strings.Contains(r.stdout, "[hidden by the box's filter] 0.1 (") ||
+	// An app's rules file.
+	own := wire.Rules{Store: wire.StoreOn, Alerts: []wire.AlertListing{{Name: "errors_high", Subject: "app", Kind: "threshold",
+		Readings: []wire.Reading{{App: "blog", Value: pf(0.1), MeasuredAt: at}}}}}
+	own.RulesFile = wire.RulesFileDiffers
+	fb.appRules = &own
+	if r := runKey(t, fb, nil, "monitor", "rules", "--app", "blog"); r.code != 0 || !strings.Contains(r.stdout, "blog 0.1 (") ||
 		!strings.Contains(r.stdout, "\nrules file  the file vmalert reads is not this config's render: the store's rules listed may not be the ones it runs") {
-		t.Errorf("a hidden name, and an app's rules file: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+		t.Errorf("an app's rules file: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
 	// Apps an alert is pinned to, in the box's read: said; in an app's,
 	// not moteld's answer (the box names the app's own alone).

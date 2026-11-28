@@ -79,16 +79,13 @@ func TestReadLogs(t *testing.T) {
 			t.Errorf("%s: %v", c.name, err)
 		}
 	}
-	if l, err := read(strings.Replace(whole, `"release":"v42"`, `"release":"[redacted:RELEASE]"`, 1)); err != nil || l.Lines[0].Release != Filtered {
-		t.Errorf("a marker in a release: %v, %+v", err, l.Lines)
-	}
 	for _, c := range []struct{ name, body, want string }{
 		{"no kept", strings.Replace(whole, `"kept":"on",`, "", 1), "it has no kept)"},
 		{"no lines", `{"kept":"on","more":false}`, "it has no lines)"},
 		{"lines null", `{"kept":"on","lines":null}`, "it has no lines)"},
 		{"kept not a word", strings.Replace(whole, `"kept":"on"`, `"kept":"on\u001b[2J"`, 1), "its kept is not a word)"},
 		{"a cursor not a cursor", strings.Replace(whole, testCursor, "s=1;i=2", 1), "its cursor is not a journal cursor)"},
-		{"a cursor the filter changed", strings.Replace(whole, testCursor, "[redacted:CURSOR]", 1), "its cursor is not a journal cursor)"},
+		{"a marker in a release", strings.Replace(whole, `"release":"v42"`, `"release":"[redacted:RELEASE]"`, 1), "a line's release in it is not a version)"},
 		{"a release not a version", strings.Replace(whole, `"release":"v42"`, `"release":"v42 \u001b[2J"`, 1), "a line's release in it is not a version)"},
 	} {
 		_, err := read(c.body)
@@ -99,14 +96,6 @@ func TestReadLogs(t *testing.T) {
 		f := failure(t, err)
 		if f.Exit != ExitUnknown || !strings.Contains(f.Message, "not moteld's answer: "+c.want) {
 			t.Errorf("%s: exit %d %q", c.name, f.Exit, f.Message)
-		}
-	}
-	// The box's filter withheld the body: said as that, exit 1, with the
-	// body for --json; its last resort, [#0], the same.
-	for _, body := range []string{`{"error":"response withheld: the app's env_file could not be read"}`, `{"error":"[#0]"}`} {
-		_, err := read(body)
-		if f := failure(t, err); f.Exit != ExitFailed || !strings.Contains(f.Message, "withheld its answer") || string(f.Body) != body {
-			t.Errorf("%s: exit %d %q", body, f.Exit, f.Message)
 		}
 	}
 }

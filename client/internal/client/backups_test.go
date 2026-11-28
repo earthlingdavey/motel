@@ -30,11 +30,8 @@ func TestReadBackups(t *testing.T) {
 	if _, err := read(strings.Replace(whole, `"data missing"`, `"not yet verified"`, 1)); err != nil {
 		t.Errorf("a class of the shape: %v", err)
 	}
-	// A marker where an app's name stood is the client's words.
-	if b, err := read(strings.Replace(whole, `"app":"blog"`, `"app":"[redacted:APP]"`, 1)); err != nil || b.Lines[1].App != Filtered {
-		t.Errorf("a marker in a line's app: %v, %q", err, b.Lines[1].App)
-	}
 	for _, c := range []struct{ name, body, want string }{
+		{"a marker in a line's app", strings.Replace(whole, `"app":"blog"`, `"app":"[redacted:APP]"`, 1), "a name in it is no app name)"},
 		{"no at", strings.Replace(whole, `"at":"2026-11-19T07:01:00Z",`, "", 1), "it has no at)"},
 		{"no lines", strings.Replace(whole, `,"lines":[{"level":"info","text":"last run \u001b[2J"},{"app":"blog","level":"problem","text":"blog: data missing"}]`, "", 1), "it has no lines)"},
 		{"apps not a list", strings.Replace(whole, `"apps":[`, `"apps":{"x":[`, 1), ""},

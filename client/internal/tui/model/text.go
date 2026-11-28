@@ -119,8 +119,8 @@ func Ago(d time.Duration) string {
 	return strconv.Itoa(int(d/(24*time.Hour))) + "d"
 }
 
-// rawTime reads a time the box carries raw (the response filter may
-// have replaced it).
+// rawTime reads a time the box carries raw, as the record has it (one
+// an older moteld wrote can hold its filter's marker there).
 func rawTime(raw json.RawMessage) (time.Time, bool) {
 	var s string
 	if json.Unmarshal(raw, &s) != nil {

@@ -199,7 +199,7 @@ func (u *UI) back() {
 			// table may still hold another app's rows and cursor.
 			// renderApp keeps it on these rows' version.
 			rows := u.S.Overview(v.App, u.now()).Deploys
-			if i := u.deployRow(rows, v.Version); i >= 0 {
+			if i := deployRow(rows, v.Version); i >= 0 {
 				u.deployRows = rows
 				u.deploys.Select(i+1, 0)
 			}
@@ -436,14 +436,12 @@ func (u *UI) nextRange() {
 }
 
 // step opens the record next to this one in the app's deploys: p the
-// one before (older), n the one after. This one is the deploys table's
-// row when it holds this version (several rows can: the filter's
-// placeholder), else the first that does; the table's cursor goes to
-// the row stepped to, so esc returns there.
+// one before (older), n the one after, from this version's row; the
+// table's cursor goes to the row stepped to, so esc returns there.
 func (u *UI) step(by int) {
 	v := u.top()
 	rows := u.S.Overview(v.App, u.now()).Deploys
-	i := u.deployRow(rows, v.Version)
+	i := deployRow(rows, v.Version)
 	if i < 0 || i+by < 0 || i+by >= len(rows) {
 		return
 	}
@@ -455,21 +453,12 @@ func (u *UI) step(by int) {
 	// reads the cursor's version from deployRows.
 	u.deployRows = rows
 	u.deploys.Select(i+by+1, 0)
-	// Opened, though its view may be the one left (one version on two
-	// rows): show reads it again.
-	u.inFront = model.View{}
 	u.show()
 }
 
-// deployRow is the index in rows of version's row: the deploys table's
-// cursor's when it holds version, else the first that does; -1 when
-// none does.
-func (u *UI) deployRow(rows []model.DeployRow, version string) int {
-	i, _ := u.deploys.GetSelection()
-	if i--; i < 0 || i >= len(rows) || rows[i].Version != version {
-		i = slices.IndexFunc(rows, func(r model.DeployRow) bool { return r.Version == version })
-	}
-	return i
+// deployRow is the index in rows of version's row; -1 when none is.
+func deployRow(rows []model.DeployRow, version string) int {
+	return slices.IndexFunc(rows, func(r model.DeployRow) bool { return r.Version == version })
 }
 
 func (u *UI) openApp(row int) {

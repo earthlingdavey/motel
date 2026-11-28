@@ -46,8 +46,8 @@ func asDrawn(line string) string {
 // exactly when neither, and says what prints each such line whole (P
 // the first and the --json one, c then P an apps row's); and its own
 // words are drawn whole (each sentence is found on its rows other than
-// the command lines, read as one line). A record whose version the grammar does not take has no
-// command, and says so.
+// the command lines, read as one line). A record whose version the
+// grammar does not take has no command, and says so.
 func checkAnyOverlay(t *testing.T, h *harness, v model.View, json bool, w int) {
 	t.Helper()
 	rows := overlayCells(h)
@@ -64,7 +64,7 @@ func checkAnyOverlay(t *testing.T, h *harness, v model.View, json bool, w int) {
 	var ok bool
 	h.on(func() { _, ok = h.s.Command(v) })
 	if !ok {
-		if v.Screen != model.ScreenRecord || model.ValidVersion(v.Version) || !says("the box's filter hid this deploy's version: no motel command can ask for its record") {
+		if v.Screen != model.ScreenRecord || model.ValidVersion(v.Version) || !says("this deploy's version is outside the version grammar: no motel command can ask for its record") {
 			t.Errorf("no command over %v, and the overlay says:\n%s", v, joinRows(rows, "\n"))
 		}
 		return
