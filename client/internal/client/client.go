@@ -650,19 +650,23 @@ func holdSeries(s *wire.Series) string {
 // (several, with commas, for keys that hold one value) or the shape's;
 // when that spelling would itself hold a known value (a key named for
 // its own value), the next of [REDACTED:<what>], [withheld:<what>],
-// <<what> removed> and [#N] that holds none (chooseMarker). For a
-// token that looks generated it is [masked, N chars]. No grammar below
+// <<what> removed> and [#N] that holds none (chooseMarker). An older
+// moteld also wrote [masked, N chars] for a token that looked
+// generated, and ran its filter over a finished answer, moteld's own
+// values too; the client still reads such a box. No grammar below
 // takes a bracket or an angle, so a value outside its grammar that
 // carries a marker is one the box's own filter changed, not another
-// server's: an env_file value equal to the app's name (DB_NAME=<app>)
-// is replaced inside the unit, which is named after the app.
+// server's: an older moteld replaced an env_file value equal to the
+// app's name (DB_NAME=<app>) inside the unit, which is named after the
+// app.
 //
 // The filter's later layers run over the markers of its first, so
 // what stands inside a marker can be rewritten there, to any depth: a
-// key's name that looks generated is masked, [redacted:[masked, 24
-// chars]]; one shaped like a provider's credential (AKIA…, ghp_…) is
-// replaced, [redacted:[redacted:aws-key]]; and the last pass replaces
-// a known value in what those wrote, [REDACTED:[[REDACTED:K]:aws-key]].
+// key's name shaped like a provider's credential (AKIA…, ghp_…) is
+// replaced, [redacted:[redacted:aws-key]]; an older moteld masked one
+// that looked generated, [redacted:[masked, 24 chars]]; and the last
+// pass replaces a known value in what those wrote,
+// [REDACTED:[[REDACTED:K]:aws-key]].
 // Each is one marker, not a marker in a bracket: a marker runs from
 // its opening bracket to the bracket that closes it, and one in angles
 // from its < to its > (filterMarks).

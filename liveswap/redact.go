@@ -47,9 +47,12 @@ import (
 // The layers, over one text:
 //
 //  1. Known values: every env_file value of secretMinLen or more, in
-//     the forms it could appear in (as written, JSON-escaped, base64 in
-//     both alphabets padded and not, hex, URL-escaped) and a URL
-//     value's password on its own. Replaced with [redacted:KEY]; the
+//     the spellings secretForms lists (as written; JSON-escaped as Go
+//     writes it; either with `/` as `\/`, `+` as `\u002B` or `=` as
+//     `\u003d`, as other runtimes' encoders write them, and each of
+//     those escaped once more; base64 in both alphabets padded and
+//     not, hex, URL-escaped) and a URL value's password on its own, in
+//     the same spellings. Replaced with [redacted:KEY]; the
 //     keys go to the answer's redacted_env, carried from the door
 //     beside the text. Inline `env` values are not secrets by policy
 //     (the Caddyfile is in a repo); motel's SOCKET, the sandbox HOME
@@ -250,13 +253,35 @@ func urlPasswords(v string) []string {
 	return pws
 }
 
-// secretForms is every encoding of a value the filter recognises.
+// secretForms is every spelling of a value the filter recognises: as
+// written and as Go's encoding/json writes it in a string; those two
+// with `/` as `\/` (PHP's json_encode, Ruby's script_safe), `+` as
+// `\u002B` (.NET's default JSON writer) and `=` as `\u003d` (Gson's
+// default); each of these escaped once more, as a JSON line logged
+// inside another string is (a backslash and a quote), and that once
+// more with `/` as `\/` (PHP's outer level); then base64 in both
+// alphabets padded and not, hex, and URL-escaped. Measured on 38
+// encoders of seven runtimes (TestRedactorRuntimeEscapes).
 func secretForms(v string) []string {
 	forms := []string{v}
 	if j, err := json.Marshal(v); err == nil {
 		if s := string(j[1 : len(j)-1]); s != v {
 			forms = append(forms, s)
 		}
+	}
+	// Each range reads forms as it stood before the loop; a form that
+	// holds none of the character is the one it came from again, and
+	// NewRedactor keeps one of each text.
+	for _, s := range forms {
+		forms = append(forms,
+			strings.ReplaceAll(s, "/", `\/`),
+			strings.ReplaceAll(s, "+", `\u002B`),
+			strings.ReplaceAll(s, "=", `\u003d`),
+		)
+	}
+	for _, s := range forms {
+		s = escapeOnceMore.Replace(s)
+		forms = append(forms, s, strings.ReplaceAll(s, "/", `\/`))
 	}
 	b := []byte(v)
 	forms = append(forms,
@@ -274,6 +299,11 @@ func secretForms(v string) []string {
 	}
 	return forms
 }
+
+// escapeOnceMore is what Go's and most JSON encoders do to a string
+// they write inside another: a backslash and a quote escaped (.NET's
+// default writes the quote as \u0022, which is not listed).
+var escapeOnceMore = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 // shapeRules are the recognisable credential forms. Each replacement
 // keeps enough context to read the line and names the rule.

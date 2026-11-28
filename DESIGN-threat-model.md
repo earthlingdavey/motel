@@ -222,8 +222,11 @@ Properties that matter to the model:
   The filter's layers, over one text. First, exact: every `env_file`
   value of 8+ characters this process has rendered for a launch (or,
   after a restart, read from the file), in each form the filter
-  recognises (as written, JSON-escaped, base64 standard and URL
-  alphabets padded and not, hex, URL-escaped, and a URL value's
+  recognises (as written; JSON-escaped as Go writes it; either with
+  `/` as `\/`, `+` as `\u002B` or `=` as `\u003d`, as PHP's, Ruby's,
+  .NET's and Gson's encoders write them, and each of those escaped once
+  more, as a JSON line inside another string is; base64 standard and
+  URL alphabets padded and not, hex, URL-escaped; and a URL value's
   password on its own), becomes `[redacted:KEY]`, and the answer's
   `redacted_env` names the keys. motel is the party that knows these
   values, which is why the filter lives here and not in CI, where
@@ -325,7 +328,13 @@ Properties that matter to the model:
   `watchdog.last_failure`. None of the seven is the app printing one
   of its values while it runs; the first two are the deployer's, who
   can read the app's environment by deploying.
-  What the filter does **not** promise: an encoding not in the list, a
+  What the filter does **not** promise: an encoding not in the list
+  (measured on 38 encoders of seven runtimes, it is a value holding a
+  quote, a backslash, a non-ASCII or a control character, `<`, `>` or
+  `&`, as an encoder other than Go's writes it, and any value nested
+  in strings more than once: 47 of the corpus's 494 outputs, none of
+  the 190 of its five values shaped as a provider or a generator issues
+  them, and it nests once), a
   value under 8 characters, a secret split across lines (a value the
   app prints across two lines at the logs read stays readable), a
   secret that is in no `env_file` and has none of the ten shapes (one
@@ -1671,8 +1680,8 @@ does not isolate the runtime.
   told are secret. The app's filter is a net under who may read, not
   the safeguard: each line passes it on its own, which masks the app's
   `env_file` values in the forms it knows and some shapes of
-  credential, and nothing else (a value escaped as another runtime
-  escapes it, one split across two lines, journald's 48 KiB split
+  credential, and nothing else (a value in a spelling the list does
+  not hold, one split across two lines, journald's 48 KiB split
   among them, one under 8 characters, another app's, and a value no instance running now was launched with and the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows the file's values now, those moteld has read since it started, and those of the instance it reattached to)):
   changing a value does not hide it in lines already written, so
   revoke the old credential. Who reads is the
