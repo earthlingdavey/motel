@@ -744,12 +744,12 @@ func (s *Session) deployMarks(app string, start, end time.Time, plotW int, now t
 	}
 	var marks []int
 	var oldest time.Time
-	hidden := 0
+	unread := 0
 	for _, d := range a.st.V.Deploys {
 		t, ok := rawTime(d.FinishedAt)
 		if !ok || t.IsZero() {
 			if !noTime(d.FinishedAt) {
-				hidden++
+				unread++
 			}
 			continue
 		}
@@ -766,13 +766,13 @@ func (s *Session) deployMarks(app string, start, end time.Time, plotW int, now t
 	}
 	l := Line{own("^ a version's latest deploy that succeeded (a column is " + roughSpan(col) + ")")}
 	switch {
-	case oldest.IsZero() && hidden == 0:
+	case oldest.IsZero() && unread == 0:
 		l = Line{own("no deploy marks: the box keeps no deploy record of " + app)}
 	case !oldest.IsZero() && oldest.After(start):
 		l = append(l, own("; records from "+clock(oldest, now, false)))
 	}
-	if hidden > 0 {
-		l = append(l, own("; "+strconv.Itoa(hidden)+" not marked: their finish time does not read"))
+	if unread > 0 {
+		l = append(l, own("; "+strconv.Itoa(unread)+" not marked (no finish time that reads)"))
 	}
 	return marks, l
 }

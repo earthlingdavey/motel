@@ -440,11 +440,11 @@ func TestMetricsDeployMarks(t *testing.T) {
 		`{"version":"v0","status":"succeeded","finished_at":"[redacted:K]"}]}`)
 	s := seriesSession(t, "blog", "24h", f, &now)
 	ls := s.MetricsViewFit("blog", "24h", now, 60, 13, runes)
-	if got := text(s.MetricsViewFit("blog", "24h", now, 0, 13, nil)); !strings.Contains(got, "^ a version's latest deploy that succeeded (a column is 15m); records from 11-14 18:00; 1 not marked: their finish time does not read") {
+	if got := text(s.MetricsViewFit("blog", "24h", now, 0, 13, nil)); !strings.Contains(got, "^ a version's latest deploy that succeeded (a column is 15m); records from 11-14 18:00; 1 not marked (no finish time that reads)") {
 		t.Errorf("legend: %q", got)
 	}
 	// Laid on rows at 60 columns, the rest indented under it.
-	if got := ls[1].Text() + "|" + ls[2].Text(); got != "^ a version's latest deploy that succeeded (a column is|  28m); records from 11-14 18:00; 1 not marked: their finish" {
+	if got := ls[1].Text() + "|" + ls[2].Text(); got != "^ a version's latest deploy that succeeded (a column is|  28m); records from 11-14 18:00; 1 not marked (no finish" {
 		t.Errorf("legend at 60 columns: %q", got)
 	}
 	var axis string

@@ -141,15 +141,16 @@ func TestOldBoxBoxWideReadsNotRefused(t *testing.T) {
 	}
 }
 
-// TestBoxAlertsWithheldRows: a row with little in it (no name, no
-// severity, as the row of an app the person may not read has; a silence
-// with no maker) shows its head and what it has, and no labelled row
-// with nothing after it.
+// TestBoxAlertsWithheldRows: a row with little in it (the row of an app
+// the person may not read: no name, and no severity when the alert's is
+// not one motel knows, liveswap/motel_alerts.go; a silence with no
+// maker) shows its head and what it has, and no labelled row with
+// nothing after it.
 func TestBoxAlertsWithheldRows(t *testing.T) {
 	s, f, now := session(t)
 	s.Engine.BoxAlertsOpen(true, *now)
-	f.Body("box-alerts.json", `{"monitor":"on","alerts":[{"name":"","severity":"","summary":"response withheld: the app's env_file could not be read","starts_at":"@-1m","state":"active","app":"demo"}],`+
-		`"silences":[{"id":"","state":"active","matchers":[],"starts_at":"@-1m","ends_at":"@1h","created_by":"","comment":"response withheld"}]}`)
+	f.Body("box-alerts.json", `{"monitor":"on","alerts":[{"name":"","severity":"","summary":"response withheld: the box did not allow this app's alerts to be read","starts_at":"@-1m","state":"active","app":"demo"}],`+
+		`"silences":[{"id":"","state":"active","matchers":[],"starts_at":"@-1m","ends_at":"@1h","created_by":"","comment":"maintenance"}]}`)
 	for range 3 {
 		step(t, s, f, now)
 	}
